@@ -31,7 +31,6 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q9 | eKPM `labels.ue`에 무엇을 넣을지. mock은 그 RRC 연결의 C-RNTI 16진수(`"0x4601"`). 연결이 바뀌면 같은 단말도 라벨이 바뀜 | eBPF | M2 보완 D45 |
 | Q10 | Table I 값의 숫자 코드표(RRC/NAS 상태, 보안 상태, 알고리즘, 메시지 ID). NAS 메시지 ID만 TS 24.501 값이고 나머지는 가안. 탐지 엔진도 같은 코드를 써야 함 | eBPF, 탐지 엔진 | M2 보완 D42, SCHEMA.md 6.3 |
 | Q11 | `ue` 태그 개수(cardinality). 폭주 공격 땐 가짜 UE 수만큼 라벨이 생긴다. mock은 C-RNTI를 재사용해서 최대 512개. 실제 에이전트가 다른 키를 쓰면 InfluxDB 시리즈가 크게 늘 수 있음 | eBPF | M2 보완 D45 |
-| Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지. 논문에서는 위조 연결이 `AuthenticationRequest`까지 진행하고 몇 초 뒤(T3460) 해제되어 KPM `RRC.ConnEstabSucc`·`RRC.ConnMean`도 오른다. mock은 `RRCSetup` 뒤 1초 타임아웃으로 실패 | 사용자 | `reference/README.md` |
 | Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
 
 ### 미정 (확정 전까지 TODO로 둠)
@@ -48,6 +47,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | # | 내용 | 해결 |
 |---|---|---|
 | T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
+| Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지 | 사용자 결정으로 바꿈 (D53~D55, 브랜치 `fix/mock-bts-depletion`) |
 
 ---
 
@@ -315,7 +315,7 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 
 - [x] M3 + M2 보완 커밋 `86fd553` → `feat/dashboard-M3` push → PR #2로 `dev`에 병합
 - [ ] 팀 확인 대기 Q7, Q9~Q11 공유 (특히 Q10 코드표는 eBPF·탐지 엔진 담당과 맞춰야 함)
-- [ ] bucket의 이전 형식 mock 데이터 정리 여부 결정
+- [x] bucket의 이전 형식 mock 데이터 정리: 사용자 확인 후 14:08:29~14:13:29 구간 3,135건 삭제, 같은 데이터의 로컬 녹화 `recordings/raw-20261019-141329.jsonl`도 삭제 (2026-10-19)
 
 ---
 
@@ -324,5 +324,38 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 - `reference/`에 두 논문(`TeleRAN.pdf`, `5GSpector.pdf`)을 넣고, 요약과 이 저장소와의 대응 관계를 `reference/README.md`에 정리했다.
 - CLAUDE.md 0절: 세션을 시작하면 코드를 보기 전에 두 논문을 먼저 읽는다는 규칙을 추가했다. 4절 디렉터리 구조에도 반영했다.
 - `.gitattributes`에 `*.pdf binary`를 추가했다 (줄바꿈 변환·diff 대상에서 제외).
-- 5G-Spector를 읽고 보니 mock의 신호 폭주 모양이 논문의 BTS Resource Depletion과 다르다 → 열린 항목 Q12.
+- 5G-Spector를 읽고 보니 mock의 신호 폭주 모양이 논문의 BTS Resource Depletion과 다르다 → Q12 (아래에서 해결).
 - 환경 메모: Claude Code의 Read 도구로 PDF를 읽으려면 `poppler-utils`가 필요한데 아직 설치되지 않았다. 이번에는 임시 폴더에 설치한 `pypdf`로 텍스트를 뽑아 읽었다(표·그림은 깨질 수 있음).
+
+---
+
+## Q12 해결 — mock 신호 폭주를 5G-Spector 방식으로 (2026-10-19, 브랜치 `fix/mock-bts-depletion`)
+
+`docs/reference-papers` 위에서 만든 브랜치다 (그 PR을 먼저 병합).
+
+### 한 일
+
+| 파일 | 내용 |
+|---|---|
+| `mock/scenarios.yaml` | `fake_setup`(RRCSetup 뒤 1초 타임아웃 실패)을 `bts_fake_connection`으로 교체. 폭주 주입·탐지 근거 변경 |
+| `tests/test_mock_generator.py` | 폭주 테스트를 논문 방식으로 다시 씀 (KPM 시도·성공·연결 UE 수 증가, 실패 0, eKPM에서 transient UE 확인). 공격 직후 제외 구간 3초 → 10초 |
+| `CLAUDE.md` 7절, `README.md`, `reference/README.md` | 폭주 설명을 BTS Resource Depletion 기준으로 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D53 | 위조 연결 = `RRCSetupRequest` → `RRCSetup` → `RRCSetupComplete`+`RegistrationRequest`(임의 S-TMSI) → `AuthenticationRequest` → (응답 없음) → 4~7초 뒤 `RRCRelease` | 5G-Spector VI절: 공격자는 인증 요청을 받으면 새 연결을 시작하고, 위조 연결은 코어 인증 타이머(LTE T3460, 5G T3560) 만료로 몇 초 뒤 해제. 4~7초는 가안(TODO: 실측) | 불필요 |
+| D54 | 위조 연결을 0.15~0.3초 간격으로 하나씩 (초당 약 4~5개, 동시에 20~30개) | 공격자 SDR 하나가 연결을 이어서 만드는 방식. 예전 초당 50개는 단말 하나로는 비현실적 | 불필요 |
+| D55 | 폭주 탐지 근거: full = `count(rrc_msg_id=RRCSetupRequest) > 2` + `count(nas_msg_id=AuthenticationRequest, 응답 없음) > 1` (1초 창), kpm_only = `RRC.ConnEstabAtt > 10` + `RRC.ConnMean > 8` (5초 창) | 바뀐 공격 모양에 맞춤. 5G-Spector의 transient UE 카운터 방식은 연결이 해제돼야 세어지므로 공격 시작 후 0.2~0.8초 탐지(CLAUDE.md 7절)와 맞지 않아, 빨리 보이는 신호를 근거로 씀 | 필요 (T4) |
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| 폭주 모양 | 10분 mixed(seed 42), 공격 구간 vs 평상시 KPM 초당 평균 | 연결 시도 0.05 → 4.4, 성공 0.05 → 4.4, 실패 0 → 0, 해제 0.03 → 3.7, 연결 UE 수 2.0 → 24.2 |
+| transient UE | 같은 파일, 인증 요청 후 응답 없이 해제된 연결 | 264개, 수명 7초 이하 |
+| 공격 특성 테스트 안정성 | seed 1~5로 30분씩 | 모두 통과 |
+| 테스트 | `pytest` | **128 passed** |
+
+미확인: collector·InfluxDB 경로는 메시지 형식이 그대로라 다시 돌리지 않았다. bucket에 있는 새 형식 데이터(14:34~14:39)는 예전 폭주 모양이다. M4에서 데이터를 새로 만든다.

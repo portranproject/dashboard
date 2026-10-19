@@ -7,8 +7,8 @@
 | M1 저장소 뼈대 · docker-compose · 스키마 | 완료 | 2026-10-19 |
 | M2 mock 생성기 | 완료 (PR #1 병합, 지표는 M3 브랜치에서 논문 기준으로 보완) | 2026-10-19 |
 | M3 collector | 완료 (PR #2 병합) | 2026-10-19 |
-| M4 실시간 관제 대시보드 | 완료 (PR 대기) | 2026-10-19 |
-| M5 evaluator + 성능 검증 대시보드 | 대기 | |
+| M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
+| M5 evaluator + 성능 검증 대시보드 | 완료 (PR 대기) | 2026-10-19 |
 | M6 replay | 대기 | |
 
 ---
@@ -429,6 +429,65 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 
 ### 남은 일
 
-- [x] M4 커밋 (push → `dev`로 PR은 사용자 확인 대기)
+- [x] M4 커밋 `a3c9890` → push → PR #5로 `dev`에 병합
 - [ ] 브라우저에서 http://localhost:3000/d/portran-realtime 직접 확인 (event_id 링크, 변수)
 - [ ] M5 evaluator + 성능 검증 대시보드
+
+---
+
+## M5 — evaluator + 성능 검증 대시보드 (2026-10-19, 브랜치 `feat/dashboard-M5`)
+
+### 한 일
+
+| 파일 | 내용 |
+|---|---|
+| `evaluator/evaluate.py` | CLI. InfluxDB에서 attack_run·detection을 읽어 매칭(10절) → 시나리오 × 룰셋별 탐지율·precision·오탐·지연 p50/p95 → `eval_result` 저장 + `reports/eval-<날짜시각>.md`·`.csv`. 매칭·계산은 InfluxDB와 분리한 순수 함수 |
+| `grafana/dashboards/evaluation.json` | 성능 검증 대시보드 (uid `portran-evaluation`). 변수 `eval_id`로 평가 하나를 고르고, 지연 분포·오버헤드는 그 평가 구간의 원시 데이터로 그림 |
+| `tests/test_evaluator.py` | 경계 사례(grace 경계 포함/1ns 초과, ts_start 경계, 다른 attack_type, run 하나에 여러 탐지, 룰셋 분리, 겹치는 run, 구간 시작 전·끝 직전 run), 공격 없던 시간, 백분위수, 리포트, mock 탐지율 정합성, InfluxDB 경유 결과 = 직접 계산 결과 (21건) |
+| `tests/test_dashboards.py` | 성능 검증 대시보드 구성(9.2절), 대시보드가 읽는 필드를 evaluator가 쓰는지 (7건 추가) |
+| `.env.example` | `EVAL_GRACE_SEC=5`, `EVAL_LOOKBACK_SEC=3600`, `REPORTS_DIR=reports` |
+| `.gitignore` | `reports/` |
+| `CLAUDE.md` 6절 | `eval_result` 행에 추가한 tag·field 반영 |
+| `README.md` | "성능 평가하기", 성능 검증 대시보드 설명 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D67 | 평가 대상: run은 `--from`~`--to` 안에서 **시작한** 것, 탐지는 `ts_detected`가 구간 안인 것 | 10절에 구간 경계 규칙이 없음. 시작 시각 기준이 가장 단순하고 예측 가능 | 불필요 |
+| D68 | 매칭에는 구간 시작 전 `EVAL_LOOKBACK_SEC`(1시간) 안에 시작한 run과, 구간 끝 뒤 (run 종료 + grace)까지의 탐지도 씀. 세는 대상은 D67 그대로 | 구간 경계에 걸친 공격 때문에 오탐(앞쪽)·미탐(뒤쪽)이 잘못 세지지 않도록 | 불필요 |
+| D69 | 탐지 하나가 여러 run의 [ts_start, ts_end + grace]에 걸치면 모든 run에 매칭 (TP를 각각 줌), precision에서는 한 번만 셈 | 10절 문장 그대로("어떤 run과 … 안에 있으면 그 run에 매칭"). 같은 유형의 공격이 grace 안에 다시 시작할 때만 생김 | 불필요 |
+| D70 | 공격 없던 시간 = 평가 구간에서 모든 run의 [ts_start, ts_end] 합집합을 뺀 시간 (grace는 포함하지 않음) | fp_per_hour 분모. 공격 유형과 상관없이 "공격이 없던" 시간 | 불필요 |
+| D71 | 계산할 수 없는 값(분모 0: run 없는 탐지율, 탐지 없는 precision, TP 없는 지연)은 `eval_result`에 쓰지 않고 리포트에 "—" | 0으로 쓰면 "탐지율 0%"처럼 틀린 의미가 됨 | 불필요 |
+| D72 | 백분위수는 선형 보간(numpy 기본과 같음) | 표본이 적을 때도 값이 나옴 | 불필요 |
+| D73 | `eval_result`에 필드 추가: `tp`, `fn`, `detections`, `onset_p50/p95_ms`(공격 시작→탐지), `eval_id`, `window_from/to`, `grace_sec`, tag `data_source` | 10절의 두 번째 지연(`ts_detected - ts_start`)을 저장할 곳이 6절에 없었음. 대시보드가 평가 하나를 골라 그 구간을 보려면 `eval_id`·구간이 필요. CLAUDE.md 6절에 반영 | 불필요 |
+| D74 | 데이터 출처: `--source auto`면 평가한 run의 `params.generator == "mock"`으로 mock 판단, 아니면 real. replay는 `--source replay`로 지정 | 12절 7항. replay는 원본이 mock인지 실제인지에 따라 달라 자동 판단하지 않음 | 불필요 |
+| D75 | 탐지 시각은 Flux에서 정수 ns로 받음 (`int(v: r._time)`) | influxdb-client의 datetime은 마이크로초까지라 grace 경계 같은 ns 비교가 틀어짐 | 불필요 |
+| D76 | 성능 검증 대시보드: 변수 `eval_id`(최신 기본), 지연 히스토그램은 평가 구간의 **모든** 탐지 `latency_ms`, p50/p95 표는 `eval_result`(run별 첫 매칭 탐지). 표에는 9.2절 항목(탐지율·precision·오탐 수)만 두고 오탐/시간은 리포트에 | 히스토그램을 run별 첫 탐지로만 그리려면 저장 구조가 더 필요함. 패널 설명에 차이를 적음. 표 열이 많으면 잘림 | 불필요 |
+| D77 | 리포트(`reports/`)는 git에서 제외 | mock으로 자주 만들 결과라 저장소가 지저분해짐. 발표용은 따로 옮겨 커밋 | 불필요 |
+| D78 | (M4 수정) 실시간 대시보드의 "접속 UE 수"에 `RRC.ConnMax`(최대, 정수)와 `RRC.ConnMean`(평균)을 **둘 다** 표시 | 사용자 질문: 0.9처럼 소수가 나오는 이유. ConnMean은 1초 평균이라 연결·해제가 섞이면 소수. 요약 숫자로는 정수인 최대가 읽기 쉽고, 평균을 옆에 두면 표준 KPM 값도 그대로 보임. 사용자 결정. M4 D59를 대체 | 불필요 |
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| 평가 | `--from 2026-10-19T14:44:00 --to 2026-10-19T15:15:00` (bucket의 30분 mock, seed 7) | run 17개, 탐지 78건, 데이터 출처 mock 자동 판단. full: 3개 공격 모두 탐지율 100%, 지연 p50 213~266ms / kpm_only: 탐지율 16.7~50%, 지연 p50 4.1~4.3초, 신호 폭주 오탐 1건 |
+| 리포트 | 같은 실행 | md(경고 문구, 요약, 시나리오 × 룰셋, run별), csv(행마다 eval_id·출처·구간 포함) |
+| `eval_result` 저장 | 같은 실행 | 6건 (시나리오 3 × 룰셋 2) |
+| InfluxDB 경유 = 직접 계산 | 통합 테스트: 임시 bucket에 mock 30분 → collector → fetch → evaluate | 메시지로 직접 계산한 결과와 행 단위로 같음 |
+| 성능 검증 대시보드 | 모든 쿼리를 Grafana API로 실행 + 이미지 렌더러로 PNG (M4와 같은 임시 방법) | 모든 패널 표시: 데이터 출처 빨간 "mock — 성능 결과 아님", 시나리오 × 룰셋 표(% 색), 탐지율 막대, 지연 히스토그램(full 0.4초 근처, kpm_only 2.5~5초), p50/p95 표, eBPF on/off CPU(cu 18.0 → 20.5%)·메모리 |
+| 평가가 없을 때 | `eval_id`에 없는 값 | 오류 없이 "평가 없음" 표시 |
+| 테스트 | `pytest` | **165 passed** (evaluator 21, 대시보드 16 포함) |
+| 접속 UE 수 (D78) | 쿼리를 Grafana API로 실행 + 패널만 렌더 | 같은 1초에 최대 1 · 평균 0.956처럼 함께 나옴. 패널에 "최대"·"평균" 두 줄과 추이 그래프 |
+
+미확인: 실제 브라우저에서 `eval_id` 변수를 바꾸는 동작은 해 보지 않았다(평가가 하나뿐).
+
+### 환경 메모
+
+- 특이 사항 없음. 화면 확인은 M4와 같은 임시 렌더러를 썼고 끝난 뒤 내렸다.
+
+### 남은 일
+
+- [x] M5 커밋 → push (`dev`로 PR은 사용자가 엶)
+- [x] 실시간 대시보드의 "접속 UE 수"에 최대·평균을 함께 표시 (D78, 사용자 결정)
+- [ ] M6 replay

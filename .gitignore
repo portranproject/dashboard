@@ -11,3 +11,6 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# evaluator 리포트 (발표용으로 남길 것은 따로 옮겨 커밋)
+reports/

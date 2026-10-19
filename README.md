@@ -13,7 +13,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector), M4(실시간 관제 대시보드) 완료. evaluator 등은 이후 마일스톤에서 추가된다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector), M4(실시간 관제 대시보드), M5(evaluator·성능 검증 대시보드) 완료. replay는 M6에서 추가된다.
 
 ## 준비물
 
@@ -113,7 +113,7 @@ python -m mock.generator --duration 600 --seed 42  # 터미널 2 (실시간, 1�
 
 | 행 | 패널 |
 |---|---|
-| 요약 | 최근 5분 탐지 건수, 최고 severity, 수집 상태(소스별 마지막 수신 후 경과), 접속 UE 수(`RRC.ConnMean`), 데이터 출처(mock 여부) |
+| 요약 | 최근 5분 탐지 건수, 최고 severity, 수집 상태(소스별 마지막 수신 후 경과), 접속 UE 수(`RRC.ConnMax` 최대 · `RRC.ConnMean` 평균), 데이터 출처(mock 여부) |
 | 핵심 비교 | 위: 표준 KPM, 아래: eKPM(UE별 텔레메트리를 초당 건수로 집계). 같은 시간축. 빨간 세로선 = 탐지 이벤트, 주황 영역 = 공격 구간(`attack_run`) |
 | 이벤트 | 탐지 이벤트 표(시각·공격 유형·severity·대상·룰·룰셋·지연·event_id), 공격 유형별 탐지 건수 |
 | 근거 | 선택한 이벤트의 evidence(출처·지표·값·연산자·임계값·윈도우) |
@@ -122,6 +122,42 @@ python -m mock.generator --duration 600 --seed 42  # 터미널 2 (실시간, 1�
 - 위쪽 토글로 annotation(공격 구간, 탐지)을 끄고 켤 수 있다.
 - 대시보드의 기준은 `grafana/dashboards/*.json`이다. UI에서 고쳐도 저장되지 않으므로, 고친 뒤 **Share → Export → JSON**으로 내보내 파일을 바꾸고 커밋한다. 쿼리는 bucket 이름 대신 `v.defaultBucket`(datasource 설정)을 쓴다.
 - eKPM 패널은 코드값(예: `rrc_msg_id` 0 = RRCSetupRequest)으로 센다. 코드표([`schema/SCHEMA.md`](schema/SCHEMA.md) 6.3절)가 바뀌면 같이 고친다(`pytest`가 어긋남을 잡는다).
+
+**성능 검증** — http://localhost:3000/d/portran-evaluation (아래 evaluator를 한 번 이상 돌려야 채워진다)
+
+| 행 | 패널 |
+|---|---|
+| 평가 정보 | 데이터 출처(mock이면 빨간색), 평가 구간, 공격 run 수·grace |
+| 탐지 성능 | 시나리오 × 룰셋 표(탐지율·precision·오탐 수를 full / kpm_only 나란히), 탐지율 막대 |
+| 탐지 지연 | 지연 분포 히스토그램(구간 안 모든 탐지), p50/p95 표(run별 첫 매칭 탐지) |
+| 수집 오버헤드 | 노드별 CPU·메모리, eBPF on / off |
+
+- 위쪽 변수 `평가`로 evaluator 실행 하나를 고른다(기본은 가장 최근). 히스토그램·오버헤드는 그 평가의 구간 데이터를 쓰므로 시간 선택과 상관없다.
+
+## 성능 평가하기 (evaluator)
+
+```bash
+python -m evaluator.evaluate --from 2026-11-20T10:00:00 --to 2026-11-20T12:00:00 --grace-sec 5
+```
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--from` | (필수) | 평가 시작. 시간대가 없으면 로컬 시각 |
+| `--to` | `now` | 평가 끝 |
+| `--grace-sec` | `.env`의 `EVAL_GRACE_SEC` (5) | 공격 종료 후 탐지를 인정하는 시간 |
+| `--source` | `auto` | 리포트에 적을 데이터 출처. `auto`는 attack_run의 mock 표시로 판단. replay 데이터면 `replay`로 지정 |
+| `--reports-dir` | `.env`의 `REPORTS_DIR` | 리포트 폴더 |
+| `--no-write` | | InfluxDB `eval_result`에 쓰지 않고 리포트만 |
+
+결과:
+- 콘솔: 시나리오 × 룰셋별 탐지율·precision·오탐·지연
+- `reports/eval-<날짜시각>.md`·`.csv` (git 제외. 발표용으로 남길 것은 따로 옮겨 커밋)
+- InfluxDB `eval_result` → 성능 검증 대시보드
+
+매칭 규칙(CLAUDE.md 10절): 같은 공격 유형이고 `ts_detected`가 `[ts_start, ts_end + grace]` 안이면 그 run에 매칭. 매칭된 탐지가 있는 run = TP(여러 개여도 1건), 없는 run = FN, 어떤 run에도 안 맞는 탐지 = 오탐.
+- run은 `--from`~`--to` 안에서 **시작한** 것을 센다. 구간 끝에 걸친 run의 탐지는 `--to` 뒤 grace까지 찾는다.
+- `--from` 전 `EVAL_LOOKBACK_SEC`(1시간) 안에 시작한 run은 세지 않지만, 그 run의 탐지가 오탐으로 세지지 않도록 매칭에는 쓴다.
+- **mock 데이터로 낸 숫자는 성능 결과가 아니다.** 리포트와 대시보드에 데이터 출처가 표시된다.
 
 ## mock 데이터 만들기
 
@@ -212,7 +248,7 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
 | `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |
 | `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
-| `evaluator/` | 탐지율·오탐·지연 계산 (M5) |
+| `evaluator/` | 탐지율·오탐·지연 계산, 리포트(`reports/`)·`eval_result` 저장 (`evaluate.py`) |
 | `replay/` | 녹화 데이터 재생 (M6) |
 | `grafana/` | datasource·대시보드 provisioning, 대시보드 JSON |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |

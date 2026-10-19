@@ -164,7 +164,7 @@
 | `detection` | `ts_detected` | attack_type, severity, ruleset, rule_id, node | event_id, rule_version, ts_first_evidence, latency_ms, cell, ue_list(JSON 문자열), evidence_json(JSON 문자열) |
 | `attack_run` | `ts_start` | scenario | run_id, ts_end, params_json |
 | `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
-| `eval_result` | 평가 실행 시각 | scenario, ruleset | detection_rate, precision, fp_count, fp_per_hour, latency_p50_ms, latency_p95_ms, runs |
+| `eval_result` | 평가 실행 시각 | scenario, ruleset, data_source | detection_rate, precision, fp_count, fp_per_hour, latency_p50_ms, latency_p95_ms, runs, (M5에서 추가) tp, fn, detections, onset_p50_ms, onset_p95_ms, eval_id, window_from, window_to, grace_sec |
 
 - `event_id`, `run_id`처럼 값마다 고유한 것은 tag로 두지 않는다(cardinality 폭증 방지).
 - 테스트베드는 UE 수가 적으므로 `ue`는 metric에서 tag로 둔다.

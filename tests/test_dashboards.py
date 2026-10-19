@@ -49,7 +49,7 @@ def realtime():
 
 
 def test_dashboards_exist():
-    assert [p.name for p in DASHBOARDS] == ["realtime.json"]
+    assert [p.name for p in DASHBOARDS] == ["evaluation.json", "realtime.json"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
@@ -114,6 +114,38 @@ def test_realtime_has_section_9_1_panels(realtime):
     assert evidence["transformations"][0]["id"] == "extractFields"
 
 
+def test_evaluation_has_section_9_2_panels():
+    """CLAUDE.md 9.2절: 시나리오 × 룰셋 표(full vs kpm_only 나란히), 탐지율 막대, 지연 분포·p50/p95, eBPF on/off 오버헤드."""
+    d = load(DASHBOARD_DIR / "evaluation.json")
+    assert d["uid"] == "portran-evaluation"
+    assert [v["name"] for v in d["templating"]["list"]] == ["eval_id"]
+    types = {p["title"]: p["type"] for p in d["panels"]}
+    assert types["시나리오 × 룰셋"] == "table"
+    assert types["탐지율 (full vs kpm_only)"] == "barchart"
+    assert types["탐지 지연 분포 (ts_detected − ts_first_evidence)"] == "histogram"
+    assert types["지연 p50 / p95 (run별 첫 매칭 탐지)"] == "table"
+    assert types["CPU (%)"] == types["메모리 (MB)"] == "barchart"
+    table = next(p for p in d["panels"] if p["title"] == "시나리오 × 룰셋")
+    renamed = table["transformations"][0]["options"]["renameByName"]
+    for metric in ("탐지율", "precision", "오탐"):
+        assert {f"{metric} full", f"{metric} kpm_only"} <= set(renamed.values())
+
+
+def test_evaluation_reads_fields_written_by_evaluator():
+    """대시보드가 읽는 eval_result 필드를 evaluator가 실제로 쓰는지."""
+    import inspect
+
+    from evaluator import evaluate as ev
+
+    written = set(re.findall(r'\.field\("(\w+)"', inspect.getsource(ev.write_results)))
+    written |= {"detection_rate", "precision", "fp_per_hour", "latency_p50_ms", "latency_p95_ms",
+                "onset_p50_ms", "onset_p95_ms"}
+    text = (DASHBOARD_DIR / "evaluation.json").read_text(encoding="utf-8")
+    used = set(re.findall(r"\br\.(\w+)", text)) - {"_measurement", "_field", "_value", "_time", "scenario", "ruleset",
+                                                  "data_source", "node", "ebpf_on", "rate", "fp", "runs", "grace"}
+    assert used <= written, used - written
+
+
 def test_realtime_ekpm_codes_match_code_table(realtime):
     """eKPM 패널이 쓰는 코드값이 mock/scenarios.yaml(= SCHEMA.md 6.3)의 코드표와 같아야 한다."""
     codes = load_config()["codes"]
@@ -145,6 +177,7 @@ VARIABLE_VALUES = {
     "${node:json}": '["cu","du"]',
     "${attack_type:json}": '["RRC_SIGNALING_STORM","ABNORMAL_UE_ATTACH","F1AP_MSG_TAMPER"]',
     "${event_id}": "det-not-exist",
+    "${eval_id}": "eval-not-exist",
 }
 
 

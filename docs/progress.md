@@ -6,7 +6,7 @@
 |---|---|---|
 | M1 저장소 뼈대 · docker-compose · 스키마 | 완료 | 2026-10-19 |
 | M2 mock 생성기 | 완료 (PR #1 병합, 지표는 M3 브랜치에서 논문 기준으로 보완) | 2026-10-19 |
-| M3 collector | 완료 (PR 대기) | 2026-10-19 |
+| M3 collector | 완료 (PR #2 병합) | 2026-10-19 |
 | M4 실시간 관제 대시보드 | 대기 | |
 | M5 evaluator + 성능 검증 대시보드 | 대기 | |
 | M6 replay | 대기 | |
@@ -31,6 +31,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q9 | eKPM `labels.ue`에 무엇을 넣을지. mock은 그 RRC 연결의 C-RNTI 16진수(`"0x4601"`). 연결이 바뀌면 같은 단말도 라벨이 바뀜 | eBPF | M2 보완 D45 |
 | Q10 | Table I 값의 숫자 코드표(RRC/NAS 상태, 보안 상태, 알고리즘, 메시지 ID). NAS 메시지 ID만 TS 24.501 값이고 나머지는 가안. 탐지 엔진도 같은 코드를 써야 함 | eBPF, 탐지 엔진 | M2 보완 D42, SCHEMA.md 6.3 |
 | Q11 | `ue` 태그 개수(cardinality). 폭주 공격 땐 가짜 UE 수만큼 라벨이 생긴다. mock은 C-RNTI를 재사용해서 최대 512개. 실제 에이전트가 다른 키를 쓰면 InfluxDB 시리즈가 크게 늘 수 있음 | eBPF | M2 보완 D45 |
+| Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지. 논문에서는 위조 연결이 `AuthenticationRequest`까지 진행하고 몇 초 뒤(T3460) 해제되어 KPM `RRC.ConnEstabSucc`·`RRC.ConnMean`도 오른다. mock은 `RRCSetup` 뒤 1초 타임아웃으로 실패 | 사용자 | `reference/README.md` |
 | Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
 
 ### 미정 (확정 전까지 TODO로 둠)
@@ -312,6 +313,16 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 
 ### 남은 일
 
-- [ ] M3 + M2 보완 커밋 → `feat/dashboard-M3` push → `dev`로 PR
+- [x] M3 + M2 보완 커밋 `86fd553` → `feat/dashboard-M3` push → PR #2로 `dev`에 병합
 - [ ] 팀 확인 대기 Q7, Q9~Q11 공유 (특히 Q10 코드표는 eBPF·탐지 엔진 담당과 맞춰야 함)
 - [ ] bucket의 이전 형식 mock 데이터 정리 여부 결정
+
+---
+
+## 참고 논문 추가 (2026-10-19, 브랜치 `docs/reference-papers`)
+
+- `reference/`에 두 논문(`TeleRAN.pdf`, `5GSpector.pdf`)을 넣고, 요약과 이 저장소와의 대응 관계를 `reference/README.md`에 정리했다.
+- CLAUDE.md 0절: 세션을 시작하면 코드를 보기 전에 두 논문을 먼저 읽는다는 규칙을 추가했다. 4절 디렉터리 구조에도 반영했다.
+- `.gitattributes`에 `*.pdf binary`를 추가했다 (줄바꿈 변환·diff 대상에서 제외).
+- 5G-Spector를 읽고 보니 mock의 신호 폭주 모양이 논문의 BTS Resource Depletion과 다르다 → 열린 항목 Q12.
+- 환경 메모: Claude Code의 Read 도구로 PDF를 읽으려면 `poppler-utils`가 필요한데 아직 설치되지 않았다. 이번에는 임시 폴더에 설치한 `pypdf`로 텍스트를 뽑아 읽었다(표·그림은 깨질 수 있음).

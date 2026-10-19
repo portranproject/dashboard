@@ -2,6 +2,20 @@
 
 이 문서는 Claude Code가 이 저장소에서 작업할 때 따르는 기준이다. 작업 전에 끝까지 읽는다.
 
+## 0. 작업 시작 전 필수: 참고 논문 읽기
+
+**세션을 시작하면(첫 컨텍스트에서) 코드를 보거나 고치기 전에 `reference/`의 두 논문을 먼저 끝까지 읽는다.** 이 저장소의 지표 정의, 공격 유형, 탐지 규칙, 평가 방식의 근거가 이 논문들이다.
+
+| 파일 | 논문 | 이 저장소에서 쓰는 곳 |
+|---|---|---|
+| `reference/TeleRAN.pdf` | TeleRAN: eBPF 기반 OpenRAN 텔레메트리 (FutureG 2026) | Table I → eKPM, Table II → 표준 KPM. mock 지표, `schema/SCHEMA.md` 6절, 대시보드 |
+| `reference/5GSpector.pdf` | 5G-Spector: O-RAN L3 공격 탐지 (NDSS 2024) | MobiFlow 텔레메트리, L3 공격 유형과 탐지 규칙, 탐지 지연·오버헤드 평가 방식 |
+
+- 요약과 이 저장소와의 대응 관계는 `reference/README.md`에 있다. 요약만 읽고 넘어가지 말고 원문을 읽는다.
+- 대화가 길어져 요약된 뒤 논문 내용이 필요하면 해당 부분을 다시 읽는다.
+- PDF를 읽을 수 없으면(Read 도구가 `pdftoppm`을 못 찾는 경우) 사용자에게 별도 Ubuntu 터미널에서 `sudo apt install poppler-utils`를 실행해 달라고 요청한다.
+- 논문과 이 문서의 내용이 다르면 임의로 고르지 말고 사용자에게 묻는다.
+
 ## 1. 프로젝트 배경
 
 - 팀 프로젝트: **O-RAN 기반 5G 기지국 위협 탐지 솔루션** (5인, 최종 발표 2026-12-04)
@@ -50,6 +64,10 @@
 .
 ├── CLAUDE.md
 ├── README.md                     # 실행 방법 (처음 보는 팀원 기준)
+├── reference/                    # 참고 논문 (0절). 작업 전에 읽는다
+│   ├── README.md                 # 논문 요약, 이 저장소와의 대응 관계
+│   ├── TeleRAN.pdf
+│   └── 5GSpector.pdf
 ├── docs/
 │   └── progress.md               # 마일스톤별 진행 기록 (12절 8항)
 ├── docker-compose.yml

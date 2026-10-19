@@ -10,8 +10,9 @@ import json
 import os
 import socket
 import threading
+import time
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Any, Callable, Iterable, Iterator, Protocol, TypeVar
 
 # IPv4 UDP 데이터그램 최대 페이로드
 MAX_UDP_PAYLOAD = 65507
@@ -82,6 +83,24 @@ def open_sink(address: str, append: bool = False) -> Sink:
     if scheme == "udp":
         return UdpSink(*parse_udp_target(rest))
     return FileSink(rest, append=append)
+
+
+T = TypeVar("T")
+
+
+def paced(items: Iterable[T], time_of: Callable[[T], int], base_ns: int, speed: float,
+          before_sleep: Callable[[], None] | None = None) -> Iterator[T]:
+    """items를 시각(time_of, ns)에 맞춰 내보낸다. base_ns가 지금이 되고, speed배로 빨리 간다 (0이면 기다리지 않음).
+    기다리기 직전에 before_sleep을 부른다 (파일 출력 flush 등)."""
+    wall0 = time.monotonic()
+    for item in items:
+        if speed > 0:
+            delay = wall0 + (time_of(item) - base_ns) / 1e9 / speed - time.monotonic()
+            if delay > 0:
+                if before_sleep:
+                    before_sleep()
+                time.sleep(delay)
+        yield item
 
 
 # --------------------------------------------------------------------------- 수신

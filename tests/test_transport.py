@@ -160,3 +160,19 @@ def test_udp_source_receives_and_splits_lines():
         assert c.got[0][1].startswith("udp:127.0.0.1:")
     finally:
         c.close()
+
+
+def test_paced_waits_for_message_times_and_speed():
+    from common.transport import paced
+
+    items = [0, 50_000_000, 100_000_000]  # 0, 0.05, 0.1초
+    t0 = time.monotonic()
+    assert list(paced(items, lambda x: x, 0, speed=1)) == items
+    assert time.monotonic() - t0 >= 0.09
+    t0 = time.monotonic()
+    list(paced(items, lambda x: x, 0, speed=10))
+    assert time.monotonic() - t0 < 0.05
+    flushes = []
+    t0 = time.monotonic()
+    list(paced(items, lambda x: x, 0, speed=0, before_sleep=lambda: flushes.append(1)))
+    assert time.monotonic() - t0 < 0.05 and flushes == []

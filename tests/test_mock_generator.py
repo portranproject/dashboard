@@ -5,13 +5,12 @@ from collections import Counter, defaultdict
 
 import pytest
 
-from common.schema import get_validator, validation_errors
+from common.schema import get_validator, message_time as emit_ns, validation_errors
 from mock.generator import (
     NS,
     Run,
     Simulator,
     check_config,
-    emit_ns,
     generate,
     load_config,
     main,

@@ -8,8 +8,8 @@
 | M2 mock 생성기 | 완료 (PR #1 병합, 지표는 M3 브랜치에서 논문 기준으로 보완) | 2026-10-19 |
 | M3 collector | 완료 (PR #2 병합) | 2026-10-19 |
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
-| M5 evaluator + 성능 검증 대시보드 | 완료 (PR 대기) | 2026-10-19 |
-| M6 replay | 대기 | |
+| M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
+| M6 replay | 완료 (PR 대기) | 2026-10-19 |
 
 ---
 
@@ -431,7 +431,7 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 
 - [x] M4 커밋 `a3c9890` → push → PR #5로 `dev`에 병합
 - [ ] 브라우저에서 http://localhost:3000/d/portran-realtime 직접 확인 (event_id 링크, 변수)
-- [ ] M5 evaluator + 성능 검증 대시보드
+- [x] M5 evaluator + 성능 검증 대시보드
 
 ---
 
@@ -488,6 +488,63 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 
 ### 남은 일
 
-- [x] M5 커밋 → push (`dev`로 PR은 사용자가 엶)
+- [x] M5 커밋 `291c996` → push → PR #6으로 `dev`에 병합
 - [x] 실시간 대시보드의 "접속 UE 수"에 최대·평균을 함께 표시 (D78, 사용자 결정)
-- [ ] M6 replay
+- [x] M6 replay
+
+---
+
+## M6 — replay (2026-10-19, 브랜치 `feat/dashboard-M6`)
+
+### 한 일
+
+| 파일 | 내용 |
+|---|---|
+| `replay/replay.py` | CLI. 녹화 파일을 읽어(잘못된 줄은 건너뜀) 시각 순으로 정렬 → `--retime`으로 모든 시각 필드를 같은 만큼 이동 → `attack_run.params`에 재생 표시 → 배속에 맞춰 UDP·파일로 전송 |
+| `common/schema.py` | `TIME_FIELDS`, `message_time()`(메시지 대표 시각), `shift_times()`, `count_key()` — mock·replay 공용 |
+| `common/transport.py` | `paced()`: 메시지 시각에 맞춰 배속으로 내보내기 — mock·replay 공용 |
+| `mock/generator.py` | `emit_ns`·대기 루프를 위 공용 함수로 교체 (동작 같음) |
+| `evaluator/evaluate.py` | 데이터 출처 자동 판단에 replay 추가 (mock 원본이면 mock 유지) |
+| `grafana/dashboards/realtime.json` | 데이터 출처 패널: "mock 재생 (성능 결과 아님)", "녹화 재생" 구분 |
+| `tests/test_replay.py` | 녹화 읽기(정렬·잘못된 줄), 시각 이동(모든 시각 필드 간격 유지), 재생 표시, CLI(파일·UDP·retime now·오류) (8건) + `paced` 1건, 데이터 출처 판단 보강 |
+| `README.md` | "녹화 재생하기 (replay)", collector 준비 전 UDP 손실 주의 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D79 | 녹화를 메시지 시각 순으로 정렬해 보냄 | 녹화는 도착 순서라 시각이 조금씩 뒤섞일 수 있음 | 불필요 |
+| D80 | `--retime`은 `now`(기본) / `none` / ISO 시각. 모든 시각 필드(`ts`, `ts_detected`·`ts_first_evidence`, `ts_start`·`ts_end`)를 같은 만큼 이동 | 11절 "원본 시간 간격 유지". 탐지 지연·공격 길이가 원본과 같아야 함 | 불필요 |
+| D81 | 재생한 `attack_run.params`에 `replay: {file, shift_s}`를 넣음. 다른 메시지는 시각만 바뀜 | 12절 7항(데이터 출처 표시). `params`는 자유 형식이라 스키마 변경 없음. 원본 `generator: mock` 표시는 그대로 → mock 재생은 계속 mock으로 판단 | 불필요 |
+| D82 | event_id·run_id는 바꾸지 않음 | "원본 그대로" 재생. 같은 녹화를 짧은 간격으로 두 번 재생할 때만 대시보드에 같은 ID가 두 번 보임 (README에 적음) | 불필요 |
+| D83 | 읽을 수 없거나 스키마에 맞지 않는 줄은 건너뛰고 수를 알림 (처음 5줄은 사유 로그) | 녹화는 collector가 검증한 것이지만, 손으로 고친 파일 때문에 시연이 멈추지 않도록 | 불필요 |
+| D84 | 메시지 시각·배속 전송 코드를 `common/`으로 옮겨 mock과 공유 | 같은 로직이 두 군데 생기는 것을 피함 | 불필요 |
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| **녹화 재생 → 실시간 대시보드** | collector를 띄워 "녹화" 로그를 확인한 뒤, M4 때 녹화한 파일(seed 2, 168초, 비정상 접속 1회)을 `--speed 1 --retime now`로 재생하고 실시간 대시보드를 렌더 | 재생 2,923건 → collector 수신·저장 2,923 (손실 0). 대시보드에 현재 시각(16:12~16:15)으로 표시: 최근 5분 탐지 6, severity high, 데이터 출처 "mock 재생 (성능 결과 아님)", 공격 구간·탐지 annotation, 이벤트 표·근거 |
+| 시각 이동 | 같은 녹화를 파일로 재생해 원본과 비교 | 모든 메시지가 같은 만큼(+3015초) 이동, 탐지 지연(근거→탐지) 유지, `attack_run`에 원본 `generator: mock` + `replay` 표시 |
+| evaluator | 재생 구간 평가 | 데이터 출처 mock(원본이 mock), full 탐지 지연 396ms로 원본과 같음 |
+| 테스트 | `pytest` | **174 passed** (스키마 45, mock 40, collector 21, evaluator 21, transport 20, 대시보드 16, replay 8, config 2, InfluxDB 통합 1) |
+
+### 환경 메모
+
+- **UDP 손실처럼 보였던 것의 원인**: M4 실시간 확인 때 mock이 보낸 2,939건 중 녹화는 2,923건이었다. 같은 seed로 다시 만들어 비교하니 빠진 16건은 **처음 1초(0초·1초)의 메시지뿐**이었다. 확인 스크립트가 collector를 띄우고 3초만 기다렸는데, collector가 UDP 포트를 열기까지 4.4초가 걸렸다(`/mnt/c`에서 라이브러리 로딩 + InfluxDB 확인). 일정한 UDP 손실은 아니다. README에 "collector 로그에 `녹화 …`가 뜬 뒤 보낸다"를 적었다.
+
+### 남은 일
+
+- [x] M6 커밋 → push (`dev`로 PR은 사용자가 엶)
+- [ ] 발표 전: 테스트베드 시연 녹화를 만들어 두고 재생 리허설 (녹화는 git 제외라 따로 백업)
+
+---
+
+## 전체 마일스톤 이후 — 실제 파트 연동 전에 할 일
+
+mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 → 재생)은 모두 동작한다. 실제 eBPF 에이전트·탐지 엔진·공격 도구를 붙이기 전에 맨 위 "열린 항목"을 팀과 정리해야 한다. 특히:
+
+1. **Q10 코드표 / Q9 `labels.ue` / Q7 노드** — eBPF 팀이 eKPM을 이 형식(SCHEMA.md 6절)으로 낼 수 있는지. 다르면 대시보드 eKPM 패널 쿼리의 코드값을 같이 고친다(테스트가 어긋남을 잡는다).
+2. **Q5 attack_run 발행 시점 / Q6 반복 탐지** — 공격 도구·탐지 엔진의 동작에 따라 evaluator 결과(precision 등)가 달라진다.
+3. **Q8 시계 동기화** — 노드가 여러 대면 NTP/PTP 필수. 어긋나면 collector 경고 로그로 보인다.
+4. 각 파트는 `python -m collector.collector --dry-run`으로 자기 메시지가 스키마를 통과하는지 먼저 확인한다(SCHEMA.md 8절).

@@ -29,8 +29,8 @@ from typing import Any, Callable, Iterable, Iterator
 import yaml
 
 from common.config import load_env
-from common.schema import get_validator, validation_errors
-from common.transport import encode, open_sink
+from common.schema import count_key, get_validator, message_time, validation_errors
+from common.transport import encode, open_sink, paced
 
 NS = 1_000_000_000
 MS = 1_000_000
@@ -589,20 +589,15 @@ def _just_past(op: str, threshold: float, excess: float) -> float:
 
 # --------------------------------------------------------------------------- 전체 흐름
 
-def emit_ns(msg: dict) -> int:
-    """메시지가 실제로 나가는 시각 (attack_run은 공격 시작 시점에 낸다)."""
-    return msg.get("ts") or msg.get("ts_detected") or msg["ts_start"]
-
-
 def generate(cfg: dict, scenario: str, duration_s: int, seed: int, start_ns: int) -> Iterator[dict]:
-    """모든 메시지를 emit_ns 순으로 낸다."""
+    """모든 메시지를 시각 순으로 낸다 (attack_run은 공격 시작 시점, detection은 탐지 시점)."""
     runs = schedule_runs(cfg, scenario, duration_s, start_ns, seed)
     sim = Simulator(cfg, runs, duration_s, start_ns, seed).run()
     events = [attack_run_message(cfg, r, seed) for r in runs]
     events += plan_detections(cfg, runs, duration_s, start_ns, seed, sim.involved)
-    events.sort(key=emit_ns)
+    events.sort(key=message_time)
     return heapq.merge(sim.ekpm, sim.kpm_messages(), overhead_messages(cfg, duration_s, start_ns, seed),
-                       events, key=emit_ns)
+                       events, key=message_time)
 
 
 def send_all(messages: Iterable[dict], out: str, start_ns: int, speed: float, progress_s: int = 60) -> Counter:
@@ -610,28 +605,16 @@ def send_all(messages: Iterable[dict], out: str, start_ns: int, speed: float, pr
     validator = get_validator()
     counts: Counter = Counter()
     sink = open_sink(out)
-    wall0 = time.monotonic()
     next_progress = progress_s
     try:
-        for msg in messages:
+        for msg in paced(messages, message_time, start_ns, speed, before_sleep=sink.flush):
             if not validator.is_valid(msg):
                 raise RuntimeError(f"mock이 스키마에 맞지 않는 메시지를 만들었습니다: {validation_errors(msg)}\n{msg}")
-            offset_s = (emit_ns(msg) - start_ns) / NS
-            if speed > 0:
-                delay = wall0 + offset_s / speed - time.monotonic()
-                if delay > 0:
-                    sink.flush()
-                    time.sleep(delay)
-            if offset_s >= next_progress:
+            if (message_time(msg) - start_ns) / NS >= next_progress:
                 log.info("시뮬레이션 %ds 경과, 보낸 메시지 %d건", next_progress, sum(counts.values()))
                 next_progress += progress_s
             sink.send(encode(msg))
-            key = msg["type"]
-            if key == "metric":
-                key = f"metric:{msg['kind']}"
-            elif key == "detection":
-                key = f"detection:{msg['ruleset']}"
-            counts[key] += 1
+            counts[count_key(msg)] += 1
     finally:
         sink.close()
     return counts

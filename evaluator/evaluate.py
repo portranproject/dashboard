@@ -181,11 +181,14 @@ def evaluate(runs: list[AttackRun], detections: list[Detection], window_from: in
 
 
 def detect_data_source(runs: Iterable[AttackRun]) -> str:
-    """attack_run.params에 mock 표시가 있으면 mock. 공격 기록이 없으면 판단할 수 없다."""
+    """attack_run.params로 판단한다: mock 표시가 있으면 mock (녹화를 재생한 mock도 숫자는 mock이므로 mock),
+    replay 표시만 있으면 replay, 둘 다 없으면 real. 공격 기록이 없으면 판단할 수 없다."""
     runs = list(runs)
     if not runs:
         return "unknown"
-    return "mock" if any(r.params.get("generator") == "mock" for r in runs) else "real"
+    if any(r.params.get("generator") == "mock" for r in runs):
+        return "mock"
+    return "replay" if any("replay" in r.params for r in runs) else "real"
 
 
 # --------------------------------------------------------------------------- InfluxDB
@@ -337,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grace-sec", type=float, default=float(os.environ["EVAL_GRACE_SEC"]),
                         help=f"공격 종료 후 탐지를 인정하는 시간 (기본 .env의 EVAL_GRACE_SEC={os.environ['EVAL_GRACE_SEC']})")
     parser.add_argument("--source", choices=DATA_SOURCES, default="auto",
-                        help="리포트에 적을 데이터 출처. auto면 attack_run의 mock 표시로 판단 (replay는 직접 지정)")
+                        help="리포트에 적을 데이터 출처. auto면 attack_run의 mock·replay 표시로 판단")
     parser.add_argument("--reports-dir", default=os.environ["REPORTS_DIR"], help="리포트 폴더 (기본 .env의 REPORTS_DIR)")
     parser.add_argument("--no-write", action="store_true", help="InfluxDB eval_result에 쓰지 않음 (리포트만)")
     args = parser.parse_args(argv)

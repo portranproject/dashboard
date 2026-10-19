@@ -1,0 +1,172 @@
+# mock 생성기 설정. 생성기의 숫자는 전부 여기 있다 (코드에 하드코딩하지 않음).
+#
+# ⚠ mock 데이터로 나온 탐지율·지연은 성능 결과가 아니다. 대시보드·evaluator 개발용이다.
+# TODO: 지표 이름·단위·기본값은 가안. eBPF 팀, FlexRIC(KPM) 담당과 확정 후 고친다.
+# 범위는 [최소, 최대] 균등분포. 문자열 값(cell, ue, rule_version)은 반드시 따옴표로 감싼다
+# (YAML은 0x4601을 정수로, 1.0을 실수로 읽는다).
+
+tick_s: 1                  # 지표·오버헤드 생성 주기
+
+# 지표 노이즈의 시간 상관(AR(1) 계수, 0~1). 0이면 매초 독립 노이즈, 클수록 부드럽게 흔들린다.
+noise_persistence: 0.6
+
+topology:
+  cells: ["1"]
+  ues: ["0x4601", "0x4602", "0x4603"]   # TODO: UE ID 형식 미확정
+
+# ---------------------------------------------------------------------------
+# 지표 (평상시)
+#   baseline: 평상시 평균, noise: 평상시 표준편차, min/max: 값 범위
+#   per_ue: true면 UE마다 따로 (labels.ue), integer: true면 정수로 반올림
+# ---------------------------------------------------------------------------
+metrics:
+  # eKPM (eBPF)
+  - {name: rrc_setup_req_rate,     kind: ekpm, src: ebpf, node: cu, unit: "req/s", baseline: 0.5,  noise: 0.3,  min: 0}
+  - {name: rrc_setup_fail_ratio,   kind: ekpm, src: ebpf, node: cu, unit: "ratio", baseline: 0.02, noise: 0.01, min: 0, max: 1}
+  - {name: ue_attach_attempt_rate, kind: ekpm, src: ebpf, node: cu, unit: "req/s", baseline: 0.2,  noise: 0.15, min: 0}
+  - {name: f1ap_msg_rate,          kind: ekpm, src: ebpf, node: cu, unit: "msg/s", baseline: 40,   noise: 3,    min: 0}
+  - {name: f1ap_malformed_count,   kind: ekpm, src: ebpf, node: cu, unit: "count", baseline: 0,    noise: 0.2,  min: 0, integer: true}
+  # 표준 KPM (E2SM-KPM)
+  - {name: RRU.PrbUsedDl,          kind: kpm,  src: kpm,  node: du, unit: "%",     baseline: 35,    noise: 4,    min: 0, max: 100}
+  - {name: DRB.UEThpDl,            kind: kpm,  src: kpm,  node: du, unit: "kbps",  baseline: 12000, noise: 1500, min: 0, per_ue: true}
+  - {name: RRC.ConnMean,           kind: kpm,  src: kpm,  node: cu, unit: "count", baseline: 3,     noise: 0.15, min: 0}
+
+# ---------------------------------------------------------------------------
+# 공격 일정 (mixed 또는 특정 공격 시나리오)
+#   평상시(warmup_s) → 공격 → 평상시(gap_s) → 공격 → ... 반복. 시간 안에 못 끝나는 공격은 만들지 않는다.
+#   mixed는 공격 유형을 섞되, 유형마다 한 번씩 돌고 나서 다음 순서를 섞는다(유형별 횟수 균형).
+# ---------------------------------------------------------------------------
+schedule:
+  warmup_s: 30
+  gap_s: [40, 90]
+  start_jitter_ms: 1000    # 공격 시작 시각이 1초 단위에 딱 맞지 않도록
+
+# ---------------------------------------------------------------------------
+# 공격 유형
+#   effects: 공격 중 지표 변화. set = 그 값 주변으로 바뀜, add = 평상시 값에 더함, noise = 공격 중 표준편차
+#            eKPM은 크게, 표준 KPM은 약하게 바뀌도록 잡는다 (프로젝트 핵심 주장을 보여주는 데이터).
+#   rulesets: 룰셋별 탐지 이벤트
+#     detect_prob:        공격 1회를 탐지할 확률
+#     delay_ms:           공격 시작 → 첫 탐지(ts_detected)
+#     latency_ms:         ts_first_evidence → ts_detected
+#     repeat_interval_s:  탐지 후 공격이 끝날 때까지 이 간격으로 다시 탐지 이벤트를 낸다 (null이면 한 번만)
+#     evidence[].value:   탐지 시 근거 값 범위 (op·threshold를 만족해야 함)
+#   TODO: rule_id, 임계값은 탐지 엔진 담당과 맞춘다.
+# ---------------------------------------------------------------------------
+attacks:
+  RRC_SIGNALING_STORM:
+    duration_s: [20, 40]
+    params: {rate: 200, fake_ue_count: 50}
+    target: {node: cu, cell: "1"}
+    effects:
+      rrc_setup_req_rate:   {set: 200, noise: 15}
+      rrc_setup_fail_ratio: {set: 0.7, noise: 0.05}
+      RRU.PrbUsedDl:        {add: 3}
+      RRC.ConnMean:         {add: 0.3}
+    rulesets:
+      full:
+        detect_prob: 0.95
+        delay_ms: [200, 800]
+        latency_ms: [100, 500]
+        repeat_interval_s: 10
+        rule_id: R-RRC-001
+        rule_version: "1.0"
+        severity: high
+        evidence:
+          - {source: ebpf, metric: rrc_setup_req_rate,   op: ">", threshold: 50,  window_ms: 1000, value: [150, 230]}
+          - {source: ebpf, metric: rrc_setup_fail_ratio, op: ">", threshold: 0.3, window_ms: 1000, value: [0.6, 0.8]}
+      kpm_only:
+        detect_prob: 0.4
+        delay_ms: [3000, 12000]
+        latency_ms: [2000, 5000]
+        repeat_interval_s: null
+        rule_id: R-KPM-RRC-001
+        rule_version: "1.0"
+        severity: medium
+        evidence:
+          - {source: kpm, metric: RRU.PrbUsedDl, op: ">", threshold: 37,  window_ms: 5000, value: [37.5, 42]}
+          - {source: kpm, metric: RRC.ConnMean,  op: ">", threshold: 3.2, window_ms: 5000, value: [3.22, 3.45]}
+
+  ABNORMAL_UE_ATTACH:
+    duration_s: [30, 60]
+    params: {attempt_rate: 12, ue: "0x4f10"}
+    target: {node: cu, cell: "1", ue: ["0x4f10"]}
+    effects:
+      ue_attach_attempt_rate: {set: 12, noise: 2}
+      rrc_setup_req_rate:     {add: 10, noise: 2}
+      rrc_setup_fail_ratio:   {add: 0.15, noise: 0.03}
+      RRC.ConnMean:           {add: 0.3}
+    rulesets:
+      full:
+        detect_prob: 0.95
+        delay_ms: [300, 800]
+        latency_ms: [150, 600]
+        repeat_interval_s: 10
+        rule_id: R-ATT-001
+        rule_version: "1.0"
+        severity: high
+        evidence:
+          - {source: ebpf, metric: ue_attach_attempt_rate, op: ">", threshold: 5, window_ms: 1000, value: [9, 15]}
+      kpm_only:
+        detect_prob: 0.35
+        delay_ms: [5000, 15000]
+        latency_ms: [2000, 6000]
+        repeat_interval_s: null
+        rule_id: R-KPM-ATT-001
+        rule_version: "1.0"
+        severity: medium
+        evidence:
+          - {source: kpm, metric: RRC.ConnMean, op: ">", threshold: 3.2, window_ms: 5000, value: [3.22, 3.45]}
+
+  F1AP_MSG_TAMPER:
+    duration_s: [20, 40]
+    params: {tamper_ratio: 0.3}
+    target: {node: cu, cell: "1"}
+    effects:
+      f1ap_malformed_count: {set: 15, noise: 3}
+      f1ap_msg_rate:        {add: 5}
+      DRB.UEThpDl:          {add: -800}
+      RRU.PrbUsedDl:        {add: -1}
+    rulesets:
+      full:
+        detect_prob: 0.95
+        delay_ms: [200, 600]
+        latency_ms: [100, 400]
+        repeat_interval_s: 10
+        rule_id: R-F1AP-001
+        rule_version: "1.0"
+        severity: critical
+        evidence:
+          - {source: ebpf, metric: f1ap_malformed_count, op: ">", threshold: 3, window_ms: 1000, value: [9, 20]}
+      kpm_only:
+        detect_prob: 0.3
+        delay_ms: [4000, 12000]
+        latency_ms: [2000, 5000]
+        repeat_interval_s: null
+        rule_id: R-KPM-F1AP-001
+        rule_version: "1.0"
+        severity: low
+        evidence:
+          - {source: kpm, metric: DRB.UEThpDl, op: "<", threshold: 11500, window_ms: 5000, value: [10800, 11450]}
+
+# ---------------------------------------------------------------------------
+# 오탐: 공격이 없는 구간에서 룰셋별로 시간당 평균 per_hour건 (포아송 과정).
+#   공격 유형은 전체 유형 중 무작위, 근거 값은 임계값을 excess 비율만큼 살짝 넘긴 값.
+#   공격 종료 후 exclude_after_attack_s 동안은 오탐을 내지 않는다 (evaluator의 grace 구간에서 TP로 잡히지 않도록).
+# ---------------------------------------------------------------------------
+false_positive:
+  per_hour: {full: 1.0, kpm_only: 4.0}
+  excess: [0.02, 0.15]
+  exclude_after_attack_s: 10
+
+# ---------------------------------------------------------------------------
+# 수집 오버헤드: interval_s마다 노드별로 낸다. ebpf_on은 toggle_s마다 on/off를 번갈아 바꾼다(on부터).
+# ---------------------------------------------------------------------------
+overhead:
+  interval_s: 5
+  toggle_s: 60
+  nodes:
+    cu: {cpu_pct: 18.0, mem_mb: 480}
+    du: {cpu_pct: 35.0, mem_mb: 620}
+  ebpf_cost: {cpu_pct: 2.5, mem_mb: 45}   # ebpf_on일 때 더해지는 양
+  noise: {cpu_pct: 1.0, mem_mb: 5}

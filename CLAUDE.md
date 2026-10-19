@@ -250,6 +250,11 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
    - **남은 일·TODO**
    
    문서 맨 위의 "열린 항목"(팀 확인 대기, 미정 사항)은 마일스톤과 상관없이 항상 최신으로 유지한다. 해결된 항목은 지우지 말고 해결 내용과 함께 해결됨으로 옮긴다.
+9. **브랜치 규칙.**
+   - `main`: 배포·발표용. 직접 커밋하지 않고 `dev` → `main` PR로만 반영한다.
+   - `dev`: 개발 통합 브랜치 (GitHub default 브랜치).
+   - `feat/dashboard-M<n>`: 마일스톤 작업 브랜치. 항상 최신 `dev`에서 만들고, 끝나면 `dev`로 PR을 연다. 마일스톤이 아닌 작은 수정은 `fix/<내용>`, `docs/<내용>`.
+   - push, PR 생성·병합은 사용자 확인을 받고 한다.
 
 ## 13. 마일스톤
 

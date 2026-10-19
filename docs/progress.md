@@ -5,8 +5,8 @@
 | 마일스톤 | 상태 | 완료일 |
 |---|---|---|
 | M1 저장소 뼈대 · docker-compose · 스키마 | 완료 | 2026-10-19 |
-| M2 mock 생성기 | 완료 (PR 대기) | 2026-10-19 |
-| M3 collector | 대기 | |
+| M2 mock 생성기 | 완료 (PR #1 병합, 지표는 M3 브랜치에서 논문 기준으로 보완) | 2026-10-19 |
+| M3 collector | 완료 (PR 대기) | 2026-10-19 |
 | M4 실시간 관제 대시보드 | 대기 | |
 | M5 evaluator + 성능 검증 대시보드 | 대기 | |
 | M6 replay | 대기 | |
@@ -27,21 +27,26 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q4 | `attack_type`을 3종 열거형으로 고정 (목록 밖 값은 거부) | 탐지 엔진, 공격 도구 | D5 |
 | Q5 | `attack_run`을 공격 **시작 시점**에 보낼지 **종료 시점**에 보낼지. mock은 시작 시점(예정 종료 시각 포함)으로 냄 | 공격 도구 | SCHEMA.md 4절, M2 D15 |
 | Q6 | 탐지 엔진이 공격이 계속되는 동안 탐지 이벤트를 **반복해서** 내는지, 한 번만 내는지. mock은 full 룰셋이 10초마다 반복 | 탐지 엔진 | M2 D18 |
-| Q7 | 지표가 어느 노드에서 나오는지와 단위. mock은 eKPM 전부 `cu`, `RRU.PrbUsedDl`·`DRB.UEThpDl`은 `du`, `RRC.ConnMean`은 `cu`. 단위는 `req/s`, `ratio`, `%`, `kbps`, `count` | eBPF, FlexRIC(KPM) | M2 D24 |
+| Q7 | 지표가 어느 노드에서 나오는지. mock은 eKPM·KPM 모두 `cu` (TeleRAN은 CU에서 F1AP·RRC·NAS를 봄). 표준 KPM을 FlexRIC(E2SM-KPM)로 받을지 eBPF 에이전트가 만들지도 확인 | eBPF, FlexRIC(KPM) | M2 보완 D51 |
+| Q9 | eKPM `labels.ue`에 무엇을 넣을지. mock은 그 RRC 연결의 C-RNTI 16진수(`"0x4601"`). 연결이 바뀌면 같은 단말도 라벨이 바뀜 | eBPF | M2 보완 D45 |
+| Q10 | Table I 값의 숫자 코드표(RRC/NAS 상태, 보안 상태, 알고리즘, 메시지 ID). NAS 메시지 ID만 TS 24.501 값이고 나머지는 가안. 탐지 엔진도 같은 코드를 써야 함 | eBPF, 탐지 엔진 | M2 보완 D42, SCHEMA.md 6.3 |
+| Q11 | `ue` 태그 개수(cardinality). 폭주 공격 땐 가짜 UE 수만큼 라벨이 생긴다. mock은 C-RNTI를 재사용해서 최대 512개. 실제 에이전트가 다른 키를 쓰면 InfluxDB 시리즈가 크게 늘 수 있음 | eBPF | M2 보완 D45 |
+| Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
 | # | 내용 | 현재 처리 |
 |---|---|---|
-| T1 | 실제 eKPM / KPM 지표 이름 | 형식만 검사 (`^[A-Za-z][A-Za-z0-9_.\-]*$`) |
+| T1 | 실제 eKPM / KPM 지표 이름 | TeleRAN 논문 기준으로 정함 (KPM은 3GPP 이름 그대로, eKPM은 Table I 항목을 snake_case로 쓴 가안). 스키마는 형식만 검사 |
 | T2 | UE ID 형식 (예시는 `0x4601`) | 비어 있지 않은 문자열만 검사 |
-| T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | JSON Schema로 표현 불가. M3 collector에서 할지 결정 |
 | T4 | 탐지 룰의 `rule_id` 체계, 임계값, severity | mock은 `scenarios.yaml`의 가안 값 (`R-RRC-001`, `R-KPM-RRC-001` 등) |
-| T5 | 지표별 평상시 값·공격 시 변화량 | mock은 그럴듯한 가안 값. 테스트베드에서 실측하면 `scenarios.yaml`을 맞춘다 |
+| T5 | 절차 타이밍, UE 수, 공격 강도 | mock은 그럴듯한 가안 값. 테스트베드에서 실측하면 `scenarios.yaml`을 맞춘다 |
 
 ### 해결됨
 
-(없음)
+| # | 내용 | 해결 |
+|---|---|---|
+| T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
 
 ---
 
@@ -178,6 +183,135 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 ### 남은 일
 
-- [ ] M2 커밋 → `feat/dashboard-M2` push → `dev`로 PR (사용자 확인 대기)
+- [x] M2 커밋 `7fa57aa` → `feat/dashboard-M2` push → PR #1로 `dev`에 병합
 - [ ] 팀 확인 대기 Q5–Q7 공유 (Q1–Q4와 함께)
-- [ ] M3 collector: `value` float 변환(D27), `ts_first_evidence <= ts_detected` 검사 위치 결정(T3)
+- [x] M3 collector: `value` float 변환(D27), 시각 순서 검사 위치 결정(T3) → M3에서 처리
+
+---
+
+## M3 — collector (2026-10-19, 브랜치 `feat/dashboard-M3`)
+
+### 한 일
+
+| 파일 | 역할 |
+|---|---|
+| `collector/collector.py` | collector CLI. 입력마다 스레드가 줄을 읽어 큐에 넣고, 메인 루프가 검증 → raw 녹화 → 배치 쓰기 → 1초 로그. Ctrl+C·SIGTERM 시 남은 것 처리 후 flush |
+| `collector/influx_writer.py` | 메시지 → InfluxDB Point 변환(CLAUDE.md 6절), 동기 쓰기, 오류를 재시도 가능/불가로 구분 |
+| `common/transport.py` | 수신 추가: `UdpSource`, `FileTailSource`(tail -f, 파일 생성 대기, 잘림·교체 감지), `open_source()` |
+| `common/config.py` | `.env`에 없는 키는 `.env.example`로 채움, `env_int()` |
+| `.env.example` | `COLLECTOR_MAX_PENDING`, `COLLECTOR_INFLUX_TIMEOUT_MS`, `COLLECTOR_UDP_RCVBUF_BYTES`, `COLLECTOR_FILE_POLL_MS` 추가 |
+| `tests/test_collector.py` | 변환 결과(line protocol) 고정, 녹화·거부·경고, 배치 분할, InfluxDB 장애·데이터 오류 처리, 파일 입력 끝까지/중단 시 flush (21건) |
+| `tests/test_transport.py` | 파일 따라 읽기(추가·부분 줄·끝부터·나중에 생성·잘림), UDP 수신 (5건 추가) |
+| `tests/test_influx_integration.py` | 실제 InfluxDB 임시 bucket에 mock 2분치를 넣고 건수·시각·지연 확인 후 bucket 삭제. InfluxDB가 없으면 건너뜀 |
+| `README.md`, `schema/SCHEMA.md` | collector 사용법, 시각 순서 처리 방식, `--dry-run`으로 형식 확인하는 법 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D29 | `ts_first_evidence > ts_detected`, `ts_start > ts_end`는 **거부하지 않고 경고 로그만** 남긴 뒤 저장 | 노드 간 시계 차이로 생길 수 있는데, 거부하면 evaluator에서 FN으로 잡혀 결과가 조용히 틀어짐. 경고는 처음 5건만 자세히, 이후는 건수만 | 필요 (Q8) |
+| D30 | `--in`을 여러 번 줄 수 있음 (UDP와 파일 동시 수신) | 실제 파트들이 UDP·파일을 섞어 쓸 수 있음 | 불필요 |
+| D31 | 파일 입력은 기본으로 **처음부터** 읽음 (`--from-end`로 끝부터). `--once`면 끝까지 읽고 종료 | collector가 늦게 떠도 데이터를 놓치지 않게. 같은 파일을 다시 넣어도 InfluxDB에는 같은 점이 덮어써질 뿐이라 중복이 생기지 않음 (raw 녹화에는 중복됨) | 불필요 |
+| D32 | `--dry-run` 추가 (InfluxDB 없이 검증·녹화만) | 다른 파트가 자기 메시지 형식을 확인하는 용도. SCHEMA.md 8절에 안내 | 불필요 |
+| D33 | InfluxDB 장애(연결 실패·5xx·429)면 메시지를 메모리에 최대 `COLLECTOR_MAX_PENDING`(10만)건 들고 flush 주기마다 재시도. 넘으면 오래된 것부터 버림 | 짧은 장애는 손실 없이 넘김. 버린 것도 raw 녹화에는 있어 replay로 복구 가능 | 불필요 |
+| D34 | InfluxDB가 데이터 문제(4xx)로 배치를 거부하면 한 건씩 다시 써서, 문제 건만 `rejected.jsonl`에 `InfluxDB 거부: ...` 사유로 남김 | 한 건 때문에 배치 전체를 잃지 않도록 | 불필요 |
+| D35 | raw 녹화는 스키마 검증 통과 시점에 함 (InfluxDB 저장 성공 여부와 무관) | InfluxDB가 죽어 있어도 replay 백업이 남도록. 그래서 InfluxDB가 거부한 건도 raw에는 있음 | 불필요 |
+| D36 | raw 파일은 collector 실행마다 새로 `raw-<시작시각>.jsonl` (첫 정상 메시지 때 생성). `rejected.jsonl`은 하나에 계속 이어 붙이고 형식은 `{received_at, source, reasons, raw}` | replay는 실행 단위로 고르기 쉽게. 거부 로그는 한 곳에서 보기 쉽게 | 불필요 |
+| D37 | UDP 데이터그램에 여러 줄이 붙어 오면 나눠서 처리. UTF-8이 아니거나 `NaN`/`Infinity`가 있으면 거부 | 보내는 쪽 실수에 너그럽게, 단 InfluxDB에 못 쓰는 값은 막음 | 불필요 |
+| D38 | `.env`에 없는 키는 `.env.example` 값을 씀. 단 InfluxDB 접속 정보는 `.env`가 있어야 함 | `.env.example`에 설정이 추가될 때마다 팀원 각자 `.env`를 고치지 않아도 되게. 접속 정보까지 예시 값으로 채우면 인증 실패 원인이 헷갈림 | 불필요 |
+| D39 | InfluxDB 클라이언트는 동기 쓰기 + 자체 재시도 끔. 배치·재시도는 collector가 직접 | "저장" 건수를 실제 성공 기준으로 세고, Ctrl+C 시 남은 배치를 확실히 쓰기 위해 | 불필요 |
+| D40 | 변환 세부: detection의 tag `node`는 `target.node`, `ue_list`는 UE가 없으면 `"[]"`, `cell`은 있을 때만, `latency_ms = (ts_detected - ts_first_evidence) / 1e6`. 숫자 필드 타입 고정(`value`·`cpu_pct`·`mem_mb`·`latency_ms`는 float, `ts_first_evidence`·`ts_end`는 int) | CLAUDE.md 6절에 없는 세부. 타입이 섞이면 InfluxDB가 쓰기를 거부함 | 불필요 |
+
+알려진 제약: InfluxDB는 measurement·tag·시각이 모두 같은 점을 하나로 덮어쓴다. 예를 들어 같은 나노초에 같은 룰(같은 attack_type·severity·ruleset·rule_id·node)로 탐지 이벤트 2개가 오면 하나만 남는다. ns 단위라 실제로는 드물다.
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| **mock → UDP → collector → InfluxDB** | collector 실행 후 `mock.generator --duration 300 --speed 10 --seed 42 --start <5분 전>` (30.7초) | mock 3,135건 전송 → collector 수신 3,135·저장 3,135. InfluxDB 조회: metric 3,000 / overhead 120 / attack_run 3 / detection 12 (전송 건수와 일치) |
+| **raw 녹화** | `recordings/raw-20261019-141329.jsonl` | 3,135줄 (정상 메시지 전부) |
+| **거부 로그** | 깨진 JSON 1건, 스키마 위반 detection 1건을 UDP로 전송 | `rejected.jsonl`에 2건, 출처(`udp:127.0.0.1:포트`)·사유·원문 기록. raw에는 없음 |
+| 1초 로그 | collector 출력 | `수신 104 저장 104 거부 0 \| 누적 ... \| 대기 N` 형식으로 매초 출력 |
+| **Ctrl+C flush** | 전송 직후 SIGINT | 대기 중이던 72건까지 쓰고 `종료 — 누적 수신 3,137 저장 3,135 거부 2 \| 못 쓴 것 0`, exit 0 |
+| InfluxDB 꺼짐 | `INFLUX_URL=http://localhost:1` | "InfluxDB에 접속할 수 없습니다 ... (docker compose up -d 했는지 확인)", exit 1 |
+| 옵션 오류 | `--once`를 UDP와 같이 | "--once는 파일 입력에만 쓸 수 있습니다" |
+| 파일 `--once --dry-run` | mock 60초 파일 | 624건 전부 통과 후 자동 종료 |
+| 통합 테스트 | 임시 bucket에 mock 2분치 | 타입별 건수 일치, 탐지 시각 ns 일치, `latency_ms` 계산값 일치, bucket 삭제 |
+| 테스트 | `pytest` | **114 passed** (스키마 45, mock 26, collector 21, transport 19, config 2, 통합 1) |
+
+미확인: InfluxDB가 **실행 도중** 죽었다가 살아나는 상황은 실제로 해보지 않음 (가짜 writer로 테스트만 함).
+
+### 환경 메모
+
+- UDP 수신 버퍼를 4MB로 요청하면 Linux가 두 배인 8MB를 잡는다(이 WSL에서는 `net.core.rmem_max` 상한에 안 걸림). 다른 환경에서는 상한에 막혀 작아질 수 있어, collector가 시작할 때 실제 크기를 로그로 보여 준다.
+- 기본 bucket `portran`에 확인용 mock 데이터(seed 42, 5분치, 2026-10-19 14:08~14:13 KST)가 들어 있다. M4 대시보드 작업에 그대로 쓴다.
+
+### 남은 일
+
+- [ ] M3 커밋 → `feat/dashboard-M3` push → `dev`로 PR (아래 M2 보완과 함께)
+- [ ] 팀 확인 대기 Q8(시계 동기화) 공유
+- [ ] M4 실시간 관제 대시보드
+
+---
+
+## M2 보완 — mock 지표를 TeleRAN 논문 기준으로 (2026-10-19, 브랜치 `feat/dashboard-M3`)
+
+M3 커밋 전에 사용자 요청으로 mock 지표 체계를 바꿨다. 기준 논문: Wen et al., *Towards Bridging the Telemetry Gap for Security Applications in 6G OpenRANs via eBPF* (TeleRAN). **Table I → eKPM, Table II → 표준 KPM.**
+
+Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, 세 가지를 사용자에게 물어 정했다.
+- Table I 표현: **숫자 코드로 기존 `metric` 메시지에** (스키마 변경 없음)
+- 표준 KPM 변화: **공격별로 현실대로** (폭주 때는 KPM도 오름). CLAUDE.md 7절 2항 문구도 고침
+- 공격 유형: **3종 유지**, 지표에 나타나는 방식만 다시 설계
+
+### 한 일
+
+| 파일 | 내용 |
+|---|---|
+| `mock/scenarios.yaml` | 새로 씀: 코드표(`codes`), eKPM 10개, KPM 14개, 절차 9개(정상 6 + 공격 3), 정상 UE 행동, 공격별 주입(inject)·변조(override), 탐지 근거 |
+| `mock/generator.py` | 지표 생성부를 "기본값 ± 노이즈"에서 **UE 절차 시뮬레이터**로 교체 (`Simulator`). 공격 일정·탐지·CLI는 유지. 탐지 `target.ue`에 공격에 연루된 UE를 넣음 |
+| `tests/test_mock_generator.py` | 새 구조에 맞게 다시 씀 (40건): 논문 표와 일치, 코드표 사용, KPM↔eKPM 개수 일치, 공격별 특성(폭주·비정상 접속·변조), 탐지 대상, C-RNTI 부족 오류 |
+| `CLAUDE.md` 7절 | 동작 1·2항과 지표 목록을 논문 기준으로 |
+| `schema/SCHEMA.md` 6절 | 지표 이름·논문 항목 대응, `labels.ue` 의미, KPM 설명, 코드표, 탐지 근거 표기 (스키마 파일은 변경 없음) |
+| `README.md` | mock 설명과 공격별로 보이는 것 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D41 | 이전 가안 지표 8개(`rrc_setup_req_rate`, `RRU.PrbUsedDl` 등)를 버리고 논문 Table I(10개)·Table II(14개)로 교체 | 사용자 결정 | 불필요 |
+| D42 | Table I 값은 숫자 코드로 `metric`에 넣음. 코드표는 `scenarios.yaml`의 `codes`(원본)와 SCHEMA.md 6.3. `nas_msg_id`는 TS 24.501 표 9.7.1 값, 나머지는 가안 | 사용자 결정(스키마 변경 없음). 대시보드는 값 매핑으로 이름을 보여 주면 됨 | 필요 (Q10) |
+| D43 | eKPM은 이벤트 단위(값이 바뀔 때, 메시지마다), KPM은 1초 구간 집계를 **구간 끝 시각**으로 냄 | 구간 시작 시각으로 내면 KPM이 eKPM보다 1초 먼저 튀어 보임. M2 D19(AR(1) 노이즈)를 대체 | 불필요 |
+| D44 | mock을 UE 절차 시뮬레이터로: 정상 UE 3대가 등록 → 연결 ↔ 해제/일시 중지 → 재개 ... 를 반복하고, 절차는 yaml에 단계 목록으로 선언. eKPM과 KPM을 같은 절차에서 뽑음 | 두 지표가 서로 맞아야 대시보드 비교가 설득력 있음 (예: KPM `RRC.ConnEstabAtt` 합 = eKPM `RRCSetupRequest` 수) | 불필요 |
+| D45 | `labels.ue` = 그 RRC 연결의 C-RNTI 16진수. C-RNTI는 512개 풀에서 돌려 씀 → `ue` 태그는 최대 512개 | 스키마 예시(`0x4601`)와 같은 형식. 폭주 때도 InfluxDB 시리즈 수가 묶임 | 필요 (Q9, Q11) |
+| D46 | 공격 효과: 폭주 = 가짜 `RRCSetupRequest` 초당 50건, 1초 뒤 타임아웃 실패 / 비정상 접속 = 공격자가 2.5~3.5초마다 새 S-TMSI로 등록 → 인증 실패 → 거절 / 변조 = 연결 중인 UE에 변조된 SMC(NEA0/NIA0 + 위조 C-RNTI) 초당 0.3건 + 재수립 0.05건, 공격 중 모든 SMC를 NEA0/NIA0으로 | "공격별로 현실대로"를 구체화. 논문이 언급한 시그널링 폭주(위조 RRC 연결 요청)·알고리즘 다운그레이드를 반영 | 불필요 |
+| D47 | kpm_only 탐지율을 공격별로: 폭주 0.5, 비정상 접속 0.3, 변조 0.15. 폭주 full 지연은 400~800ms | KPM에 보이는 정도에 맞춤. 변조는 CLAUDE.md 예시(30~50%)보다 낮지만 KPM에 거의 안 보이므로. 폭주는 초당 50건이면 0.4초쯤 임계값(20건)을 넘음 (CLAUDE.md의 200~800ms 안) | 불필요 |
+| D48 | eKPM 기반 탐지 근거의 `metric`은 `count(rrc_msg_id=RRCSetupRequest)`처럼 집계식으로 적음 | eKPM은 메시지 단위라 룰은 윈도우 집계로 쓰게 됨 | 필요 (T4) |
+| D49 | 탐지 `target`: `node`·`cell`은 설정값, `ue`는 탐지 시각까지 그 공격에 연루된 UE 라벨(최대 5개). 오탐은 `ue` 없음 | 대시보드 이벤트 표의 "대상" 열이 의미 있게 | 불필요 |
+| D50 | mock의 `attack_run.params` = 실제로 주입한 내용(`inject`, `override`) + `generator`, `seed` | M2 D16 보완. 예전에는 설명용 값(`rate` 등)을 따로 적었는데, 실제 동작과 어긋날 수 있어서 | 불필요 |
+| D51 | eKPM·KPM 모두 `node: cu` | TeleRAN은 CU에서 F1AP·RRC·NAS를 봄. M2 D24를 대체 | 필요 (Q7) |
+| D52 | 변조로 낮아진 보안 알고리즘은 다음 SMC 전까지 유지됨 (일시 중지 후 재개 때 NEA0을 다시 보고) | 실제 보안 컨텍스트 동작과 같게. 공격이 끝난 뒤에도 피해 UE가 남아 보임 | 불필요 |
+
+알려진 한계: 변조 공격이 시작될 때 연결 중인 정상 UE가 없으면 첫 변조가 늦어진다. 그러면 full 탐지 시각(공격 시작 후 0.2~0.6초)이 실제 변조보다 앞설 수 있다. 탐지 이벤트는 정해진 확률·지연으로 만들고 지표와 직접 연동하지 않기 때문이다(M2 D17).
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| 10분치 생성 | `--duration 600 --seed 42 --speed 0 --out file://...` | 23,126건 (eKPM 14,458 / KPM 8,400 / overhead 240 / attack_run 6 / detection 22), 약 4.2초, 전부 스키마 통과 |
+| KPM ↔ eKPM 정합성 | 같은 파일 | KPM `RRC.ConnEstabAtt` 합 2,720 = eKPM `RRCSetupRequest` 2,720 |
+| 공격별 모양 (초당) | 같은 파일, 공격 구간 vs 평상시 | 폭주: KPM 연결 시도 49, 실패 47 / eKPM `RRCSetupRequest` 50. 비정상 접속: KPM 연결 시도 0.37 / eKPM 인증 실패·등록 거절 0.34. 변조: KPM 연결·해제 카운터 거의 그대로, 재수립 0.1 / eKPM NEA0 전환 0.08, C-RNTI 불일치 0.28 |
+| `ue` 라벨 수 | 같은 파일 | 512 (C-RNTI 풀 크기에서 멈춤) |
+| 공격 특성 테스트 안정성 | seed 1~5로 30분씩 생성해 세 테스트 실행 | 모두 통과 |
+| **mock → UDP → collector → InfluxDB** | collector 실행 후 `--duration 300 --speed 10 --seed 42 --start <5분 전>` | 10,936건 전송, raw 녹화 10,936줄(UDP 손실 없음). InfluxDB: eKPM 6,601 / KPM 4,200 / detection 12 / attack_run 3 / overhead 120 (전송 건수와 일치) |
+| 테스트 | `pytest` | **128 passed** (스키마 45, mock 40, collector 21, transport 19, config 2, 통합 1) |
+
+### 환경 메모
+
+- 논문 PDF를 읽으려고 `pypdf`를 임시 폴더(scratchpad)에만 설치했다. 프로젝트 의존성에는 넣지 않았다.
+- 기본 bucket `portran`에 확인용 mock 데이터가 두 벌 있다: **이전 형식**(2026-10-19 14:08~14:13 KST, `rrc_setup_req_rate` 등)과 **새 형식**(14:34~14:39 KST, seed 42). M4 대시보드는 새 형식을 쓴다. 이전 형식 데이터는 지워도 됨(사용자 확인 후).
+
+### 남은 일
+
+- [ ] M3 + M2 보완 커밋 → `feat/dashboard-M3` push → `dev`로 PR
+- [ ] 팀 확인 대기 Q7, Q9~Q11 공유 (특히 Q10 코드표는 eBPF·탐지 엔진 담당과 맞춰야 함)
+- [ ] bucket의 이전 형식 mock 데이터 정리 여부 결정

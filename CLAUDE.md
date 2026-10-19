@@ -161,8 +161,11 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 ```
 
 동작:
-1. **평상시**: 지표가 `scenarios.yaml`에 정의한 기본값 주변에서 약한 노이즈로 흔들린다. 주기 1초.
-2. **공격 구간**: `attack_run`을 내보내고, 그 구간 동안 **해당 eKPM 지표는 크게 튀지만 표준 KPM은 거의 변하지 않게(또는 약하게만)** 만든다. 프로젝트 핵심 주장을 화면으로 보여주는 데이터다.
+1. **평상시**: 정상 UE들이 등록·연결·해제·일시 중지·재개·재수립 같은 RRC/NAS 절차를 무작위 간격으로 반복한다. 같은 절차에서 eKPM(메시지 처리마다, UE별)과 표준 KPM(1초 주기, 셀 단위 집계)을 함께 뽑아 두 지표가 서로 맞도록 한다.
+2. **공격 구간**: `attack_run`을 내보내고, 공격 절차(가짜 UE, 공격자 UE, 메시지 변조)를 일으킨다. 표준 KPM은 **공격별로 현실대로** 변한다. 프로젝트 핵심 주장을 화면으로 보여주는 데이터다.
+   - `RRC_SIGNALING_STORM`: KPM(연결 시도·실패)도 크게 오르지만, 어떤 UE가 가짜인지는 eKPM(C-RNTI별 상태)만 안다.
+   - `ABNORMAL_UE_ATTACH`: KPM은 연결 시도가 조금 늘 뿐이고, eKPM에 반복되는 인증 실패·등록 거절과 바뀌는 S-TMSI가 보인다.
+   - `F1AP_MSG_TAMPER`: KPM은 거의 그대로이고, eKPM에서 보안 알고리즘이 NEA0/NIA0으로 떨어지고 C-RNTI가 어긋난다.
 3. **탐지 이벤트**:
    - `ruleset=full`: 공격 시작 후 200~800ms 지연, 높은 탐지율(예: 95%)
    - `ruleset=kpm_only`: 더 긴 지연, 낮은 탐지율(예: 30~50%)
@@ -172,9 +175,10 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 6. 지표 이름·기본값·공격 시 변화량·탐지율 같은 숫자는 전부 `scenarios.yaml`에 두고 코드에 하드코딩하지 않는다.
 7. 내보내는 모든 메시지는 JSON Schema 검증을 통과해야 한다.
 
-가안 지표 (`scenarios.yaml`에 정의):
-- eKPM: `rrc_setup_req_rate`, `rrc_setup_fail_ratio`, `ue_attach_attempt_rate`, `f1ap_msg_rate`, `f1ap_malformed_count`
-- 표준 KPM: `RRU.PrbUsedDl`, `DRB.UEThpDl`, `RRC.ConnMean`
+지표 (TeleRAN 논문 기준, `scenarios.yaml`에 정의, 이름·코드는 가안이라 eBPF 팀과 확정 예정):
+- eKPM = 논문 Table I (UE별 보안 텔레메트리, `labels.ue`별, 값은 숫자 코드 또는 식별자): `ue_c_rnti`, `ue_s_tmsi`, `ue_cipher_alg`, `ue_integrity_alg`, `ue_rrc_state`, `ue_nas_state`, `ue_rrc_sec_state`, `ue_nas_sec_state`, `rrc_msg_id`, `nas_msg_id`
+- 표준 KPM = 논문 Table II (3GPP TS 28.552, 셀 단위): `RRC.ConnEstabAtt`, `RRC.ConnEstabSucc`, `RRC.ConnEstabFailCause`, `RRC.RelWithoutSuspendConfig`, `UECNTX.ConnEstabAtt`, `UECNTX.ConnEstabSucc`, `RRC.ReEstabAtt`, `RRC.ReEstabSuccWithUeContext`, `RRC.ResumeAtt`, `RRC.ResumeSucc`, `RRC.ConnMean`, `RRC.ConnMax`, `RRC.InactiveConnMean`, `RRC.InactiveConnMax`
+- 상태·알고리즘·메시지 ID의 숫자 코드표는 `scenarios.yaml`의 `codes`와 `schema/SCHEMA.md` 6절에 있다.
 
 ## 8. collector 요구사항
 

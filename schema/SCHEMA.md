@@ -91,7 +91,7 @@ eBPF 에이전트, 탐지 엔진, 공격 도구, mock 생성기가 collector로 
 | `window_ms` | 0 이상 정수 | 집계 윈도우 |
 
 - 탐지 지연 = `ts_detected - ts_first_evidence`
-- `ts_first_evidence <= ts_detected`여야 한다. JSON Schema로는 표현할 수 없어 스키마에서 검사하지 않는다.
+- `ts_first_evidence <= ts_detected`여야 한다. JSON Schema로는 표현할 수 없어서 collector가 따로 검사하고, 어긋나면 **경고 로그만 남기고 저장한다**(노드 간 시계 차이로 데이터를 잃지 않도록).
 - `kpm_only` 룰셋의 이벤트는 evidence에 `source: "kpm"`만 들어가는 것이 자연스럽다(강제하지는 않음).
 
 ## 4. attack_run — 정답 기록 (공격 도구가 출력)
@@ -108,7 +108,7 @@ eBPF 에이전트, 탐지 엔진, 공격 도구, mock 생성기가 collector로 
 | `run_id` | 문자열 | O | 공격 실행 고유 ID |
 | `scenario` | 열거형 | O | 공격 유형. detection의 `attack_type`과 같은 값 |
 | `ts_start` | 정수(ns) | O | 공격 시작 |
-| `ts_end` | 정수(ns) | O | 공격 종료 (`ts_start` 이상, 스키마에서는 미검사) |
+| `ts_end` | 정수(ns) | O | 공격 종료 (`ts_start` 이상. 어긋나면 collector가 경고만 함) |
 | `params` | 객체 | O | 공격 파라미터. 내용은 자유, 없으면 `{}` |
 
 > TODO: 공격 도구가 이 메시지를 **시작 시점**(예정 종료 시각)에 낼지 **종료 시점**(실제 종료 시각)에 낼지 공격 도구 담당과 정해야 한다.
@@ -139,14 +139,67 @@ eBPF 에이전트, 탐지 엔진, 공격 도구, mock 생성기가 collector로 
 | `cpu_pct` | 0 이상 숫자 | O | 멀티코어 합산이면 100을 넘을 수 있다 |
 | `mem_mb` | 0 이상 숫자 | O | |
 
-## 6. 지표 이름 (가안)
+## 6. 지표 이름과 코드 (가안)
 
-> TODO: eBPF 팀과 확정 예정. 스키마는 형식만 검사하므로 이름이 바뀌어도 스키마 수정은 필요 없다.
+TeleRAN 논문(Wen et al., *Towards Bridging the Telemetry Gap for Security Applications in 6G OpenRANs via eBPF*)의 Table I을 eKPM, Table II를 표준 KPM으로 쓴다.
+1~5절 예시의 지표 이름(`rrc_setup_req_rate` 등)은 형식을 보여 주기 위한 것이다.
 
-| kind | 이름 |
+> TODO: 이름·코드·`labels.ue`의 의미는 eBPF 팀과 확정 예정. 스키마는 이름 형식만 검사하므로 바뀌어도 스키마 수정은 필요 없다.
+
+### 6.1 eKPM (Table I) — `src: "ebpf"`, `kind: "ekpm"`, `labels: {cell, ue}`
+
+UE별 값이라 매 초가 아니라 **그 값이 바뀌거나 메시지를 처리할 때** 낸다. 값은 숫자 코드(6.3절) 또는 식별자다.
+
+| 이름 | 논문 항목 | 종류 · 처리 위치 | 값 | 낼 때 |
+|---|---|---|---|---|
+| `ue_c_rnti` | UE C-RNTI | Metadata · F1AP | C-RNTI (정수) | 할당될 때, F1AP에서 볼 때 |
+| `ue_s_tmsi` | UE S-TMSI | Metadata · RRC | S-TMSI (48비트 정수) | 할당·보고될 때 |
+| `ue_cipher_alg` | UE Cipher Algorithm | Metadata · RRC | 코드 (NEA0~3) | 바뀔 때 |
+| `ue_integrity_alg` | UE Integrity Algorithm | Metadata · RRC | 코드 (NIA0~3) | 바뀔 때 |
+| `ue_rrc_state` | UE RRC State | State · RRC | 코드 | 바뀔 때 |
+| `ue_nas_state` | UE NAS State | State · NAS | 코드 | 바뀔 때 |
+| `ue_rrc_sec_state` | UE RRC Security State | State · RRC | 코드 | 바뀔 때 |
+| `ue_nas_sec_state` | UE NAS Security State | State · NAS | 코드 | 바뀔 때 |
+| `rrc_msg_id` | RRC Message ID | State · RRC | 코드 | RRC 메시지마다 |
+| `nas_msg_id` | NAS Message ID | State · NAS | 코드 (5GMM 메시지 타입) | NAS 메시지마다 |
+
+- `labels.ue`: 지금은 **그 RRC 연결의 C-RNTI를 16진수 문자열**(`"0x4601"`)로 쓴다. 연결이 바뀌면 같은 단말도 라벨이 바뀌고, 단말을 계속 추적하려면 `ue_s_tmsi`를 본다. (TODO: 확정 필요)
+- `unit`: 코드는 `"code"`, 식별자는 `"id"`.
+
+### 6.2 표준 KPM (Table II, 3GPP TS 28.552) — `src: "kpm"`, `kind: "kpm"`, `labels: {cell}`
+
+1초(보고 주기)마다 **그 구간의 값**을 구간 끝 시각으로 낸다. 단위는 `"count"`.
+
+| 이름 | 종류 | 값 |
+|---|---|---|
+| `RRC.ConnEstabAtt` / `RRC.ConnEstabSucc` | CC | 구간 동안 RRC 연결 수립 시도 / 성공 수 |
+| `RRC.ConnEstabFailCause` | CC | 구간 동안 연결 수립 실패 수 (TODO: 표준은 원인별 세부 카운터, 지금은 합계) |
+| `RRC.RelWithoutSuspendConfig` | CC | suspend 없이 해제한 수 |
+| `UECNTX.ConnEstabAtt` / `UECNTX.ConnEstabSucc` | CC | UE 컨텍스트 수립 시도 / 성공 수 |
+| `RRC.ReEstabAtt` / `RRC.ReEstabSuccWithUeContext` | CC | 재수립 시도 / 성공 수 |
+| `RRC.ResumeAtt` / `RRC.ResumeSucc` | CC | 재개 시도 / 성공 수 |
+| `RRC.ConnMean` / `RRC.ConnMax` | SI | RRC_CONNECTED UE 수의 구간 평균 / 최대 |
+| `RRC.InactiveConnMean` / `RRC.InactiveConnMax` | SI | RRC_INACTIVE UE 수의 구간 평균 / 최대 |
+
+CC = 누적 카운터(구간 증가량), SI = 상태 통계.
+
+### 6.3 코드표 (TODO: eBPF 팀과 같은 코드를 써야 함)
+
+| 지표 | 코드 |
 |---|---|
-| ekpm | `rrc_setup_req_rate`, `rrc_setup_fail_ratio`, `ue_attach_attempt_rate`, `f1ap_msg_rate`, `f1ap_malformed_count` |
-| kpm | `RRU.PrbUsedDl`, `DRB.UEThpDl`, `RRC.ConnMean` |
+| `ue_rrc_state` | 0 RRC_IDLE, 1 RRC_SETUP_REQUESTED, 2 RRC_CONNECTED, 3 RRC_INACTIVE |
+| `ue_nas_state` | 0 DEREGISTERED, 1 REGISTERED_INITIATED, 2 REGISTERED, 3 DEREGISTERED_INITIATED |
+| `ue_rrc_sec_state`, `ue_nas_sec_state` | 0 NOT_ACTIVATED, 1 SMC_SENT, 2 ACTIVATED |
+| `ue_cipher_alg` | 0 NEA0(암호화 없음), 1 NEA1, 2 NEA2, 3 NEA3 |
+| `ue_integrity_alg` | 0 NIA0(무결성 보호 없음), 1 NIA1, 2 NIA2, 3 NIA3 |
+| `rrc_msg_id` | 0 RRCSetupRequest, 1 RRCSetup, 2 RRCSetupComplete, 3 SecurityModeCommand, 4 SecurityModeComplete, 5 RRCReconfiguration, 6 RRCReconfigurationComplete, 7 RRCRelease, 8 RRCResumeRequest, 9 RRCResume, 10 RRCResumeComplete, 11 RRCReestablishmentRequest, 12 RRCReestablishment, 13 RRCReestablishmentComplete |
+| `nas_msg_id` | TS 24.501 표 9.7.1의 5GMM 메시지 타입 값: 65 RegistrationRequest, 66 RegistrationAccept, 67 RegistrationComplete, 68 RegistrationReject, 76 ServiceRequest, 78 ServiceAccept, 86 AuthenticationRequest, 87 AuthenticationResponse, 89 AuthenticationFailure, 93 SecurityModeCommand, 94 SecurityModeComplete |
+
+기계가 읽는 원본은 [`mock/scenarios.yaml`](../mock/scenarios.yaml)의 `codes`다.
+
+### 6.4 탐지 근거(evidence)의 `metric`
+
+eKPM은 메시지 단위라 룰은 보통 윈도우 안의 집계로 쓴다. 이때 `evidence[].metric`에는 `count(rrc_msg_id=RRCSetupRequest)`, `count(ue_rrc_state=RRC_SETUP_REQUESTED)`처럼 무엇을 셌는지 적는다(가안, 탐지 엔진 담당과 확정).
 
 ## 7. InfluxDB 저장 형태 (참고)
 
@@ -161,6 +214,15 @@ collector가 아래처럼 변환한다. 메시지를 보내는 쪽은 신경 쓰
 
 ## 8. 직접 검증해 보기
 
+collector를 InfluxDB 없이 띄워 놓고 내 프로그램이 보내게 하면, 거부된 메시지와 사유가 `recordings/rejected.jsonl`에 쌓인다.
+
+```bash
+python -m collector.collector --dry-run                       # UDP 127.0.0.1:9999로 받기
+python -m collector.collector --dry-run --in file://out.jsonl --once   # 파일 검사
+```
+
+또는 파일을 한 줄씩 검사:
+
 ```bash
 python -c "import json,sys; from common.schema import validation_errors as v; \
 [print(i, v(json.loads(l)) or 'OK') for i,l in enumerate(open(sys.argv[1]),1)]" my_messages.jsonl
@@ -171,3 +233,5 @@ python -c "import json,sys; from common.schema import validation_errors as v; \
 | 버전 | 날짜 | 내용 |
 |---|---|---|
 | 0.1 | 2026-10-19 | 최초 작성 (CLAUDE.md 5절 기준) |
+| 0.1 | 2026-10-19 | 문서만: 시각 순서는 collector가 경고로 처리, `--dry-run` 검증 방법 추가 (스키마 변경 없음) |
+| 0.1 | 2026-10-19 | 문서만: 6절 지표를 TeleRAN 논문 Table I·II 기준으로 바꾸고 코드표 추가 (스키마 변경 없음) |

@@ -181,7 +181,7 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 동작:
 1. **평상시**: 정상 UE들이 등록·연결·해제·일시 중지·재개·재수립 같은 RRC/NAS 절차를 무작위 간격으로 반복한다. 같은 절차에서 eKPM(메시지 처리마다, UE별)과 표준 KPM(1초 주기, 셀 단위 집계)을 함께 뽑아 두 지표가 서로 맞도록 한다.
 2. **공격 구간**: `attack_run`을 내보내고, 공격 절차(가짜 UE, 공격자 UE, 메시지 변조)를 일으킨다. 표준 KPM은 **공격별로 현실대로** 변한다. 프로젝트 핵심 주장을 화면으로 보여주는 데이터다.
-   - `RRC_SIGNALING_STORM`: KPM(연결 시도·실패)도 크게 오르지만, 어떤 UE가 가짜인지는 eKPM(C-RNTI별 상태)만 안다.
+   - `RRC_SIGNALING_STORM` (= 5G-Spector의 BTS Resource Depletion): 위조 연결이 인증 요청까지 진행한 뒤 응답 없이 몇 초 머물다 해제된다. KPM(연결 시도·성공, 연결 UE 수)도 크게 오르지만, 어떤 UE가 가짜인지(transient UE)는 eKPM만 안다.
    - `ABNORMAL_UE_ATTACH`: KPM은 연결 시도가 조금 늘 뿐이고, eKPM에 반복되는 인증 실패·등록 거절과 바뀌는 S-TMSI가 보인다.
    - `F1AP_MSG_TAMPER`: KPM은 거의 그대로이고, eKPM에서 보안 알고리즘이 NEA0/NIA0으로 떨어지고 C-RNTI가 어긋난다.
 3. **탐지 이벤트**:

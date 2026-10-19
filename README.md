@@ -109,7 +109,7 @@ mock은 정상 UE 3대의 RRC/NAS 절차(등록·연결·해제·일시 중지·
 
 | 공격 | 표준 KPM | eKPM |
 |---|---|---|
-| `RRC_SIGNALING_STORM` | 연결 시도·실패가 크게 오름 | 가짜 UE마다 다른 C-RNTI로 `RRCSetupRequest` 후 멈춤 — 어느 UE가 가짜인지 보임 |
+| `RRC_SIGNALING_STORM` (5G-Spector의 BTS Resource Depletion) | 연결 시도·성공이 늘고 연결 UE 수가 크게 오름 | 위조 연결마다 다른 C-RNTI로 인증 요청까지 간 뒤 응답 없이 몇 초 만에 해제(transient UE) — 어느 UE가 가짜인지 보임 |
 | `ABNORMAL_UE_ATTACH` | 연결 시도가 조금 늘 뿐 | 같은 패턴의 인증 실패·등록 거절, 시도마다 바뀌는 S-TMSI |
 | `F1AP_MSG_TAMPER` | 거의 그대로 | 보안 알고리즘이 NEA0/NIA0으로 떨어짐, C-RNTI 불일치 |
 
@@ -138,7 +138,7 @@ python -m mock.generator --scenario normal --duration 600
 
 - `--speed`를 1보다 크게 하면 메시지 시각이 실제 시각보다 앞서 나간다(10배속 10분이면 마지막 메시지는 약 9분 뒤 시각). 실시간 대시보드에서 바로 보려면 `--speed 1`을 쓴다.
 - 처음 30초는 평상시이고, 공격 사이에는 40~90초 평상시가 들어간다. 그래서 너무 짧은 `--duration`(예: 60초)에는 공격이 없을 수 있다.
-- 신호 폭주 구간에는 메시지가 초당 약 250건 나온다(10분 mixed 기준 약 2만 3천 건).
+- 10분 mixed(seed 42)는 약 1만 3천 건이다. 대부분 1초 주기 KPM(14개 × 600초)이다.
 
 ## 문제 해결
 

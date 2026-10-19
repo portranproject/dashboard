@@ -41,4 +41,4 @@
 | `severity`, 룰셋 | 공격/경고 단계, 규칙 세트 3종 |
 | 성능 검증 대시보드 (CLAUDE.md 9.2) | 탐지율, 오탐, 탐지 지연, CPU·메모리 오버헤드 평가 방식 |
 
-**mock과 다른 점 (검토 필요)**: 5G-Spector의 BTS Resource Depletion 공격자는 `AuthenticationRequest`를 받을 때까지 진행한 뒤 새 RRC 연결을 다시 시작하고, 위조 연결은 T3460 타이머가 끝나 몇 초 뒤 해제된다. 지금 mock의 `fake_setup`은 `RRCSetup` 다음에 멈추고 1초 뒤 실패로 끝난다. 그래서 mock에서는 KPM `RRC.ConnEstabSucc`·`RRC.ConnMean`이 오르지 않지만, 논문 방식이면 오른다.
+**mock의 `RRC_SIGNALING_STORM`은 이 논문의 BTS Resource Depletion을 따른다**: 공격자가 위조 RRC 연결을 잇달아 만들고, 각 연결은 `AuthenticationRequest`까지 진행한 뒤 공격자가 응답하지 않아 코어의 인증 타이머(논문은 LTE T3460, 5G는 T3560)가 끝날 때까지 몇 초간 남았다가 해제된다(transient UE). 그래서 KPM의 연결 시도·성공·연결 UE 수도 크게 오르지만, 어느 UE가 가짜인지는 UE별 텔레메트리(eKPM)로만 알 수 있다. 설정은 `mock/scenarios.yaml`의 `bts_fake_connection`.

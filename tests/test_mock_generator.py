@@ -70,7 +70,7 @@ def test_config_follows_paper_tables(cfg):
     (lambda c: c["procedures"]["release"][0].update(count=["RRC.ConnMean"]), "CC 카운터가 아닙니다"),
     (lambda c: c["procedures"].pop("resume"), "정상 UE가 씀"),
     (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["inject"][0].update(procedure="nope"), "procedures에 없는 절차"),
-    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["inject"][0].update(interval_s=[1, 2]), "하나만"),
+    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["inject"][0].update(rate_per_s=5), "하나만"),
     (lambda c: c["attacks"]["F1AP_MSG_TAMPER"]["override"].update(ue_cipher_alg="NEA9"), "codes에 없습니다"),
     (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["rulesets"].pop("kpm_only"), "모두 있어야"),
     (lambda c: c["attacks"]["F1AP_MSG_TAMPER"]["rulesets"]["full"]["evidence"][0].update(value=[0, 1]), "만족하지 않습니다"),
@@ -193,7 +193,8 @@ def test_runs_fit_in_duration_without_overlap(cfg):
 # --------------------------------------------------------------------------- 공격별로 보이는 것 (핵심 주장)
 
 class Phases:
-    """1초 구간을 '공격 한가운데' / '평상시'로 나눈다. 경계 구간과 공격 직후 3초는 뺀다."""
+    """1초 구간을 '공격 한가운데' / '평상시'로 나눈다. 경계 구간과 공격 직후 10초는 뺀다
+    (위조 연결이 공격이 끝난 뒤에도 몇 초 남아 있다가 해제되므로)."""
 
     def __init__(self, msgs, tick_ns=NS):
         self.runs = runs_of(msgs)
@@ -204,7 +205,7 @@ class Phases:
         for r in self.runs:
             if r["ts_start"] <= start and end_ns <= r["ts_end"]:
                 return r["scenario"]
-            if start < r["ts_end"] + 3 * NS and end_ns > r["ts_start"]:
+            if start < r["ts_end"] + 10 * NS and end_ns > r["ts_start"]:
                 return None
         return "normal"
 
@@ -230,21 +231,45 @@ def code(cfg, name, value_name):
     return cfg["codes"][name][value_name]
 
 
-def test_storm_kpm_sees_volume_but_only_ekpm_sees_each_fake_ue(cfg, long_mixed):
+def transient_ues(cfg, msgs):
+    """5G-Spector의 transient UE: 인증 요청을 받고 응답 없이 해제된 RRC 연결. (연결 시작 시각, 수명 초) 목록."""
+    rrc, nas = cfg["codes"]["rrc_msg_id"], cfg["codes"]["nas_msg_id"]
+    answers = {nas["AuthenticationResponse"], nas["AuthenticationFailure"]}
+    open_conn, out = {}, []
+    for m in metrics(msgs, "ekpm"):
+        ue, name, v = m["labels"]["ue"], m["name"], m["value"]
+        if name == "rrc_msg_id" and v == rrc["RRCSetupRequest"]:
+            open_conn[ue] = {"start": m["ts"], "auth": False, "answered": False}
+        elif ue in open_conn and name == "nas_msg_id" and v == nas["AuthenticationRequest"]:
+            open_conn[ue]["auth"] = True
+        elif ue in open_conn and name == "nas_msg_id" and v in answers:
+            open_conn[ue]["answered"] = True
+        elif ue in open_conn and name == "rrc_msg_id" and v == rrc["RRCRelease"]:
+            c = open_conn.pop(ue)
+            if c["auth"] and not c["answered"]:
+                out.append((c["start"], (m["ts"] - c["start"]) / NS))
+    return out
+
+
+def test_storm_is_bts_resource_depletion_kpm_sees_load_but_only_ekpm_sees_fake_ues(cfg, long_mixed):
+    """5G-Spector의 BTS Resource Depletion: 위조 연결이 인증 요청까지 가서 몇 초 머문 뒤 해제된다."""
     ph = Phases(long_mixed)
-    setup_req = code(cfg, "rrc_msg_id", "RRCSetupRequest")
-    ekpm_rate = per_second(long_mixed, ph, lambda m: m["name"] == "rrc_msg_id" and m["value"] == setup_req)
+    storm = "RRC_SIGNALING_STORM"
     att = kpm_mean(long_mixed, ph, "RRC.ConnEstabAtt")
     succ = kpm_mean(long_mixed, ph, "RRC.ConnEstabSucc")
-    storm = "RRC_SIGNALING_STORM"
-    assert ekpm_rate[storm] > 20 * max(ekpm_rate["normal"], 0.05)
-    assert att[storm] > 20 * max(att["normal"], 0.05)        # 폭주는 표준 KPM에도 보인다
-    assert succ[storm] <= succ["normal"] + 0.1               # 성공은 늘지 않는다
-    # 어떤 UE가 가짜인지(연결 요청만 하고 멈춘 C-RNTI)는 eKPM에만 있다
-    stuck = code(cfg, "ue_rrc_state", "RRC_SETUP_REQUESTED")
-    fake_ues = {m["labels"]["ue"] for m in metrics(long_mixed, "ekpm", "ue_rrc_state")
-                if m["value"] == stuck and ph.of_time(m["ts"]) == storm}
-    assert len(fake_ues) > 100
+    conn = kpm_mean(long_mixed, ph, "RRC.ConnMean")
+    fail = kpm_mean(long_mixed, ph, "RRC.ConnEstabFailCause")
+    # 표준 KPM에도 부하는 보인다: 연결 시도·성공이 늘고, 연결된 UE 수가 크게 오른다(자원 고갈)
+    assert att[storm] > 20 * max(att["normal"], 0.05)
+    assert succ[storm] > 20 * max(succ["normal"], 0.05)
+    assert conn[storm] > conn["normal"] + 10
+    assert fail[storm] == fail["normal"] == 0
+    # 어떤 UE가 가짜인지(인증 요청에 응답 없이 몇 초 만에 사라진 연결)는 eKPM에만 있다
+    transients = transient_ues(cfg, long_mixed)
+    in_storm = [life for start, life in transients if ph.of_time(start) == storm]
+    assert len(in_storm) > 100
+    assert all(life < 10 for life in in_storm)
+    assert not [t for t in transients if ph.of_time(t[0]) == "normal"]
 
 
 def test_abnormal_attach_shows_in_ekpm_but_barely_in_kpm(cfg, long_mixed):

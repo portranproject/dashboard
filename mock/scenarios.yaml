@@ -148,10 +148,14 @@ procedures:
     - {after_ms: [5, 20], rrc: RRCReestablishmentComplete, count: [RRC.ReEstabSuccWithUeContext]}
 
   # ---- 공격용 ----
-  fake_setup:              # 가짜 RRCSetupRequest: RRCSetupComplete를 보내지 않아 타임아웃으로 실패
+  bts_fake_connection:     # 5G-Spector의 BTS Resource Depletion: 위조 RRC 연결이 인증 요청까지 진행한 뒤,
+                           # 공격자는 응답하지 않고 새 연결을 시작한다. 남은 연결은 코어의 인증 타이머
+                           # (5G T3560, 논문은 LTE T3460)가 끝날 때까지 몇 초간 CONNECTED로 남았다가 해제된다(transient UE)
     - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
     - {after_ms: [5, 15], rrc: RRCSetup}
-    - {after_ms: [1000, 1000], set: {ue_rrc_state: RRC_IDLE}, count: [RRC.ConnEstabFailCause], free_rnti: true}
+    - {after_ms: [10, 30], rrc: RRCSetupComplete, nas: RegistrationRequest, new_s_tmsi: true, set: {ue_rrc_state: RRC_CONNECTED, ue_nas_state: REGISTERED_INITIATED}, count: [RRC.ConnEstabSucc]}
+    - {after_ms: [10, 30], nas: AuthenticationRequest}
+    - {after_ms: [4000, 7000], rrc: RRCRelease, set: {ue_rrc_state: RRC_IDLE, ue_nas_state: DEREGISTERED}, count: [RRC.RelWithoutSuspendConfig], free_rnti: true}
 
   abnormal_registration:   # 매번 다른 신원으로 등록을 시도하고 인증에 실패
     - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
@@ -204,7 +208,8 @@ schedule:
 #   TODO(T4): rule_id, 임계값은 탐지 엔진 담당과 맞춘다.
 #
 # 공격별로 보이는 것 (프로젝트 핵심 주장):
-#   RRC_SIGNALING_STORM  KPM도 RRC.ConnEstabAtt·FailCause가 크게 오른다. 하지만 어떤 UE가 가짜인지는 eKPM(C-RNTI별 상태)만 안다
+#   RRC_SIGNALING_STORM  (= 5G-Spector의 BTS Resource Depletion) KPM도 연결 시도·성공·연결 UE 수가 크게 오른다.
+#                        하지만 어떤 UE가 가짜인지(인증 요청에 응답 없이 몇 초 만에 사라지는 transient UE)는 eKPM만 안다
 #   ABNORMAL_UE_ATTACH   KPM은 연결 시도가 조금 늘 뿐. eKPM은 같은 패턴의 인증 실패·등록 거절과 바뀌는 S-TMSI를 보여 준다
 #   F1AP_MSG_TAMPER      KPM은 거의 그대로. eKPM에서 보안 알고리즘이 NEA0/NIA0으로 떨어지고 C-RNTI가 어긋난다
 # ---------------------------------------------------------------------------
@@ -215,19 +220,20 @@ attacks:
   RRC_SIGNALING_STORM:
     duration_s: [20, 40]
     inject:
-      - {procedure: fake_setup, who: new, first_at_ms: [0, 50], rate_per_s: 50}
+      # 공격자 하나가 위조 연결을 잇달아 만든다 (인증 요청을 받으면 바로 다음 연결). 초당 약 4~5개
+      - {procedure: bts_fake_connection, who: new, first_at_ms: [0, 50], interval_s: [0.15, 0.3]}
     rulesets:
       full:
         detect_prob: 0.95
-        delay_ms: [400, 800]     # 초당 50건이면 0.4초쯤 지나야 임계값(20건)을 넘는다
+        delay_ms: [400, 800]     # 초당 4~5개면 0.4초쯤 지나야 1초 창에서 임계값(2건)을 넘는다
         latency_ms: [100, 400]
         repeat_interval_s: 10
         rule_id: R-RRC-001
         rule_version: "1.0"
         severity: high
         evidence:
-          - {source: ebpf, metric: "count(rrc_msg_id=RRCSetupRequest)",        op: ">", threshold: 20, window_ms: 1000, value: [21, 45]}
-          - {source: ebpf, metric: "count(ue_rrc_state=RRC_SETUP_REQUESTED)",  op: ">", threshold: 10, window_ms: 1000, value: [15, 40]}
+          - {source: ebpf, metric: "count(rrc_msg_id=RRCSetupRequest)",              op: ">", threshold: 2, window_ms: 1000, value: [3, 6]}
+          - {source: ebpf, metric: "count(nas_msg_id=AuthenticationRequest, 응답 없음)", op: ">", threshold: 1, window_ms: 1000, value: [2, 5]}
       kpm_only:
         detect_prob: 0.5
         delay_ms: [3000, 8000]
@@ -237,8 +243,8 @@ attacks:
         rule_version: "1.0"
         severity: medium
         evidence:
-          - {source: kpm, metric: RRC.ConnEstabAtt,       op: ">", threshold: 20, window_ms: 5000, value: [150, 300]}
-          - {source: kpm, metric: RRC.ConnEstabFailCause, op: ">", threshold: 10, window_ms: 5000, value: [150, 300]}
+          - {source: kpm, metric: RRC.ConnEstabAtt, op: ">", threshold: 10, window_ms: 5000, value: [15, 30]}
+          - {source: kpm, metric: RRC.ConnMean,     op: ">", threshold: 8,  window_ms: 5000, value: [10, 30]}
 
   ABNORMAL_UE_ATTACH:
     duration_s: [30, 60]

@@ -612,7 +612,7 @@
       "id": 5,
       "type": "stat",
       "title": "데이터 출처",
-      "description": "이 구간의 공격 기록(attack_run)이 mock 생성기에서 왔는지. mock 데이터의 숫자는 성능 결과가 아니다",
+      "description": "이 구간의 공격 기록(attack_run)이 어디서 왔는지: mock 생성기, replay(녹화 재생), 실제. mock 데이터의 숫자는 성능 결과가 아니다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -630,7 +630,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"attack_run\" and r._field == \"params_json\")\n  |> group()\n  |> last()\n  |> map(fn: (r) => ({_time: r._time, _value: if strings.containsStr(v: r._value, substr: \"\\\"generator\\\":\\\"mock\\\"\") then \"mock (성능 결과 아님)\" else \"실제\"}))\n  |> keep(columns: [\"_value\"])"
+          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"attack_run\" and r._field == \"params_json\")\n  |> group()\n  |> last()\n  |> map(fn: (r) => {\n      mock = strings.containsStr(v: r._value, substr: \"\\\"generator\\\":\\\"mock\\\"\")\n      replayed = strings.containsStr(v: r._value, substr: \"\\\"replay\\\":\")\n      return {_time: r._time, _value:\n        if mock and replayed then \"mock 재생 (성능 결과 아님)\"\n        else if mock then \"mock (성능 결과 아님)\"\n        else if replayed then \"녹화 재생\"\n        else \"실제\"}\n  })\n  |> keep(columns: [\"_value\"])"
         }
       ],
       "options": {

@@ -13,7 +13,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector), M4(실시간 관제 대시보드), M5(evaluator·성능 검증 대시보드) 완료. replay는 M6에서 추가된다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M6(스키마, mock 생성기, collector, 실시간 관제·성능 검증 대시보드, evaluator, replay) 완료. 남은 것은 실제 파트(eBPF 에이전트·탐지 엔진·공격 도구)와의 연동이다.
 
 ## 준비물
 
@@ -100,6 +100,8 @@ python -m collector.collector --dry-run
 1초마다 `수신 / 저장 / 거부` 건수가 로그로 나온다. InfluxDB가 잠시 죽어도 메시지를 메모리에 들고 있다가(최대 `COLLECTOR_MAX_PENDING`건) 복구되면 쓴다.
 UDP는 손실이 날 수 있으므로, 많은 양을 한 번에 넣을 때는 파일 + `--once`를 쓴다.
 
+> **collector가 준비된 뒤에 보낸다.** 시작해서 UDP 포트를 열기까지 몇 초(WSL의 `/mnt/c`에서는 4~5초) 걸린다. 로그에 `녹화 recordings/raw-…`가 나오기 전에 보낸 UDP 메시지는 사라진다.
+
 ## 대시보드 보기
 
 `docker compose up -d`만 하면 Grafana의 **PortRAN** 폴더에 대시보드가 올라온다(provisioning). collector와 mock을 돌리면 바로 채워진다.
@@ -158,6 +160,31 @@ python -m evaluator.evaluate --from 2026-11-20T10:00:00 --to 2026-11-20T12:00:00
 - run은 `--from`~`--to` 안에서 **시작한** 것을 센다. 구간 끝에 걸친 run의 탐지는 `--to` 뒤 grace까지 찾는다.
 - `--from` 전 `EVAL_LOOKBACK_SEC`(1시간) 안에 시작한 run은 세지 않지만, 그 run의 탐지가 오탐으로 세지지 않도록 매칭에는 쓴다.
 - **mock 데이터로 낸 숫자는 성능 결과가 아니다.** 리포트와 대시보드에 데이터 출처가 표시된다.
+
+## 녹화 재생하기 (replay) — 발표 시연 백업
+
+collector가 남긴 녹화(`recordings/raw-<날짜시각>.jsonl`)를 다시 보낸다. 테스트베드 시연이 안 될 때 쓴다.
+
+```bash
+# 터미널 1: collector (로그에 "녹화 …"가 뜰 때까지 기다린다)
+python -m collector.collector
+# 터미널 2: 녹화를 지금 시각으로 옮겨 1배속으로 재생 → 실시간 대시보드에 바로 보인다
+python -m replay.replay recordings/raw-20261120-100000.jsonl --speed 1 --out udp://127.0.0.1:9999 --retime now
+```
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `file` | (필수) | 녹화 파일 |
+| `--speed` | `1` | 배속. `0`이면 기다리지 않음 |
+| `--out` | `.env`의 `udp://COLLECTOR_UDP_HOST:COLLECTOR_UDP_PORT` | `udp://host:port` 또는 `file://path` |
+| `--retime` | `now` | `now`: 첫 메시지를 지금으로 옮김(간격은 원본 그대로) / `none`: 원본 시각 그대로 / `2026-12-04T14:00:00`: 첫 메시지를 그 시각으로 |
+
+- 메시지는 시각 순으로 정렬해 보낸다. 시각 필드는 모두 같은 만큼 옮기므로 탐지 지연 같은 간격은 원본과 같다.
+- 재생한 `attack_run`의 `params`에 `replay` 표시가 붙는다. 실시간 대시보드의 "데이터 출처"가 "녹화 재생"(원본이 mock이면 "mock 재생")으로 바뀌고, evaluator도 이걸로 데이터 출처를 판단한다.
+- event_id·run_id는 원본 그대로다. 같은 녹화를 짧은 간격으로 두 번 재생하면 대시보드에 같은 event_id가 두 번 보인다.
+- `--speed`를 1보다 크게 하면 메시지 시각이 실제 시각보다 앞서 나간다(원본 간격을 유지하므로). 실시간 대시보드용으로는 `--speed 1`.
+
+**발표 전 준비**: 테스트베드로 시연을 한 번 성공시켜 녹화를 만들어 두고, 그 파일로 재생 리허설을 해 둔다. 녹화는 git에서 제외되므로 따로 백업한다.
 
 ## mock 데이터 만들기
 
@@ -245,11 +272,11 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 | `reference/` | 참고 논문(TeleRAN, 5G-Spector)과 요약 `README.md` |
 | `docs/progress.md` | 마일스톤별 진행 기록, 팀 확인 대기 항목 |
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
-| `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
+| `common/` | `.env` 로딩(`config.py`), 스키마 검증·메시지 시각(`schema.py`), UDP·파일 송수신·배속 전송(`transport.py`) |
 | `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |
 | `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
 | `evaluator/` | 탐지율·오탐·지연 계산, 리포트(`reports/`)·`eval_result` 저장 (`evaluate.py`) |
-| `replay/` | 녹화 데이터 재생 (M6) |
+| `replay/` | 녹화 데이터 재생 (`replay.py`) |
 | `grafana/` | datasource·대시보드 provisioning, 대시보드 JSON |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
 | `tests/` | pytest |

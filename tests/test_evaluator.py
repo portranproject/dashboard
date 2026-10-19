@@ -149,6 +149,8 @@ def test_percentile(values, p, expected):
 def test_detect_data_source():
     assert detect_data_source([]) == "unknown"
     assert detect_data_source([run(generator="mock")]) == "mock"
+    assert detect_data_source([run(generator="mock", replay={"file": "raw.jsonl"})]) == "mock"  # 재생한 mock도 mock
+    assert detect_data_source([run(replay={"file": "raw.jsonl"})]) == "replay"
     assert detect_data_source([run()]) == "real"
 
 

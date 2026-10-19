@@ -13,7 +13,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: M1 (저장소 뼈대, InfluxDB·Grafana, 스키마) 완료. mock 생성기·collector 등은 이후 마일스톤에서 추가된다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기) 완료. collector 등은 이후 마일스톤에서 추가된다.
 
 ## 준비물
 
@@ -62,6 +62,36 @@ docker compose down -v             # 중지 + 데이터 전부 삭제
 > 나중에 바꾸면 Grafana는 새 토큰으로 접속을 시도하지만 InfluxDB에는 옛 토큰이 남아 있어 인증이 실패한다.
 > 바꾼 뒤에는 `docker compose down -v && docker compose up -d`로 초기화한다(저장된 데이터가 지워진다).
 
+## mock 데이터 만들기
+
+실제 eBPF 에이전트·탐지 엔진·공격 도구 대신 쓰는 가짜 데이터 생성기. 숫자(지표 기본값, 공격 시 변화량, 탐지율, 지연)는 전부 [`mock/scenarios.yaml`](mock/scenarios.yaml)에 있다.
+
+> **mock 데이터로 나온 탐지율·지연은 성능 결과가 아니다.** mock이 만든 `attack_run`의 `params`에는 `"generator": "mock"`이 들어간다.
+
+```bash
+# 실시간으로 collector(UDP)에 보내기 — 10분, 공격 유형 섞음
+python -m mock.generator --scenario mixed --duration 600 --seed 42
+
+# 파일로 10분치 바로 만들기 (--speed 0 = 기다리지 않음)
+python -m mock.generator --duration 600 --seed 42 --speed 0 --out file://recordings/mock.jsonl
+
+# 특정 공격만 / 공격 없이 평상시만
+python -m mock.generator --scenario RRC_SIGNALING_STORM --duration 120
+python -m mock.generator --scenario normal --duration 600
+```
+
+| 옵션 | 기본값 | 설명 |
+|---|---|---|
+| `--scenario` | `mixed` | `mixed`, `normal`, 또는 공격 유형 이름(`RRC_SIGNALING_STORM`, `ABNORMAL_UE_ATTACH`, `F1AP_MSG_TAMPER`) |
+| `--duration` | `600` | 시뮬레이션 길이(초) |
+| `--seed` | 무작위 | 같은 seed + 같은 `--start`면 출력이 완전히 같다. 생략하면 로그에 쓴 seed가 찍힌다 |
+| `--out` | `.env`의 `udp://COLLECTOR_UDP_HOST:COLLECTOR_UDP_PORT` | `udp://host:port` 또는 `file://path` (파일은 덮어씀) |
+| `--speed` | `1` | 배속. `0`이면 기다리지 않고 바로 출력 |
+| `--start` | `now` | 첫 메시지 시각. 예: `2026-11-20T10:00:00` (시간대 없으면 로컬 시각) |
+
+- `--speed`를 1보다 크게 하면 메시지 시각이 실제 시각보다 앞서 나간다(10배속 10분이면 마지막 메시지는 약 9분 뒤 시각). 실시간 대시보드에서 바로 보려면 `--speed 1`을 쓴다.
+- 처음 30초는 평상시이고, 공격 사이에는 40~90초 평상시가 들어간다. 그래서 너무 짧은 `--duration`(예: 60초)에는 공격이 없을 수 있다.
+
 ## 문제 해결
 
 **`permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`**
@@ -71,6 +101,22 @@ WSL 터미널을 모두 닫고 다시 열거나, PowerShell에서 `wsl --shutdow
 
 **venv 안에서 `pip`가 없거나 `ImportError`가 난다**
 venv 생성이 중간에 깨진 경우다. `rm -rf .venv` 후 다시 만든다.
+
+## 브랜치 규칙
+
+| 브랜치 | 용도 |
+|---|---|
+| `main` | 배포·발표용. `dev` → `main` PR로만 반영 |
+| `dev` | 개발 통합 (default 브랜치) |
+| `feat/dashboard-M<n>` | 마일스톤 작업. `dev`에서 만들고 `dev`로 PR |
+| `fix/<내용>`, `docs/<내용>` | 작은 수정 |
+
+```bash
+git switch dev && git pull
+git switch -c feat/dashboard-M3
+# ... 작업, 커밋 ...
+git push -u origin feat/dashboard-M3   # 이후 GitHub에서 dev로 PR
+```
 
 ## 메시지 검증
 
@@ -87,8 +133,8 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 |---|---|
 | `docs/progress.md` | 마일스톤별 진행 기록, 팀 확인 대기 항목 |
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
-| `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`) |
-| `mock/` | mock 생성기 (M2) |
+| `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
+| `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |
 | `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (M3) |
 | `evaluator/` | 탐지율·오탐·지연 계산 (M5) |
 | `replay/` | 녹화 데이터 재생 (M6) |

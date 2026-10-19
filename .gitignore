@@ -1,0 +1,13 @@
+# 접속 정보 (.env.example만 커밋)
+.env
+
+# raw 녹화·거부 로그
+recordings/*
+!recordings/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

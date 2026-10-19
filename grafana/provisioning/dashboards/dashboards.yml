@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: portran
+    orgId: 1
+    folder: PortRAN
+    type: file
+    disableDeletion: true
+    # 대시보드의 기준은 grafana/dashboards/*.json 이다.
+    # UI에서 고친 내용은 JSON으로 내보내 커밋해야 유지된다.
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards

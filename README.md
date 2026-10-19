@@ -13,7 +13,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector) 완료. 대시보드 등은 이후 마일스톤에서 추가된다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector), M4(실시간 관제 대시보드) 완료. evaluator 등은 이후 마일스톤에서 추가된다.
 
 ## 준비물
 
@@ -100,6 +100,29 @@ python -m collector.collector --dry-run
 1초마다 `수신 / 저장 / 거부` 건수가 로그로 나온다. InfluxDB가 잠시 죽어도 메시지를 메모리에 들고 있다가(최대 `COLLECTOR_MAX_PENDING`건) 복구되면 쓴다.
 UDP는 손실이 날 수 있으므로, 많은 양을 한 번에 넣을 때는 파일 + `--once`를 쓴다.
 
+## 대시보드 보기
+
+`docker compose up -d`만 하면 Grafana의 **PortRAN** 폴더에 대시보드가 올라온다(provisioning). collector와 mock을 돌리면 바로 채워진다.
+
+```bash
+python -m collector.collector                      # 터미널 1
+python -m mock.generator --duration 600 --seed 42  # 터미널 2 (실시간, 1배속)
+```
+
+**실시간 관제** — http://localhost:3000/d/portran-realtime (새로고침 5초, 기본 최근 15분)
+
+| 행 | 패널 |
+|---|---|
+| 요약 | 최근 5분 탐지 건수, 최고 severity, 수집 상태(소스별 마지막 수신 후 경과), 접속 UE 수(`RRC.ConnMean`), 데이터 출처(mock 여부) |
+| 핵심 비교 | 위: 표준 KPM, 아래: eKPM(UE별 텔레메트리를 초당 건수로 집계). 같은 시간축. 빨간 세로선 = 탐지 이벤트, 주황 영역 = 공격 구간(`attack_run`) |
+| 이벤트 | 탐지 이벤트 표(시각·공격 유형·severity·대상·룰·룰셋·지연·event_id), 공격 유형별 탐지 건수 |
+| 근거 | 선택한 이벤트의 evidence(출처·지표·값·연산자·임계값·윈도우) |
+
+- 위쪽 변수: `룰셋`(기본 full), `노드`, `공격 유형`, `이벤트`. 이벤트 표의 event_id를 누르면 근거 표가 그 이벤트로 바뀐다.
+- 위쪽 토글로 annotation(공격 구간, 탐지)을 끄고 켤 수 있다.
+- 대시보드의 기준은 `grafana/dashboards/*.json`이다. UI에서 고쳐도 저장되지 않으므로, 고친 뒤 **Share → Export → JSON**으로 내보내 파일을 바꾸고 커밋한다. 쿼리는 bucket 이름 대신 `v.defaultBucket`(datasource 설정)을 쓴다.
+- eKPM 패널은 코드값(예: `rrc_msg_id` 0 = RRCSetupRequest)으로 센다. 코드표([`schema/SCHEMA.md`](schema/SCHEMA.md) 6.3절)가 바뀌면 같이 고친다(`pytest`가 어긋남을 잡는다).
+
 ## mock 데이터 만들기
 
 실제 eBPF 에이전트·탐지 엔진·공격 도구 대신 쓰는 가짜 데이터 생성기. 숫자(절차 타이밍, 공격 강도, 탐지율, 지연)와 코드표는 전부 [`mock/scenarios.yaml`](mock/scenarios.yaml)에 있다.
@@ -149,6 +172,10 @@ WSL 터미널을 모두 닫고 다시 열거나, PowerShell에서 `wsl --shutdow
 
 **venv 안에서 `pip`가 없거나 `ImportError`가 난다**
 venv 생성이 중간에 깨진 경우다. `rm -rf .venv` 후 다시 만든다.
+
+**PC·WSL을 재시작한 뒤 Grafana에 대시보드가 없다 (`Dashboard not found`)**
+Docker Desktop이 컨테이너를 자동으로 다시 띄울 때 Windows 디스크(`/mnt/c/...`)의 설정 폴더 마운트가 비어 있는 채로 붙는 경우가 있다.
+`docker compose exec grafana ls /etc/grafana/dashboards`가 비어 있으면 `docker compose up -d --force-recreate grafana`로 다시 만든다(데이터는 볼륨에 있어 유지된다).
 
 ## 브랜치 규칙
 

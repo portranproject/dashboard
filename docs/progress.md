@@ -7,7 +7,7 @@
 | M1 저장소 뼈대 · docker-compose · 스키마 | 완료 | 2026-10-19 |
 | M2 mock 생성기 | 완료 (PR #1 병합, 지표는 M3 브랜치에서 논문 기준으로 보완) | 2026-10-19 |
 | M3 collector | 완료 (PR #2 병합) | 2026-10-19 |
-| M4 실시간 관제 대시보드 | 대기 | |
+| M4 실시간 관제 대시보드 | 완료 (PR 대기) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 대기 | |
 | M6 replay | 대기 | |
 
@@ -359,3 +359,76 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 | 테스트 | `pytest` | **128 passed** |
 
 미확인: collector·InfluxDB 경로는 메시지 형식이 그대로라 다시 돌리지 않았다. bucket에 있는 새 형식 데이터(14:34~14:39)는 예전 폭주 모양이다. M4에서 데이터를 새로 만든다.
+
+---
+
+## M4 — 실시간 관제 대시보드 (2026-10-19, 브랜치 `feat/dashboard-M4`)
+
+### 한 일
+
+| 파일 | 내용 |
+|---|---|
+| `grafana/dashboards/realtime.json` | 실시간 관제 대시보드 (uid `portran-realtime`, 새로고침 5초, 기본 최근 15분). 행 4개·패널 10개·annotation 2개·변수 4개 |
+| `tests/test_dashboards.py` | 정적 검사(datasource uid, `v.defaultBucket`, 배치 겹침, 변수 정의, annotation 대상, 9.1절 구성, eKPM 코드값 ↔ 코드표, KPM 이름 ↔ mock) + Grafana가 떠 있으면 모든 쿼리 실행 (9건) |
+| `README.md` | "대시보드 보기" 섹션, 문제 해결(재시작 후 대시보드가 사라지는 경우) |
+
+패널 구성 (CLAUDE.md 9.1절):
+
+| 행 | 패널 |
+|---|---|
+| 요약 | 최근 5분 탐지 건수 · 최고 severity(최근 5분) · 수집 상태(소스 5개의 마지막 수신 후 경과) · 접속 UE 수(`RRC.ConnMean`) · 데이터 출처 |
+| 핵심 비교 | 표준 KPM(위) / eKPM(아래), 같은 시간축. annotation: 탐지 = 빨간 세로선, 공격 구간 = 주황 영역 |
+| 이벤트 | 탐지 이벤트 표(event_id 누르면 근거로 이동) · 공격 유형별 탐지 건수 |
+| 근거 | 변수 `event_id`로 고른 이벤트의 evidence 표 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D56 | 쿼리는 Flux, bucket은 `v.defaultBucket` (datasource 설정 = `.env`의 `INFLUX_BUCKET`) | 대시보드 JSON은 환경변수를 못 읽으므로 bucket 이름을 박아 넣지 않음. 테스트로 강제 | 불필요 |
+| D57 | 요약 행에 **데이터 출처** 패널 추가 (attack_run의 `params`에 `"generator":"mock"`이 있으면 "mock (성능 결과 아님)") | CLAUDE.md 9.1절에는 없지만 12절 7항(mock 숫자는 성능 결과가 아님) 취지. 발표 화면에서 오해를 막기 위해 | 불필요 |
+| D58 | 수집 상태 = 소스별 마지막 수신 후 경과(초). 임계값은 소스마다: KPM 5/15초, 오버헤드 15/60초, eBPF 120/600초. 탐지·공격 기록은 사건이 있을 때만 오므로 색 고정 | 9.1절 "소스별 마지막 수신 시각". eBPF(eKPM)도 UE 절차가 있을 때만 와서 길게 잡음 | 필요 (실제 에이전트의 보고 주기를 알면 조정) |
+| D59 | 접속 UE 수 = 표준 KPM `RRC.ConnMean`의 마지막 값 | Table II에 있는 값. 신호 폭주(자원 고갈) 때 크게 오르는 게 보임 | 불필요 |
+| D60 | 표준 KPM 패널은 14개 중 6개(`ConnEstabAtt/Succ/FailCause`, `RelWithoutSuspendConfig`, `ReEstabAtt`, `ConnMean`)만. 카운터는 1초 값의 평균 = 초당 건수, `ConnMean`은 오른쪽 축. 데이터가 없는 구간은 선을 끊음 | 14개를 다 그리면 읽을 수 없음. `ConnMean`(최대 30)이 카운터(0~6)를 납작하게 만들어 축 분리. 끊지 않으면 수집 중단이 대각선으로 가려짐 | 불필요 |
+| D61 | eKPM 패널은 UE별 값을 4가지 신호의 초당 건수로 집계: `RRCSetupRequest`, `AuthenticationRequest`, 인증 실패·등록 거절, NEA0/NIA0로 바뀜. 코드값은 쿼리에 직접 쓰고 테스트로 코드표와 대조 | eKPM은 메시지 단위라 시계열로 보려면 집계가 필요. C-RNTI 불일치는 Flux로 16진수 라벨을 숫자로 바꿀 수 없어 그리지 않음 | 불필요 |
+| D62 | annotation: 탐지는 `ruleset`·`node`·`attack_type` 변수 적용, 공격 구간은 `attack_type`만 적용하고 시간 범위 1시간 전부터 찾음(범위 시작 전에 시작한 공격도 보이게). 둘 다 핵심 비교 두 패널에만 표시 | 9.1절. 다른 패널에 세로선이 깔리면 읽기 어려움 | 불필요 |
+| D63 | 근거 표: Flux(`experimental/dynamic`)로 `evidence_json` 배열을 항목마다 한 행(JSON 문자열)으로 나누고, Grafana **Extract fields**로 열(출처·지표·값·연산자·임계값·윈도우)을 펼침 | 9.1절은 Extract fields를 쓰라고 함. Extract fields는 한 셀의 JSON 객체를 열로 펼치므로 배열은 먼저 행으로 나눔. 배열을 그대로 Extract fields에 넣는 방식은 시험하지 않음 | 불필요 |
+| D64 | 변수 `event_id` = 시간 범위 안 탐지 이벤트(필터 적용) 최신순 100개, 기본은 가장 최근. 이벤트 표의 event_id에 같은 대시보드로 가는 링크(`var-event_id`)를 붙임 | 근거를 보려고 목록을 뒤지지 않게 | 불필요 |
+| D65 | 대시보드 `editable: false`, 시간대는 브라우저 기준 | provisioning의 `allowUiUpdates: false`와 맞춤. 기준은 JSON | 불필요 |
+| D66 | 대시보드 JSON은 작업용 스크립트로 조립하고 결과 JSON만 커밋 | 앞으로는 JSON을 직접 고친다(README에 방법). 조립 스크립트까지 두면 기준이 두 개가 됨 | 불필요 |
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| provisioning | `docker compose up` 상태에서 `/api/dashboards/uid/portran-realtime` | PortRAN 폴더에 등록, provisioned |
+| 모든 쿼리 실행 | 패널 10개·annotation 2개·변수 2개의 Flux를 Grafana `/api/ds/query`로 실행 | 오류 없음, 전부 데이터 있음 (예: 탐지 표 32행, 공격 구간 20개, 근거 2행) |
+| 화면 (지난 30분) | mock 30분치(seed 7, 공격 17회)를 넣고 Grafana 이미지 렌더러로 대시보드 전체를 PNG로 그림 | 모든 패널 표시. 변조 구간에서 KPM은 평평하고 eKPM의 NEA0/NIA0 전환만 튀는 모습, 신호 폭주 때 KPM 접속 UE 수 2 → 30 |
+| annotation | 공격 하나가 있는 3분 구간을 KPM 패널만 확대해 그림 | 공격 구간이 주황 영역(시작·끝 선 포함)으로, 탐지가 빨간 세로선으로 보임 |
+| 근거 (Extract fields) | 변수 `event_id=det-s7-000078`(변조) | 출처·지표·값·연산자·임계값·윈도우 열로 2행 (`ue_cipher_alg == 0`, `ue_integrity_alg == 0`) |
+| 실시간 | collector + mock 1배속 170초(seed 2, 비정상 접속 1회) 직후 렌더 | 최근 5분 탐지 6, 최고 severity high, 이벤트 변수가 최신(`det-s2-000007`)으로 자동 선택, 근거 표 표시 |
+| 데이터 끊김 | 수집이 5분 멈췄던 구간을 그림 | KPM 선이 끊겨 보임 (고치기 전에는 대각선으로 이어졌음) |
+| 테스트 | `pytest` | **137 passed** (대시보드 9건 추가). 일부러 오타를 낸 Flux를 쿼리 실행 검사가 잡는 것도 확인 |
+
+미확인: 실제 브라우저에서의 상호작용(event_id 링크 클릭, 변수 바꾸기, 5초 자동 새로고침)은 하지 않았다. 렌더링은 헤드리스 브라우저 이미지로만 확인했다.
+
+### 환경 메모
+
+- **재시작 후 대시보드가 사라짐**: WSL 재시작 뒤 Docker Desktop이 자동으로 다시 띄운 Grafana 컨테이너에서 `/etc/grafana/dashboards`와 `/etc/grafana/provisioning/datasources`가 비어 있었다(Windows 디스크 바인드 마운트가 빈 채로 붙음). `docker compose up -d --force-recreate grafana`로 해결 → README "문제 해결"에 기록.
+- **화면 확인 방법**: Grafana 이미지 렌더러(`grafana/grafana-image-renderer:v5.12.5`)를 임시 compose override로 붙여 `/render/d/...` API로 PNG를 받았다. 저장소에는 넣지 않았고 확인 후 내렸다. 설정은 아래와 같다 (`docker compose -f docker-compose.yml -f render.override.yml up -d`, 끝나면 `docker compose up -d --remove-orphans`).
+  ```yaml
+  services:
+    grafana:
+      environment:
+        GF_RENDERING_SERVER_URL: http://renderer:8081/render
+        GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+    renderer:
+      image: grafana/grafana-image-renderer:v5.12.5
+  ```
+- bucket `portran`에 있는 mock 데이터: 새 형식 14:34~14:39(seed 42, 이전 폭주 모양), 14:44~15:14(seed 7, 30분), 15:19~15:22(seed 2, 실시간 확인). 모두 오늘(2026-10-19 KST).
+
+### 남은 일
+
+- [x] M4 커밋 (push → `dev`로 PR은 사용자 확인 대기)
+- [ ] 브라우저에서 http://localhost:3000/d/portran-realtime 직접 확인 (event_id 링크, 변수)
+- [ ] M5 evaluator + 성능 검증 대시보드

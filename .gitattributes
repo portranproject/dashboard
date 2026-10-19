@@ -1,2 +1,5 @@
 # Windows(C:\)에서 체크아웃해도 컨테이너에 마운트되는 설정 파일이 CRLF로 바뀌지 않도록
 * text=auto eol=lf
+
+# 논문 등 바이너리는 줄바꿈 변환·diff 대상에서 뺀다
+*.pdf binary

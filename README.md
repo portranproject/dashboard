@@ -179,6 +179,7 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 
 | 경로 | 내용 |
 |---|---|
+| `reference/` | 참고 논문(TeleRAN, 5G-Spector)과 요약 `README.md` |
 | `docs/progress.md` | 마일스톤별 진행 기록, 팀 확인 대기 항목 |
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |

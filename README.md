@@ -13,7 +13,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기) 완료. collector 등은 이후 마일스톤에서 추가된다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1(저장소 뼈대·스키마), M2(mock 생성기), M3(collector) 완료. 대시보드 등은 이후 마일스톤에서 추가된다.
 
 ## 준비물
 
@@ -62,9 +62,56 @@ docker compose down -v             # 중지 + 데이터 전부 삭제
 > 나중에 바꾸면 Grafana는 새 토큰으로 접속을 시도하지만 InfluxDB에는 옛 토큰이 남아 있어 인증이 실패한다.
 > 바꾼 뒤에는 `docker compose down -v && docker compose up -d`로 초기화한다(저장된 데이터가 지워진다).
 
+## collector 실행하기
+
+메시지를 받아 스키마로 검증하고, InfluxDB에 쓰고, 받은 그대로 녹화한다.
+
+```bash
+# 터미널 1: collector (기본 UDP 127.0.0.1:9999, Ctrl+C로 종료 — 남은 배치를 쓰고 끝냄)
+python -m collector.collector
+
+# 터미널 2: mock 데이터 보내기
+python -m mock.generator --duration 600 --seed 42
+```
+
+```bash
+# 파일을 끝까지 읽어서 넣고 종료 (mock 파일을 한 번에 넣을 때)
+python -m collector.collector --in file://recordings/mock.jsonl --once
+
+# 여러 입력을 동시에 (예: 탐지 엔진은 UDP, eBPF 에이전트는 파일)
+python -m collector.collector --in udp://0.0.0.0:9999 --in file:///var/log/ebpf-agent.jsonl
+
+# InfluxDB 없이 검증·녹화만 (다른 파트에서 메시지 형식을 확인할 때)
+python -m collector.collector --dry-run
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `--in` | `udp://host:port` 또는 `file://path`. 여러 번 줄 수 있음. 기본은 `.env`의 `COLLECTOR_UDP_HOST:PORT` |
+| `--once` | 파일 입력을 끝까지 읽고 종료 (없으면 `tail -f`처럼 계속 기다림) |
+| `--from-end` | 파일의 기존 내용은 건너뛰고 새로 추가되는 줄만 읽음 (기본은 처음부터) |
+| `--dry-run` | InfluxDB에 쓰지 않음 |
+| `--recordings` | 녹화 폴더 (기본 `.env`의 `RECORDINGS_DIR`) |
+
+결과물 (`recordings/`, git 제외):
+- `raw-<날짜시각>.jsonl`: 검증을 통과한 메시지를 받은 그대로. replay 입력으로 쓴다
+- `rejected.jsonl`: 거부된 메시지와 사유 (`received_at`, `source`, `reasons`, `raw`). 실행할 때마다 이어 붙는다
+
+1초마다 `수신 / 저장 / 거부` 건수가 로그로 나온다. InfluxDB가 잠시 죽어도 메시지를 메모리에 들고 있다가(최대 `COLLECTOR_MAX_PENDING`건) 복구되면 쓴다.
+UDP는 손실이 날 수 있으므로, 많은 양을 한 번에 넣을 때는 파일 + `--once`를 쓴다.
+
 ## mock 데이터 만들기
 
-실제 eBPF 에이전트·탐지 엔진·공격 도구 대신 쓰는 가짜 데이터 생성기. 숫자(지표 기본값, 공격 시 변화량, 탐지율, 지연)는 전부 [`mock/scenarios.yaml`](mock/scenarios.yaml)에 있다.
+실제 eBPF 에이전트·탐지 엔진·공격 도구 대신 쓰는 가짜 데이터 생성기. 숫자(절차 타이밍, 공격 강도, 탐지율, 지연)와 코드표는 전부 [`mock/scenarios.yaml`](mock/scenarios.yaml)에 있다.
+
+지표는 TeleRAN 논문 기준이다: **Table I → eKPM**(UE별 식별자·상태·보안 알고리즘·메시지 ID, 숫자 코드), **Table II → 표준 KPM**(TS 28.552 셀 단위 카운터·통계). 이름과 코드표는 [`schema/SCHEMA.md`](schema/SCHEMA.md) 6절.
+mock은 정상 UE 3대의 RRC/NAS 절차(등록·연결·해제·일시 중지·재개·재수립)를 흉내 내고, 같은 절차에서 eKPM(메시지마다)과 KPM(1초 집계)을 함께 뽑는다. 공격 구간에는 공격 절차가 끼어든다.
+
+| 공격 | 표준 KPM | eKPM |
+|---|---|---|
+| `RRC_SIGNALING_STORM` | 연결 시도·실패가 크게 오름 | 가짜 UE마다 다른 C-RNTI로 `RRCSetupRequest` 후 멈춤 — 어느 UE가 가짜인지 보임 |
+| `ABNORMAL_UE_ATTACH` | 연결 시도가 조금 늘 뿐 | 같은 패턴의 인증 실패·등록 거절, 시도마다 바뀌는 S-TMSI |
+| `F1AP_MSG_TAMPER` | 거의 그대로 | 보안 알고리즘이 NEA0/NIA0으로 떨어짐, C-RNTI 불일치 |
 
 > **mock 데이터로 나온 탐지율·지연은 성능 결과가 아니다.** mock이 만든 `attack_run`의 `params`에는 `"generator": "mock"`이 들어간다.
 
@@ -91,6 +138,7 @@ python -m mock.generator --scenario normal --duration 600
 
 - `--speed`를 1보다 크게 하면 메시지 시각이 실제 시각보다 앞서 나간다(10배속 10분이면 마지막 메시지는 약 9분 뒤 시각). 실시간 대시보드에서 바로 보려면 `--speed 1`을 쓴다.
 - 처음 30초는 평상시이고, 공격 사이에는 40~90초 평상시가 들어간다. 그래서 너무 짧은 `--duration`(예: 60초)에는 공격이 없을 수 있다.
+- 신호 폭주 구간에는 메시지가 초당 약 250건 나온다(10분 mixed 기준 약 2만 3천 건).
 
 ## 문제 해결
 
@@ -135,7 +183,7 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
 | `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |
-| `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (M3) |
+| `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
 | `evaluator/` | 탐지율·오탐·지연 계산 (M5) |
 | `replay/` | 녹화 데이터 재생 (M6) |
 | `grafana/` | datasource·대시보드 provisioning, 대시보드 JSON |

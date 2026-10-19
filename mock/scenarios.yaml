@@ -1,35 +1,185 @@
 # mock 생성기 설정. 생성기의 숫자는 전부 여기 있다 (코드에 하드코딩하지 않음).
 #
+# 지표는 TeleRAN 논문 기준이다
+#   (Wen et al., "Towards Bridging the Telemetry Gap for Security Applications in 6G OpenRANs via eBPF")
+#   Table I  → eKPM: UE별 보안 텔레메트리 (식별자·상태·보안 알고리즘·메시지 ID). 숫자 코드로 낸다
+#   Table II → 표준 KPM: 3GPP TS 28.552 셀 단위 카운터(CC)·상태 통계(SI)
+# mock은 UE들의 RRC/NAS 절차를 흉내 내고, 같은 절차에서 eKPM(메시지 처리마다)과 KPM(tick_s마다 집계)을 함께 뽑는다.
+#
 # ⚠ mock 데이터로 나온 탐지율·지연은 성능 결과가 아니다. 대시보드·evaluator 개발용이다.
-# TODO: 지표 이름·단위·기본값은 가안. eBPF 팀, FlexRIC(KPM) 담당과 확정 후 고친다.
-# 범위는 [최소, 최대] 균등분포. 문자열 값(cell, ue, rule_version)은 반드시 따옴표로 감싼다
-# (YAML은 0x4601을 정수로, 1.0을 실수로 읽는다).
+# 범위는 [최소, 최대] 균등분포. 문자열 값(cell, rule_version)은 반드시 따옴표로 감싼다.
 
-tick_s: 1                  # 지표·오버헤드 생성 주기
+tick_s: 1                  # KPM 보고 주기(E2SM-KPM granularity)이자 오버헤드 기준 주기
+cell: "1"
+node: cu                   # TODO(Q7): 지표를 모으는 노드. TeleRAN은 CU에서 F1AP·RRC·NAS를 본다
 
-# 지표 노이즈의 시간 상관(AR(1) 계수, 0~1). 0이면 매초 독립 노이즈, 클수록 부드럽게 흔들린다.
-noise_persistence: 0.6
-
-topology:
-  cells: ["1"]
-  ues: ["0x4601", "0x4602", "0x4603"]   # TODO: UE ID 형식 미확정
+# DU가 RRC 연결마다 C-RNTI를 나눠 주고, 연결이 끝나면 돌려받아 다시 쓴다.
+# labels.ue = 그 연결의 C-RNTI (16진수 문자열, 예: "0x4601"). TODO(Q9): 실제 UE 키 확정
+rnti_pool: {first: 0x4601, size: 512}
 
 # ---------------------------------------------------------------------------
-# 지표 (평상시)
-#   baseline: 평상시 평균, noise: 평상시 표준편차, min/max: 값 범위
-#   per_ue: true면 UE마다 따로 (labels.ue), integer: true면 정수로 반올림
+# Table I 값의 숫자 코드. TODO(Q10): eBPF 팀과 같은 코드표를 써야 한다
+#   nas_msg_id는 TS 24.501 표 9.7.1의 5GMM 메시지 타입 값, 나머지는 가안
 # ---------------------------------------------------------------------------
-metrics:
-  # eKPM (eBPF)
-  - {name: rrc_setup_req_rate,     kind: ekpm, src: ebpf, node: cu, unit: "req/s", baseline: 0.5,  noise: 0.3,  min: 0}
-  - {name: rrc_setup_fail_ratio,   kind: ekpm, src: ebpf, node: cu, unit: "ratio", baseline: 0.02, noise: 0.01, min: 0, max: 1}
-  - {name: ue_attach_attempt_rate, kind: ekpm, src: ebpf, node: cu, unit: "req/s", baseline: 0.2,  noise: 0.15, min: 0}
-  - {name: f1ap_msg_rate,          kind: ekpm, src: ebpf, node: cu, unit: "msg/s", baseline: 40,   noise: 3,    min: 0}
-  - {name: f1ap_malformed_count,   kind: ekpm, src: ebpf, node: cu, unit: "count", baseline: 0,    noise: 0.2,  min: 0, integer: true}
-  # 표준 KPM (E2SM-KPM)
-  - {name: RRU.PrbUsedDl,          kind: kpm,  src: kpm,  node: du, unit: "%",     baseline: 35,    noise: 4,    min: 0, max: 100}
-  - {name: DRB.UEThpDl,            kind: kpm,  src: kpm,  node: du, unit: "kbps",  baseline: 12000, noise: 1500, min: 0, per_ue: true}
-  - {name: RRC.ConnMean,           kind: kpm,  src: kpm,  node: cu, unit: "count", baseline: 3,     noise: 0.15, min: 0}
+codes:
+  ue_rrc_state:     {RRC_IDLE: 0, RRC_SETUP_REQUESTED: 1, RRC_CONNECTED: 2, RRC_INACTIVE: 3}
+  ue_nas_state:     {DEREGISTERED: 0, REGISTERED_INITIATED: 1, REGISTERED: 2, DEREGISTERED_INITIATED: 3}
+  ue_rrc_sec_state: {NOT_ACTIVATED: 0, SMC_SENT: 1, ACTIVATED: 2}
+  ue_nas_sec_state: {NOT_ACTIVATED: 0, SMC_SENT: 1, ACTIVATED: 2}
+  ue_cipher_alg:    {NEA0: 0, NEA1: 1, NEA2: 2, NEA3: 3}
+  ue_integrity_alg: {NIA0: 0, NIA1: 1, NIA2: 2, NIA3: 3}
+  rrc_msg_id:
+    RRCSetupRequest: 0
+    RRCSetup: 1
+    RRCSetupComplete: 2
+    SecurityModeCommand: 3
+    SecurityModeComplete: 4
+    RRCReconfiguration: 5
+    RRCReconfigurationComplete: 6
+    RRCRelease: 7
+    RRCResumeRequest: 8
+    RRCResume: 9
+    RRCResumeComplete: 10
+    RRCReestablishmentRequest: 11
+    RRCReestablishment: 12
+    RRCReestablishmentComplete: 13
+  nas_msg_id:
+    RegistrationRequest: 65
+    RegistrationAccept: 66
+    RegistrationComplete: 67
+    RegistrationReject: 68
+    ServiceRequest: 76
+    ServiceAccept: 78
+    AuthenticationRequest: 86
+    AuthenticationResponse: 87
+    AuthenticationFailure: 89
+    SecurityModeCommand: 93
+    SecurityModeComplete: 94
+
+# ---------------------------------------------------------------------------
+# eKPM (Table I). 모두 src=ebpf, kind=ekpm, labels {cell, ue}. 값은 숫자(코드 또는 식별자).
+#   상태·알고리즘은 값이 바뀔 때, 메시지 ID는 메시지를 처리할 때마다, 식별자는 할당·보고될 때 낸다.
+# ---------------------------------------------------------------------------
+ekpm:
+  ue_c_rnti:        {unit: "id"}     # UE C-RNTI            Metadata  F1AP
+  ue_s_tmsi:        {unit: "id"}     # UE S-TMSI            Metadata  RRC
+  ue_cipher_alg:    {unit: "code"}   # UE Cipher Algorithm  Metadata  RRC
+  ue_integrity_alg: {unit: "code"}   # UE Integrity Alg.    Metadata  RRC
+  ue_rrc_state:     {unit: "code"}   # UE RRC State         State     RRC
+  ue_nas_state:     {unit: "code"}   # UE NAS State         State     NAS
+  ue_rrc_sec_state: {unit: "code"}   # UE RRC Security St.  State     RRC
+  ue_nas_sec_state: {unit: "code"}   # UE NAS Security St.  State     NAS
+  rrc_msg_id:       {unit: "code"}   # RRC Message ID       State     RRC
+  nas_msg_id:       {unit: "code"}   # NAS Message ID       State     NAS
+
+# ---------------------------------------------------------------------------
+# 표준 KPM (Table II, TS 28.552). 모두 src=kpm, kind=kpm, labels {cell}. tick_s마다 그 구간의 값을 구간 끝 시각으로 낸다.
+#   CC: 누적 카운터 → 그 구간 동안 늘어난 수
+#   SI: 상태 통계 → state에 있는 UE 수의 구간 평균(mean) 또는 최대(max)
+# ---------------------------------------------------------------------------
+kpm:
+  RRC.ConnEstabAtt:             {type: CC, unit: "count"}
+  RRC.ConnEstabSucc:            {type: CC, unit: "count"}
+  RRC.ConnEstabFailCause:       {type: CC, unit: "count"}   # TODO: 표준은 원인별 세부 카운터. 지금은 합계 하나
+  RRC.RelWithoutSuspendConfig:  {type: CC, unit: "count"}
+  UECNTX.ConnEstabAtt:          {type: CC, unit: "count"}
+  UECNTX.ConnEstabSucc:         {type: CC, unit: "count"}
+  RRC.ReEstabAtt:               {type: CC, unit: "count"}
+  RRC.ReEstabSuccWithUeContext: {type: CC, unit: "count"}
+  RRC.ResumeAtt:                {type: CC, unit: "count"}
+  RRC.ResumeSucc:               {type: CC, unit: "count"}
+  RRC.ConnMean:                 {type: SI, unit: "count", state: RRC_CONNECTED, stat: mean}
+  RRC.ConnMax:                  {type: SI, unit: "count", state: RRC_CONNECTED, stat: max}
+  RRC.InactiveConnMean:         {type: SI, unit: "count", state: RRC_INACTIVE, stat: mean}
+  RRC.InactiveConnMax:          {type: SI, unit: "count", state: RRC_INACTIVE, stat: max}
+
+# ---------------------------------------------------------------------------
+# 절차: 단계 목록. 각 단계에서 쓸 수 있는 것
+#   after_ms     앞 단계로부터 지연 [최소, 최대]
+#   rrc / nas    처리한 메시지 → rrc_msg_id / nas_msg_id
+#   set          상태·알고리즘 변경 (codes의 이름)
+#   new_rnti     C-RNTI 새로 할당 (labels.ue가 바뀜) → ue_c_rnti
+#   new_s_tmsi   S-TMSI 새로 할당 → ue_s_tmsi
+#   report       현재 값을 다시 냄 (새 C-RNTI 라벨로 이어 보이도록)
+#   spoof_c_rnti 실제와 다른 C-RNTI를 냄 (F1AP 변조)
+#   count        KPM 카운터(CC) +1
+#   free_rnti    C-RNTI 반납 (연결 끝)
+# ---------------------------------------------------------------------------
+procedures:
+  registration:            # 최초 등록: IDLE·DEREGISTERED → CONNECTED·REGISTERED
+    - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: RRCSetup}
+    - {after_ms: [10, 30], rrc: RRCSetupComplete, nas: RegistrationRequest, set: {ue_rrc_state: RRC_CONNECTED, ue_nas_state: REGISTERED_INITIATED}, count: [RRC.ConnEstabSucc]}
+    - {after_ms: [10, 30], nas: AuthenticationRequest}
+    - {after_ms: [10, 40], nas: AuthenticationResponse}
+    - {after_ms: [5, 15], nas: SecurityModeCommand, set: {ue_nas_sec_state: SMC_SENT}}
+    - {after_ms: [5, 15], nas: SecurityModeComplete, set: {ue_nas_sec_state: ACTIVATED}}
+    - {after_ms: [10, 30], count: [UECNTX.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: SecurityModeCommand, set: {ue_rrc_sec_state: SMC_SENT, ue_cipher_alg: NEA2, ue_integrity_alg: NIA2}}
+    - {after_ms: [5, 15], rrc: SecurityModeComplete, set: {ue_rrc_sec_state: ACTIVATED}}
+    - {after_ms: [5, 15], rrc: RRCReconfiguration, nas: RegistrationAccept, new_s_tmsi: true}
+    - {after_ms: [5, 15], rrc: RRCReconfigurationComplete, count: [UECNTX.ConnEstabSucc]}
+    - {after_ms: [5, 15], nas: RegistrationComplete, set: {ue_nas_state: REGISTERED}}
+
+  service:                 # 등록된 UE의 연결: IDLE → CONNECTED
+    - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: RRCSetup}
+    - {after_ms: [10, 30], rrc: RRCSetupComplete, nas: ServiceRequest, set: {ue_rrc_state: RRC_CONNECTED}, report: [ue_s_tmsi, ue_nas_state, ue_nas_sec_state], count: [RRC.ConnEstabSucc]}
+    - {after_ms: [10, 30], count: [UECNTX.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: SecurityModeCommand, set: {ue_rrc_sec_state: SMC_SENT, ue_cipher_alg: NEA2, ue_integrity_alg: NIA2}}
+    - {after_ms: [5, 15], rrc: SecurityModeComplete, set: {ue_rrc_sec_state: ACTIVATED}}
+    - {after_ms: [5, 15], rrc: RRCReconfiguration, nas: ServiceAccept}
+    - {after_ms: [5, 15], rrc: RRCReconfigurationComplete, count: [UECNTX.ConnEstabSucc]}
+
+  release:                 # CONNECTED → IDLE
+    - {after_ms: [0, 0], rrc: RRCRelease, set: {ue_rrc_state: RRC_IDLE, ue_rrc_sec_state: NOT_ACTIVATED}, count: [RRC.RelWithoutSuspendConfig], free_rnti: true}
+
+  suspend:                 # CONNECTED → INACTIVE (C-RNTI 반납, 재개 때 새로 받음)
+    - {after_ms: [0, 0], rrc: RRCRelease, set: {ue_rrc_state: RRC_INACTIVE}, free_rnti: true}
+
+  resume:                  # INACTIVE → CONNECTED
+    - {after_ms: [0, 0], new_rnti: true, rrc: RRCResumeRequest, count: [RRC.ResumeAtt]}
+    - {after_ms: [5, 15], rrc: RRCResume}
+    - {after_ms: [5, 20], rrc: RRCResumeComplete, set: {ue_rrc_state: RRC_CONNECTED, ue_rrc_sec_state: ACTIVATED}, report: [ue_s_tmsi, ue_cipher_alg, ue_integrity_alg, ue_nas_state, ue_nas_sec_state], count: [RRC.ResumeSucc]}
+
+  reestablish:             # 무선 링크 실패 후 재수립: CONNECTED 유지
+    - {after_ms: [0, 0], rrc: RRCReestablishmentRequest, count: [RRC.ReEstabAtt]}
+    - {after_ms: [5, 15], rrc: RRCReestablishment}
+    - {after_ms: [5, 20], rrc: RRCReestablishmentComplete, count: [RRC.ReEstabSuccWithUeContext]}
+
+  # ---- 공격용 ----
+  fake_setup:              # 가짜 RRCSetupRequest: RRCSetupComplete를 보내지 않아 타임아웃으로 실패
+    - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: RRCSetup}
+    - {after_ms: [1000, 1000], set: {ue_rrc_state: RRC_IDLE}, count: [RRC.ConnEstabFailCause], free_rnti: true}
+
+  abnormal_registration:   # 매번 다른 신원으로 등록을 시도하고 인증에 실패
+    - {after_ms: [0, 0], new_rnti: true, rrc: RRCSetupRequest, set: {ue_rrc_state: RRC_SETUP_REQUESTED}, count: [RRC.ConnEstabAtt]}
+    - {after_ms: [5, 15], rrc: RRCSetup}
+    - {after_ms: [10, 30], rrc: RRCSetupComplete, nas: RegistrationRequest, new_s_tmsi: true, set: {ue_rrc_state: RRC_CONNECTED, ue_nas_state: REGISTERED_INITIATED}, count: [RRC.ConnEstabSucc]}
+    - {after_ms: [10, 30], nas: AuthenticationRequest}
+    - {after_ms: [10, 30], nas: AuthenticationFailure}
+    - {after_ms: [5, 15], nas: RegistrationReject, set: {ue_nas_state: DEREGISTERED}}
+    - {after_ms: [5, 15], rrc: RRCRelease, set: {ue_rrc_state: RRC_IDLE}, count: [RRC.RelWithoutSuspendConfig], free_rnti: true}
+
+  tampered_smc:            # F1AP로 전달되는 SecurityModeCommand를 변조해 보안 알고리즘을 낮추고, C-RNTI 정보도 바꿈
+    - {after_ms: [0, 0], rrc: SecurityModeCommand, set: {ue_rrc_sec_state: SMC_SENT, ue_cipher_alg: NEA0, ue_integrity_alg: NIA0}, spoof_c_rnti: true}
+    - {after_ms: [5, 15], rrc: SecurityModeComplete, set: {ue_rrc_sec_state: ACTIVATED}}
+
+# ---------------------------------------------------------------------------
+# 정상 가입자(UE). 시작 후 first_registration_s 안에 등록하고,
+#   연결(connected_s) → 해제(IDLE) 또는 일시 중지(INACTIVE, suspend_prob) → 쉼(idle_s) → 연결 ... 을 반복한다.
+#   연결 중에는 분당 reestablish_per_min 비율로 재수립이 끼어든다.
+# ---------------------------------------------------------------------------
+subscribers:
+  count: 3
+  s_tmsi_bits: 48
+  first_registration_s: [0, 15]
+  connected_s: [20, 60]
+  idle_s: [10, 40]
+  suspend_prob: 0.3
+  reestablish_per_min: 0.5
+  busy_retry_ms: 100       # 다른 절차가 진행 중이면 이만큼 뒤에 다시 시도
 
 # ---------------------------------------------------------------------------
 # 공격 일정 (mixed 또는 특정 공격 시나리오)
@@ -43,59 +193,57 @@ schedule:
 
 # ---------------------------------------------------------------------------
 # 공격 유형
-#   effects: 공격 중 지표 변화. set = 그 값 주변으로 바뀜, add = 평상시 값에 더함, noise = 공격 중 표준편차
-#            eKPM은 크게, 표준 KPM은 약하게 바뀌도록 잡는다 (프로젝트 핵심 주장을 보여주는 데이터).
+#   inject: 공격 구간 동안 일으키는 절차. attack_run.params에 그대로 기록된다
+#     who: new(매번 새 가짜 UE) | attacker(공격자 UE 하나가 반복) | connected(연결 중인 정상 UE 하나를 골라)
+#     first_at_ms: 공격 시작 → 첫 절차, 그 뒤로 rate_per_s(포아송) 또는 interval_s(간격) 마다
+#   override: 공격 구간 동안 모든 절차의 set 값을 이 값으로 바꿈 (메시지 변조)
 #   rulesets: 룰셋별 탐지 이벤트
-#     detect_prob:        공격 1회를 탐지할 확률
-#     delay_ms:           공격 시작 → 첫 탐지(ts_detected)
-#     latency_ms:         ts_first_evidence → ts_detected
-#     repeat_interval_s:  탐지 후 공격이 끝날 때까지 이 간격으로 다시 탐지 이벤트를 낸다 (null이면 한 번만)
-#     evidence[].value:   탐지 시 근거 값 범위 (op·threshold를 만족해야 함)
-#   TODO: rule_id, 임계값은 탐지 엔진 담당과 맞춘다.
+#     detect_prob, delay_ms(공격 시작 → 첫 탐지), latency_ms(ts_first_evidence → ts_detected),
+#     repeat_interval_s(공격이 끝날 때까지 반복 간격, null이면 한 번), evidence[].value(근거 값 범위, op·threshold를 만족해야 함)
+#     evidence[].metric: eKPM은 메시지 단위라, 룰은 "count(rrc_msg_id=RRCSetupRequest)"처럼 윈도우 안의 집계로 쓴다 (가안)
+#   TODO(T4): rule_id, 임계값은 탐지 엔진 담당과 맞춘다.
+#
+# 공격별로 보이는 것 (프로젝트 핵심 주장):
+#   RRC_SIGNALING_STORM  KPM도 RRC.ConnEstabAtt·FailCause가 크게 오른다. 하지만 어떤 UE가 가짜인지는 eKPM(C-RNTI별 상태)만 안다
+#   ABNORMAL_UE_ATTACH   KPM은 연결 시도가 조금 늘 뿐. eKPM은 같은 패턴의 인증 실패·등록 거절과 바뀌는 S-TMSI를 보여 준다
+#   F1AP_MSG_TAMPER      KPM은 거의 그대로. eKPM에서 보안 알고리즘이 NEA0/NIA0으로 떨어지고 C-RNTI가 어긋난다
 # ---------------------------------------------------------------------------
+detection:
+  target_max_ues: 5        # 탐지 이벤트 target.ue에 넣을 최대 UE 수
+
 attacks:
   RRC_SIGNALING_STORM:
     duration_s: [20, 40]
-    params: {rate: 200, fake_ue_count: 50}
-    target: {node: cu, cell: "1"}
-    effects:
-      rrc_setup_req_rate:   {set: 200, noise: 15}
-      rrc_setup_fail_ratio: {set: 0.7, noise: 0.05}
-      RRU.PrbUsedDl:        {add: 3}
-      RRC.ConnMean:         {add: 0.3}
+    inject:
+      - {procedure: fake_setup, who: new, first_at_ms: [0, 50], rate_per_s: 50}
     rulesets:
       full:
         detect_prob: 0.95
-        delay_ms: [200, 800]
-        latency_ms: [100, 500]
+        delay_ms: [400, 800]     # 초당 50건이면 0.4초쯤 지나야 임계값(20건)을 넘는다
+        latency_ms: [100, 400]
         repeat_interval_s: 10
         rule_id: R-RRC-001
         rule_version: "1.0"
         severity: high
         evidence:
-          - {source: ebpf, metric: rrc_setup_req_rate,   op: ">", threshold: 50,  window_ms: 1000, value: [150, 230]}
-          - {source: ebpf, metric: rrc_setup_fail_ratio, op: ">", threshold: 0.3, window_ms: 1000, value: [0.6, 0.8]}
+          - {source: ebpf, metric: "count(rrc_msg_id=RRCSetupRequest)",        op: ">", threshold: 20, window_ms: 1000, value: [21, 45]}
+          - {source: ebpf, metric: "count(ue_rrc_state=RRC_SETUP_REQUESTED)",  op: ">", threshold: 10, window_ms: 1000, value: [15, 40]}
       kpm_only:
-        detect_prob: 0.4
-        delay_ms: [3000, 12000]
+        detect_prob: 0.5
+        delay_ms: [3000, 8000]
         latency_ms: [2000, 5000]
         repeat_interval_s: null
         rule_id: R-KPM-RRC-001
         rule_version: "1.0"
         severity: medium
         evidence:
-          - {source: kpm, metric: RRU.PrbUsedDl, op: ">", threshold: 37,  window_ms: 5000, value: [37.5, 42]}
-          - {source: kpm, metric: RRC.ConnMean,  op: ">", threshold: 3.2, window_ms: 5000, value: [3.22, 3.45]}
+          - {source: kpm, metric: RRC.ConnEstabAtt,       op: ">", threshold: 20, window_ms: 5000, value: [150, 300]}
+          - {source: kpm, metric: RRC.ConnEstabFailCause, op: ">", threshold: 10, window_ms: 5000, value: [150, 300]}
 
   ABNORMAL_UE_ATTACH:
     duration_s: [30, 60]
-    params: {attempt_rate: 12, ue: "0x4f10"}
-    target: {node: cu, cell: "1", ue: ["0x4f10"]}
-    effects:
-      ue_attach_attempt_rate: {set: 12, noise: 2}
-      rrc_setup_req_rate:     {add: 10, noise: 2}
-      rrc_setup_fail_ratio:   {add: 0.15, noise: 0.03}
-      RRC.ConnMean:           {add: 0.3}
+    inject:
+      - {procedure: abnormal_registration, who: attacker, first_at_ms: [0, 50], interval_s: [2.5, 3.5]}
     rulesets:
       full:
         detect_prob: 0.95
@@ -105,10 +253,11 @@ attacks:
         rule_id: R-ATT-001
         rule_version: "1.0"
         severity: high
-        evidence:
-          - {source: ebpf, metric: ue_attach_attempt_rate, op: ">", threshold: 5, window_ms: 1000, value: [9, 15]}
+        evidence:   # 첫 시도(공격 시작 후 약 0.1초)의 인증 실패·등록 거절로 바로 잡는다
+          - {source: ebpf, metric: "count(nas_msg_id=AuthenticationFailure)", op: ">=", threshold: 1, window_ms: 1000, value: [1, 1]}
+          - {source: ebpf, metric: "count(nas_msg_id=RegistrationReject)",    op: ">=", threshold: 1, window_ms: 1000, value: [1, 1]}
       kpm_only:
-        detect_prob: 0.35
+        detect_prob: 0.3
         delay_ms: [5000, 15000]
         latency_ms: [2000, 6000]
         repeat_interval_s: null
@@ -116,17 +265,14 @@ attacks:
         rule_version: "1.0"
         severity: medium
         evidence:
-          - {source: kpm, metric: RRC.ConnMean, op: ">", threshold: 3.2, window_ms: 5000, value: [3.22, 3.45]}
+          - {source: kpm, metric: RRC.ConnEstabAtt, op: ">", threshold: 1, window_ms: 5000, value: [2, 3]}
 
   F1AP_MSG_TAMPER:
     duration_s: [20, 40]
-    params: {tamper_ratio: 0.3}
-    target: {node: cu, cell: "1"}
-    effects:
-      f1ap_malformed_count: {set: 15, noise: 3}
-      f1ap_msg_rate:        {add: 5}
-      DRB.UEThpDl:          {add: -800}
-      RRU.PrbUsedDl:        {add: -1}
+    inject:
+      - {procedure: tampered_smc, who: connected, first_at_ms: [0, 50], rate_per_s: 0.3}
+      - {procedure: reestablish, who: connected, first_at_ms: [2000, 5000], rate_per_s: 0.05}
+    override: {ue_cipher_alg: NEA0, ue_integrity_alg: NIA0}
     rulesets:
       full:
         detect_prob: 0.95
@@ -137,9 +283,10 @@ attacks:
         rule_version: "1.0"
         severity: critical
         evidence:
-          - {source: ebpf, metric: f1ap_malformed_count, op: ">", threshold: 3, window_ms: 1000, value: [9, 20]}
+          - {source: ebpf, metric: ue_cipher_alg,    op: "==", threshold: 0, window_ms: 0, value: [0, 0]}
+          - {source: ebpf, metric: ue_integrity_alg, op: "==", threshold: 0, window_ms: 0, value: [0, 0]}
       kpm_only:
-        detect_prob: 0.3
+        detect_prob: 0.15
         delay_ms: [4000, 12000]
         latency_ms: [2000, 5000]
         repeat_interval_s: null
@@ -147,11 +294,11 @@ attacks:
         rule_version: "1.0"
         severity: low
         evidence:
-          - {source: kpm, metric: DRB.UEThpDl, op: "<", threshold: 11500, window_ms: 5000, value: [10800, 11450]}
+          - {source: kpm, metric: RRC.ReEstabAtt, op: ">", threshold: 0, window_ms: 5000, value: [1, 2]}
 
 # ---------------------------------------------------------------------------
 # 오탐: 공격이 없는 구간에서 룰셋별로 시간당 평균 per_hour건 (포아송 과정).
-#   공격 유형은 전체 유형 중 무작위, 근거 값은 임계값을 excess 비율만큼 살짝 넘긴 값.
+#   공격 유형은 전체 유형 중 무작위, 근거 값은 임계값을 excess 비율만큼 살짝 넘긴 값(== 룰이면 임계값 그대로).
 #   공격 종료 후 exclude_after_attack_s 동안은 오탐을 내지 않는다 (evaluator의 grace 구간에서 TP로 잡히지 않도록).
 # ---------------------------------------------------------------------------
 false_positive:

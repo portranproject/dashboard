@@ -1,7 +1,7 @@
 import copy
 import json
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import pytest
 
@@ -9,6 +9,7 @@ from common.schema import get_validator, validation_errors
 from mock.generator import (
     NS,
     Run,
+    Simulator,
     check_config,
     emit_ns,
     generate,
@@ -32,12 +33,18 @@ def mixed(cfg):
     return list(generate(cfg, "mixed", TEN_MIN, seed=42, start_ns=START))
 
 
+@pytest.fixture(scope="module")
+def long_mixed(cfg):
+    """공격 유형마다 여러 번 나오도록 30분."""
+    return list(generate(cfg, "mixed", 1800, seed=11, start_ns=START))
+
+
 def runs_of(msgs):
     return [m for m in msgs if m["type"] == "attack_run"]
 
 
-def active_run(runs, ts):
-    return next((r for r in runs if r["ts_start"] <= ts < r["ts_end"]), None)
+def metrics(msgs, kind, name=None):
+    return [m for m in msgs if m["type"] == "metric" and m["kind"] == kind and (name is None or m["name"] == name)]
 
 
 # --------------------------------------------------------------------------- 설정
@@ -46,11 +53,27 @@ def test_config_attack_types_match_schema(cfg):
     assert sorted(cfg["attacks"]) == sorted(get_validator().schema["$defs"]["attack_type"]["enum"])
 
 
+def test_config_follows_paper_tables(cfg):
+    # TeleRAN Table I(10개) → eKPM, Table II(14개) → 표준 KPM
+    assert len(cfg["ekpm"]) == 10
+    assert list(cfg["kpm"]) == [
+        "RRC.ConnEstabAtt", "RRC.ConnEstabSucc", "RRC.ConnEstabFailCause", "RRC.RelWithoutSuspendConfig",
+        "UECNTX.ConnEstabAtt", "UECNTX.ConnEstabSucc", "RRC.ReEstabAtt", "RRC.ReEstabSuccWithUeContext",
+        "RRC.ResumeAtt", "RRC.ResumeSucc", "RRC.ConnMean", "RRC.ConnMax", "RRC.InactiveConnMean", "RRC.InactiveConnMax",
+    ]
+
+
 @pytest.mark.parametrize("break_config, message", [
-    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["effects"].update(no_such_metric={"set": 1}), "metrics에 없는"),
-    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["effects"]["RRC.ConnMean"].update(set=1), "하나만"),
+    (lambda c: c["procedures"]["release"][0].update(typo=1), "모르는 항목"),
+    (lambda c: c["procedures"]["release"][0].update(rrc="RRCNoSuchMessage"), "codes.rrc_msg_id에 없는"),
+    (lambda c: c["procedures"]["release"][0]["set"].update(ue_rrc_state="RRC_SLEEPING"), "codes에 없습니다"),
+    (lambda c: c["procedures"]["release"][0].update(count=["RRC.ConnMean"]), "CC 카운터가 아닙니다"),
+    (lambda c: c["procedures"].pop("resume"), "정상 UE가 씀"),
+    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["inject"][0].update(procedure="nope"), "procedures에 없는 절차"),
+    (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["inject"][0].update(interval_s=[1, 2]), "하나만"),
+    (lambda c: c["attacks"]["F1AP_MSG_TAMPER"]["override"].update(ue_cipher_alg="NEA9"), "codes에 없습니다"),
     (lambda c: c["attacks"]["RRC_SIGNALING_STORM"]["rulesets"].pop("kpm_only"), "모두 있어야"),
-    (lambda c: c["attacks"]["F1AP_MSG_TAMPER"]["rulesets"]["full"]["evidence"][0].update(value=[1, 20]), "만족하지 않습니다"),
+    (lambda c: c["attacks"]["F1AP_MSG_TAMPER"]["rulesets"]["full"]["evidence"][0].update(value=[0, 1]), "만족하지 않습니다"),
     (lambda c: c["schedule"].update(gap_s=[90, 40]), "최소, 최대"),
     (lambda c: c["attacks"].update(UNKNOWN_ATTACK=c["attacks"]["F1AP_MSG_TAMPER"]), "스키마에 없는"),
 ])
@@ -64,9 +87,11 @@ def test_config_mistakes_are_reported(cfg, break_config, message):
 # --------------------------------------------------------------------------- M2 완료 조건
 
 def test_ten_minutes_all_messages_pass_schema(mixed):
-    errors = [(m, validation_errors(m)) for m in mixed if validation_errors(m)]
-    assert errors == []
+    validator = get_validator()
+    invalid = [m for m in mixed if not validator.is_valid(m)]
+    assert invalid == [], validation_errors(invalid[0])
     assert {m["type"] for m in mixed} == {"metric", "detection", "attack_run", "overhead"}
+    assert {m["kind"] for m in mixed if m["type"] == "metric"} == {"ekpm", "kpm"}
 
 
 def test_same_seed_same_output(cfg, mixed):
@@ -86,16 +111,16 @@ def test_same_seed_different_start_only_shifts_time(cfg, mixed):
         assert {k: v for k, v in a.items() if not k.startswith("ts")} == {k: v for k, v in b.items() if not k.startswith("ts")}
 
 
-def test_cli_writes_ten_minutes_to_file(tmp_path):
+def test_cli_writes_ten_minutes_to_file(cfg, tmp_path):
     out = tmp_path / "mock.jsonl"
     rc = main(["--duration", "600", "--seed", "7", "--speed", "0",
                "--start", "2026-11-20T10:00:00", "--out", f"file://{out}"])
     assert rc == 0
-    lines = out.read_text(encoding="utf-8").splitlines()
-    msgs = [json.loads(line) for line in lines]
-    assert all(get_validator().is_valid(m) for m in msgs)
-    metric_ts = {m["ts"] for m in msgs if m["type"] == "metric"}
-    assert len(metric_ts) == 600  # 1초 주기, 10분
+    msgs = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    validator = get_validator()
+    assert all(validator.is_valid(m) for m in msgs)
+    per_name = Counter(m["name"] for m in metrics(msgs, "kpm"))
+    assert per_name == {name: 600 for name in cfg["kpm"]}  # 1초 주기, 10분
 
 
 # --------------------------------------------------------------------------- 동작
@@ -105,10 +130,45 @@ def test_messages_are_in_time_order(mixed):
     assert times == sorted(times)
 
 
-def test_metrics_every_second(cfg, mixed):
-    metric_ts = sorted({m["ts"] for m in mixed if m["type"] == "metric"})
-    assert metric_ts[0] == START
-    assert {b - a for a, b in zip(metric_ts, metric_ts[1:])} == {cfg["tick_s"] * NS}
+def test_kpm_reported_every_tick_at_period_end(cfg, mixed):
+    ts = sorted({m["ts"] for m in metrics(mixed, "kpm")})
+    tick = cfg["tick_s"] * NS
+    assert ts == [START + (i + 1) * tick for i in range(TEN_MIN)]
+
+
+def test_ekpm_values_use_code_tables(cfg, mixed):
+    pool = cfg["rnti_pool"]
+    for m in metrics(mixed, "ekpm"):
+        assert m["src"] == "ebpf" and set(m["labels"]) == {"cell", "ue"}
+        assert pool["first"] <= int(m["labels"]["ue"], 16) < pool["first"] + pool["size"]
+        if m["name"] in cfg["codes"]:
+            assert m["value"] in cfg["codes"][m["name"]].values(), m
+
+
+def test_kpm_counters_match_ekpm_messages(cfg, mixed):
+    """KPM과 eKPM은 같은 절차에서 나오므로 개수가 맞아야 한다."""
+    rrc = {v: k for k, v in cfg["codes"]["rrc_msg_id"].items()}
+    msg_counts = Counter(rrc[m["value"]] for m in metrics(mixed, "ekpm", "rrc_msg_id"))
+    kpm_sum = defaultdict(float)
+    for m in metrics(mixed, "kpm"):
+        kpm_sum[m["name"]] += m["value"]
+    assert kpm_sum["RRC.ConnEstabAtt"] == msg_counts["RRCSetupRequest"]
+    assert kpm_sum["RRC.ConnEstabSucc"] == msg_counts["RRCSetupComplete"]
+    assert kpm_sum["RRC.ResumeAtt"] == msg_counts["RRCResumeRequest"]
+    assert kpm_sum["RRC.ReEstabAtt"] == msg_counts["RRCReestablishmentRequest"]
+
+
+def test_connected_ue_statistics_are_sane(cfg):
+    msgs = list(generate(cfg, "normal", 900, seed=2, start_ns=START))
+    by = defaultdict(dict)
+    for m in metrics(msgs, "kpm"):
+        by[m["ts"]][m["name"]] = m["value"]
+    n = cfg["subscribers"]["count"]
+    for v in by.values():
+        assert 0 <= v["RRC.ConnMean"] <= v["RRC.ConnMax"] <= n
+        assert 0 <= v["RRC.InactiveConnMean"] <= v["RRC.InactiveConnMax"] <= n
+    assert statistics.mean(v["RRC.ConnMean"] for v in by.values()) > 0.5  # 평소에 연결된 UE가 있다
+    assert sum(v["RRC.ConnEstabFailCause"] for v in by.values()) == 0     # 평상시엔 연결 실패 없음
 
 
 def test_mixed_covers_every_attack_type(cfg, mixed):
@@ -130,27 +190,95 @@ def test_runs_fit_in_duration_without_overlap(cfg):
     assert runs[-1].ts_end + cfg["schedule"]["gap_s"][0] * NS <= START + 3600 * NS
 
 
-def test_attack_moves_ekpm_a_lot_but_kpm_only_a_little(cfg):
-    """프로젝트 핵심 주장을 보여주는 데이터: 공격마다 eKPM 하나 이상은 크게, 표준 KPM은 20% 미만으로."""
-    msgs = list(generate(cfg, "mixed", 3600, seed=11, start_ns=START))
-    runs = runs_of(msgs)
-    values = defaultdict(list)
-    for m in msgs:
-        if m["type"] == "metric":
-            run = active_run(runs, m["ts"])
-            values[(m["name"], run["scenario"] if run else None)].append(m["value"])
-    metric_cfg = {m["name"]: m for m in cfg["metrics"]}
+# --------------------------------------------------------------------------- 공격별로 보이는 것 (핵심 주장)
 
-    for attack_type, attack in cfg["attacks"].items():
-        big_ekpm = []
-        for name, effect in attack["effects"].items():
-            normal = statistics.mean(values[(name, None)])
-            during = statistics.mean(values[(name, attack_type)])
-            if metric_cfg[name]["kind"] == "kpm":
-                assert abs(during - normal) / normal < 0.2, (attack_type, name, normal, during)
-            elif abs(during - normal) > 10 * metric_cfg[name]["noise"]:
-                big_ekpm.append(name)
-        assert big_ekpm, f"{attack_type}: 크게 바뀌는 eKPM이 없습니다"
+class Phases:
+    """1초 구간을 '공격 한가운데' / '평상시'로 나눈다. 경계 구간과 공격 직후 3초는 뺀다."""
+
+    def __init__(self, msgs, tick_ns=NS):
+        self.runs = runs_of(msgs)
+        self.tick = tick_ns
+
+    def of_period(self, end_ns):
+        start = end_ns - self.tick
+        for r in self.runs:
+            if r["ts_start"] <= start and end_ns <= r["ts_end"]:
+                return r["scenario"]
+            if start < r["ts_end"] + 3 * NS and end_ns > r["ts_start"]:
+                return None
+        return "normal"
+
+    def of_time(self, ts):
+        return self.of_period((ts // self.tick + 1) * self.tick)
+
+
+def per_second(msgs, phases, pick):
+    """phase별 초당 건수. pick(m)이 참인 eKPM 메시지를 센다."""
+    seconds = Counter(phases.of_period(m["ts"]) for m in metrics(msgs, "kpm", "RRC.ConnEstabAtt"))
+    hits = Counter(phases.of_time(m["ts"]) for m in metrics(msgs, "ekpm") if pick(m))
+    return {p: hits[p] / seconds[p] for p in seconds if p}
+
+
+def kpm_mean(msgs, phases, name):
+    vals = defaultdict(list)
+    for m in metrics(msgs, "kpm", name):
+        vals[phases.of_period(m["ts"])].append(m["value"])
+    return {p: statistics.mean(v) for p, v in vals.items() if p}
+
+
+def code(cfg, name, value_name):
+    return cfg["codes"][name][value_name]
+
+
+def test_storm_kpm_sees_volume_but_only_ekpm_sees_each_fake_ue(cfg, long_mixed):
+    ph = Phases(long_mixed)
+    setup_req = code(cfg, "rrc_msg_id", "RRCSetupRequest")
+    ekpm_rate = per_second(long_mixed, ph, lambda m: m["name"] == "rrc_msg_id" and m["value"] == setup_req)
+    att = kpm_mean(long_mixed, ph, "RRC.ConnEstabAtt")
+    succ = kpm_mean(long_mixed, ph, "RRC.ConnEstabSucc")
+    storm = "RRC_SIGNALING_STORM"
+    assert ekpm_rate[storm] > 20 * max(ekpm_rate["normal"], 0.05)
+    assert att[storm] > 20 * max(att["normal"], 0.05)        # 폭주는 표준 KPM에도 보인다
+    assert succ[storm] <= succ["normal"] + 0.1               # 성공은 늘지 않는다
+    # 어떤 UE가 가짜인지(연결 요청만 하고 멈춘 C-RNTI)는 eKPM에만 있다
+    stuck = code(cfg, "ue_rrc_state", "RRC_SETUP_REQUESTED")
+    fake_ues = {m["labels"]["ue"] for m in metrics(long_mixed, "ekpm", "ue_rrc_state")
+                if m["value"] == stuck and ph.of_time(m["ts"]) == storm}
+    assert len(fake_ues) > 100
+
+
+def test_abnormal_attach_shows_in_ekpm_but_barely_in_kpm(cfg, long_mixed):
+    ph = Phases(long_mixed)
+    auth_fail = code(cfg, "nas_msg_id", "AuthenticationFailure")
+    reject = code(cfg, "nas_msg_id", "RegistrationReject")
+    fails = per_second(long_mixed, ph, lambda m: m["name"] == "nas_msg_id" and m["value"] in (auth_fail, reject))
+    att = kpm_mean(long_mixed, ph, "RRC.ConnEstabAtt")
+    attach = "ABNORMAL_UE_ATTACH"
+    assert fails["normal"] == 0 and fails[attach] > 0.4
+    assert att[attach] - att["normal"] < 1.0                  # 연결 시도는 초당 1건도 안 늘어난다
+    # 시도마다 다른 신원(S-TMSI)
+    s_tmsi = [m["value"] for m in metrics(long_mixed, "ekpm", "ue_s_tmsi") if ph.of_time(m["ts"]) == attach]
+    assert len(set(s_tmsi)) > 0.8 * len(s_tmsi) > 5
+
+
+def test_tamper_is_invisible_in_kpm_but_visible_in_ekpm(cfg, long_mixed):
+    ph = Phases(long_mixed)
+    nea0 = code(cfg, "ue_cipher_alg", "NEA0")
+    smc = code(cfg, "rrc_msg_id", "SecurityModeCommand")
+    tamper = "F1AP_MSG_TAMPER"
+    # NEA0으로 바뀌는 순간(SecurityModeCommand와 같은 시각·UE)은 변조 구간에만 있다.
+    # 이미 낮아진 UE가 공격 뒤 재개(resume)하며 NEA0을 다시 보고하는 건 실제와 같은 동작이라 따로 센다.
+    smc_at = {(m["ts"], m["labels"]["ue"]) for m in metrics(long_mixed, "ekpm", "rrc_msg_id") if m["value"] == smc}
+    downgrades = per_second(long_mixed, ph, lambda m: m["name"] == "ue_cipher_alg" and m["value"] == nea0
+                            and (m["ts"], m["labels"]["ue"]) in smc_at)
+    mismatches = per_second(long_mixed, ph,
+                            lambda m: m["name"] == "ue_c_rnti" and m["value"] != int(m["labels"]["ue"], 16))
+    assert downgrades["normal"] == 0 and downgrades[tamper] > 0
+    assert mismatches["normal"] == 0 and mismatches[tamper] > 0
+    for name, k in cfg["kpm"].items():
+        if k["type"] == "CC" and not name.startswith("RRC.ReEstab"):
+            mean = kpm_mean(long_mixed, ph, name)
+            assert abs(mean[tamper] - mean["normal"]) < 0.3, name  # 연결·해제 카운터는 거의 그대로
 
 
 def test_overhead_has_both_modes_and_ebpf_costs_more(mixed):
@@ -162,9 +290,10 @@ def test_overhead_has_both_modes_and_ebpf_costs_more(mixed):
         assert statistics.mean(cpu[(node, True)]) > statistics.mean(cpu[(node, False)])
 
 
-def test_attack_run_is_marked_as_mock(mixed):
+def test_attack_run_is_marked_as_mock(cfg, mixed):
     for r in runs_of(mixed):
         assert r["params"]["generator"] == "mock" and r["params"]["seed"] == 42
+        assert r["params"]["inject"] == cfg["attacks"][r["scenario"]]["inject"]
 
 
 # --------------------------------------------------------------------------- 탐지 이벤트
@@ -201,11 +330,29 @@ def test_detection_rate_and_delay_follow_config(cfg, attack_type):
     assert cfg["attacks"][attack_type]["rulesets"]["kpm_only"]["delay_ms"][0] > full_max
 
 
+def test_detection_targets_are_ues_involved_in_the_attack(cfg, mixed):
+    runs = runs_of(mixed)
+    labels_by_run = defaultdict(set)
+    for m in metrics(mixed, "ekpm"):
+        for r in runs:
+            if r["ts_start"] <= m["ts"] <= r["ts_end"] + 2 * NS:
+                labels_by_run[r["run_id"]].add(m["labels"]["ue"])
+    checked = 0
+    for d in (m for m in mixed if m["type"] == "detection"):
+        run = next((r for r in runs if r["ts_start"] <= d["ts_detected"] <= r["ts_end"]
+                    and r["scenario"] == d["attack_type"]), None)
+        if run and "ue" in d["target"]:
+            assert set(d["target"]["ue"]) <= labels_by_run[run["run_id"]]
+            assert len(d["target"]["ue"]) <= cfg["detection"]["target_max_ues"]
+            checked += 1
+    assert checked > 0
+
+
 def test_detection_times_are_consistent(cfg, mixed):
     runs = runs_of(mixed)
     for d in (m for m in mixed if m["type"] == "detection"):
         assert d["ts_first_evidence"] <= d["ts_detected"]
-        run = active_run(runs, d["ts_detected"])
+        run = next((r for r in runs if r["ts_start"] <= d["ts_detected"] < r["ts_end"]), None)
         if run and run["scenario"] == d["attack_type"]:
             assert d["ts_first_evidence"] >= run["ts_start"]
 
@@ -226,11 +373,20 @@ def test_false_positives_only_outside_attacks(cfg):
     for d in detections:
         if not any(r.ts_start <= d["ts_detected"] <= r.ts_end + quiet for r in runs):
             fps[d["ruleset"]] += 1
-            # 오탐 근거 값은 임계값을 살짝 넘긴 값
+            # 오탐 근거 값은 임계값을 살짝 넘긴 값 (== 룰은 임계값 그대로)
             for ev in d["evidence"]:
-                assert ev["value"] > ev["threshold"] if ev["op"] in (">", ">=") else ev["value"] < ev["threshold"]
+                op, v, th = ev["op"], ev["value"], ev["threshold"]
+                assert {">": v > th, ">=": v >= th, "<": v < th, "<=": v <= th, "==": v == th}[op]
     attack_hours = sum((r.ts_end - r.ts_start) for r in runs) / NS / 3600
     for ruleset, per_hour in cfg["false_positive"]["per_hour"].items():
         expected = per_hour * (24 - attack_hours)
         assert 0.5 * expected < fps[ruleset] < 1.5 * expected, (ruleset, fps[ruleset], expected)
     assert fps["kpm_only"] > fps["full"]
+
+
+def test_rnti_pool_exhaustion_is_reported(cfg):
+    small = copy.deepcopy(cfg)
+    small["rnti_pool"]["size"] = 10
+    runs = [Run("r1", "RRC_SIGNALING_STORM", START + 5 * NS, START + 25 * NS)]
+    with pytest.raises(ValueError, match="rnti_pool"):
+        Simulator(small, runs, 30, START, seed=1).run()

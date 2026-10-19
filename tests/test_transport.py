@@ -61,3 +61,102 @@ def test_udp_sink_sends_one_datagram_per_message():
         sink.close()
         receiver.close()
     assert got == [{"i": 0}, {"i": 1}, {"i": 2}]
+
+
+# --------------------------------------------------------------------------- 수신
+
+import threading
+import time
+
+from common.transport import FileTailSource, UdpSource, open_source
+
+
+class Collect:
+    """source.lines()를 별도 스레드에서 돌려 받은 줄을 모은다."""
+
+    def __init__(self, source):
+        self.source, self.got, self.stop = source, [], threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        for line, origin in self.source.lines(self.stop):
+            self.got.append((line, origin))
+
+    def wait_for(self, n, timeout=5):
+        end = time.monotonic() + timeout
+        while len(self.got) < n and time.monotonic() < end:
+            time.sleep(0.02)
+        return [line for line, _ in self.got]
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=5)
+        self.source.close()
+
+
+def test_file_tail_once_reads_all_including_last_line_without_newline(tmp_path):
+    path = tmp_path / "a.jsonl"
+    path.write_bytes(b'{"a":1}\n\n{"b":2}\r\n{"c":3}')
+    lines = [line for line, _ in FileTailSource(path, follow=False).lines(threading.Event())]
+    assert lines == [b'{"a":1}', b'{"b":2}', b'{"c":3}']
+
+
+def test_file_tail_follows_appends_and_waits_for_partial_lines(tmp_path):
+    path = tmp_path / "a.jsonl"
+    path.write_bytes(b"1\n")
+    c = Collect(FileTailSource(path, poll_s=0.02))
+    try:
+        assert c.wait_for(1) == [b"1"]
+        with path.open("ab") as fp:
+            fp.write(b"2\n3")       # 3은 아직 줄이 안 끝남
+            fp.flush()
+            assert c.wait_for(2) == [b"1", b"2"]
+            time.sleep(0.1)
+            assert len(c.got) == 2
+            fp.write(b"3\n")
+        assert c.wait_for(3) == [b"1", b"2", b"33"]
+    finally:
+        c.close()
+
+
+def test_file_tail_from_end_skips_existing_lines(tmp_path):
+    path = tmp_path / "a.jsonl"
+    path.write_bytes(b"old\n")
+    c = Collect(FileTailSource(path, from_start=False, poll_s=0.02))
+    try:
+        time.sleep(0.1)
+        with path.open("ab") as fp:
+            fp.write(b"new\n")
+        assert c.wait_for(1) == [b"new"]
+    finally:
+        c.close()
+
+
+def test_file_tail_waits_for_file_and_handles_truncation(tmp_path):
+    path = tmp_path / "later.jsonl"
+    c = Collect(FileTailSource(path, poll_s=0.02))
+    try:
+        time.sleep(0.1)
+        path.write_bytes(b"first-long-line\n")
+        assert c.wait_for(1) == [b"first-long-line"]
+        path.write_bytes(b"x\n")  # 덮어쓰기(크기가 줄어듦) → 처음부터 다시
+        assert c.wait_for(2) == [b"first-long-line", b"x"]
+    finally:
+        c.close()
+
+
+def test_udp_source_receives_and_splits_lines():
+    src = open_source("udp://127.0.0.1:0", poll_s=0.05)
+    assert isinstance(src, UdpSource)
+    port = int(src.address.rsplit(":", 1)[1])
+    c = Collect(src)
+    try:
+        sink = open_sink(f"udp://127.0.0.1:{port}")
+        sink.send('{"a":1}')
+        sink.send('{"b":2}\n{"c":3}')
+        sink.close()
+        assert c.wait_for(3) == [b'{"a":1}', b'{"b":2}', b'{"c":3}']
+        assert c.got[0][1].startswith("udp:127.0.0.1:")
+    finally:
+        c.close()

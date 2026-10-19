@@ -529,8 +529,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "접속 UE 수 (RRC.ConnMean)",
-      "description": "표준 KPM RRC.ConnMean의 마지막 값 (RRC_CONNECTED UE 수의 1초 평균). 신호 폭주 때 위조 연결로 크게 오른다",
+      "title": "접속 UE 수 (RRC.ConnMax · RRC.ConnMean)",
+      "description": "표준 KPM의 마지막 1초 값. 최대 = RRC.ConnMax(그 1초 동안 RRC_CONNECTED였던 UE 수의 최대, 정수), 평균 = RRC.ConnMean(시간 평균. 연결·해제가 섞이면 0.9처럼 소수). 신호 폭주 때 위조 연결로 크게 오른다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -548,7 +548,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"metric\" and r._field == \"value\" and r.kind == \"kpm\" and r.name == \"RRC.ConnMean\")\n  |> filter(fn: (r) => contains(value: r.node, set: ${node:json}))\n  |> group()\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)"
+          "query": "conn = (name, label, agg) => from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"metric\" and r._field == \"value\" and r.kind == \"kpm\" and r.name == name)\n  |> filter(fn: (r) => contains(value: r.node, set: ${node:json}))\n  |> group()\n  |> aggregateWindow(every: v.windowPeriod, fn: agg, createEmpty: true)  // 빈 구간은 끊어 보이게\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: label}))\nunion(tables: [\n  conn(name: \"RRC.ConnMax\", label: \"최대\", agg: max),\n  conn(name: \"RRC.ConnMean\", label: \"평균\", agg: mean),\n])\n  |> group(columns: [\"_field\"])"
         }
       ],
       "options": {
@@ -561,9 +561,9 @@
         },
         "colorMode": "value",
         "graphMode": "area",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "justifyMode": "auto",
-        "orientation": "auto",
+        "orientation": "horizontal",
         "wideLayout": true,
         "showPercentChange": false
       },
@@ -590,10 +590,22 @@
               }
             ]
           },
-          "displayName": "접속 UE",
           "decimals": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "최대"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
       }
     },
     {

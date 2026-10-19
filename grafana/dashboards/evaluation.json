@@ -1,0 +1,915 @@
+{
+  "uid": "portran-evaluation",
+  "title": "PortRAN 성능 검증",
+  "description": "evaluator 결과(eval_result)로 보는 탐지 성능·지연·수집 오버헤드. CLAUDE.md 9.2절",
+  "tags": [
+    "portran",
+    "evaluation"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 0,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "links": [
+    {
+      "title": "실시간 관제",
+      "type": "link",
+      "url": "/d/portran-realtime/portran-realtime",
+      "icon": "dashboard"
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "eval_id",
+        "label": "평가",
+        "type": "query",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "portran-influxdb"
+        },
+        "description": "evaluator 실행 한 번 (최신순). python -m evaluator.evaluate 로 만든다",
+        "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and r._field == \"eval_id\")\n  |> group()\n  |> keep(columns: [\"_value\"])\n  |> unique(column: \"_value\")",
+        "definition": "eval_result의 eval_id (최신순)",
+        "refresh": 1,
+        "sort": 2,
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "평가 정보 — ${eval_id}",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "데이터 출처",
+      "description": "mock이면 mock 생성기가 정한 탐지율·지연을 다시 계산한 것이라 성능 결과가 아니다 (CLAUDE.md 12절 7항)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> last(column: \"data_source\")\n  |> keep(columns: [\"data_source\"])"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "평가 없음 — python -m evaluator.evaluate 실행",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "mock": {
+                  "text": "mock — 성능 결과 아님",
+                  "color": "red",
+                  "index": 0
+                },
+                "replay": {
+                  "text": "replay (녹화 재생)",
+                  "color": "orange",
+                  "index": 1
+                },
+                "real": {
+                  "text": "실제 테스트베드",
+                  "color": "green",
+                  "index": 2
+                },
+                "unknown": {
+                  "text": "알 수 없음",
+                  "color": "text",
+                  "index": 3
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "평가 구간",
+      "description": "evaluator의 --from / --to. 지연 히스토그램과 오버헤드 비교는 이 구간의 데이터를 쓴다",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 10,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "import \"array\"\nimport \"date\"\nsel = from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and (r._field == \"eval_id\" or r._field == \"window_from\" or r._field == \"window_to\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> findRecord(fn: (key) => true, idx: 0)\nw_from = if exists sel.window_from then time(v: sel.window_from) else date.sub(d: 1s, from: now())\nw_to = if exists sel.window_to then time(v: sel.window_to) else now()\narray.from(rows: [{_time: now(), _field: \"시작\", _value: float(v: int(v: w_from)) / 1000000.0},\n                  {_time: now(), _field: \"끝\", _value: float(v: int(v: w_to)) / 1000000.0}])\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "dateTimeAsIso"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "공격 run 수 · grace",
+      "description": "평가 구간 안에서 시작한 공격(attack_run) 수와, 공격 종료 후 탐지를 인정한 시간",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> filter(fn: (r) => r.ruleset == \"full\")\n  |> reduce(identity: {runs: 0, grace: 0.0}, fn: (r, accumulator) => ({runs: accumulator.runs + r.runs, grace: r.grace_sec}))\n  |> map(fn: (r) => ({\"공격 run\": r.runs, \"grace (초)\": r.grace}))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "wideLayout": true,
+        "showPercentChange": false
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 101,
+      "type": "row",
+      "title": "탐지 성능 — full(eKPM + KPM) vs kpm_only(표준 KPM만)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "시나리오 × 룰셋",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "description": "탐지율 = TP / run, precision = 매칭된 탐지 / 전체 탐지. 빈칸은 분모가 0이라 계산할 수 없는 값. 오탐/시간은 evaluator 리포트(reports/eval-*.md)에 있다",
+      "gridPos": {
+        "h": 7,
+        "w": 16,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "base = from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\npick = (ruleset, prefix) => base\n  |> filter(fn: (r) => r.ruleset == ruleset)\n  |> map(fn: (r) => ({scenario: r.scenario, runs: r.runs,\n      rate: r.detection_rate, precision: r.precision, fp: r.fp_count, fph: r.fp_per_hour}))\nfull = pick(ruleset: \"full\", prefix: \"full\")\nkpm = pick(ruleset: \"kpm_only\", prefix: \"kpm\")\njoin(tables: {full: full, kpm: kpm}, on: [\"scenario\", \"runs\"])\n  |> sort(columns: [\"scenario\"])"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "scenario": 0,
+              "runs": 1,
+              "rate_full": 2,
+              "rate_kpm": 3,
+              "precision_full": 4,
+              "precision_kpm": 5,
+              "fp_full": 6,
+              "fp_kpm": 7,
+              "fph_full": 8,
+              "fph_kpm": 9
+            },
+            "renameByName": {
+              "scenario": "시나리오",
+              "runs": "run",
+              "rate_full": "탐지율 full",
+              "rate_kpm": "탐지율 kpm_only",
+              "precision_full": "precision full",
+              "precision_kpm": "precision kpm_only",
+              "fp_full": "오탐 full",
+              "fp_kpm": "오탐 kpm_only",
+              "fph_full": "오탐/시간 full",
+              "fph_kpm": "오탐/시간 kpm_only"
+            },
+            "excludeByName": {
+              "fph_full": true,
+              "fph_kpm": true
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "wrapHeaderText": true,
+            "width": 105,
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(탐지율|precision) .*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^오탐/시간 .*"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "시나리오"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 185
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 45
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "탐지율 (full vs kpm_only)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> pivot(rowKey: [\"scenario\"], columnKey: [\"ruleset\"], valueColumn: \"detection_rate\")\n  |> keep(columns: [\"scenario\", \"full\", \"kpm_only\"])\n  |> sort(columns: [\"scenario\"])"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "xField": "scenario",
+        "showValue": "always",
+        "groupWidth": 0.7,
+        "barWidth": 0.9,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        },
+        "xTickLabelRotation": 0,
+        "stacking": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "full"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kpm_only"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 102,
+      "type": "row",
+      "title": "탐지 지연",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "histogram",
+      "title": "탐지 지연 분포 (ts_detected − ts_first_evidence)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "description": "평가 구간 안의 모든 탐지 이벤트(반복 탐지·오탐 포함)의 지연. 오른쪽 p50/p95는 run마다 첫 매칭 탐지 기준이라 조금 다를 수 있다",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "import \"date\"\nsel = from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and (r._field == \"eval_id\" or r._field == \"window_from\" or r._field == \"window_to\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> findRecord(fn: (key) => true, idx: 0)\nw_from = if exists sel.window_from then time(v: sel.window_from) else date.sub(d: 1s, from: now())\nw_to = if exists sel.window_to then time(v: sel.window_to) else now()\nfrom(bucket: v.defaultBucket)\n  |> range(start: w_from, stop: w_to)\n  |> filter(fn: (r) => r._measurement == \"detection\" and r._field == \"latency_ms\")\n  |> group(columns: [\"ruleset\"])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, _field: r.ruleset}))\n  |> group(columns: [\"_field\"])"
+        }
+      ],
+      "options": {
+        "bucketCount": 40,
+        "combine": false,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "fillOpacity": 60,
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "full"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kpm_only"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "지연 p50 / p95 (run별 첫 매칭 탐지)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "description": "지연 = ts_detected − ts_first_evidence, 시작→탐지 = ts_detected − ts_start",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> map(fn: (r) => ({scenario: r.scenario, ruleset: r.ruleset, p50: r.latency_p50_ms, p95: r.latency_p95_ms,\n      onset_p50: r.onset_p50_ms, onset_p95: r.onset_p95_ms}))\n  |> sort(columns: [\"scenario\", \"ruleset\"])"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "scenario": 0,
+              "ruleset": 1,
+              "p50": 2,
+              "p95": 3,
+              "onset_p50": 4,
+              "onset_p95": 5
+            },
+            "renameByName": {
+              "scenario": "시나리오",
+              "ruleset": "룰셋",
+              "p50": "지연 p50",
+              "p95": "지연 p95",
+              "onset_p50": "시작→탐지 p50",
+              "onset_p95": "시작→탐지 p95"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "wrapHeaderText": true,
+            "width": 105,
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "시나리오"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "룰셋"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              },
+              {
+                "id": "custom.width",
+                "value": 72
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 103,
+      "type": "row",
+      "title": "수집 오버헤드 — eBPF on / off",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "barchart",
+      "title": "CPU (%)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "description": "평가 구간 안의 overhead 메시지 평균. 노드마다 eBPF 수집을 켰을 때와 껐을 때",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "import \"date\"\nsel = from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and (r._field == \"eval_id\" or r._field == \"window_from\" or r._field == \"window_to\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> findRecord(fn: (key) => true, idx: 0)\nw_from = if exists sel.window_from then time(v: sel.window_from) else date.sub(d: 1s, from: now())\nw_to = if exists sel.window_to then time(v: sel.window_to) else now()\nfrom(bucket: v.defaultBucket)\n  |> range(start: w_from, stop: w_to)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r._field == \"cpu_pct\")\n  |> group(columns: [\"node\", \"ebpf_on\"])\n  |> mean()\n  |> map(fn: (r) => ({node: r.node, mode: if r.ebpf_on == \"true\" then \"eBPF on\" else \"eBPF off\", _value: r._value}))\n  |> group()\n  |> pivot(rowKey: [\"node\"], columnKey: [\"mode\"], valueColumn: \"_value\")\n  |> sort(columns: [\"node\"])"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "xField": "node",
+        "showValue": "always",
+        "groupWidth": 0.7,
+        "barWidth": 0.9,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        },
+        "stacking": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eBPF on"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eBPF off"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 31,
+      "type": "barchart",
+      "title": "메모리 (MB)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "description": "평가 구간 안의 overhead 메시지 평균. 노드마다 eBPF 수집을 켰을 때와 껐을 때",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "import \"date\"\nsel = from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and (r._field == \"eval_id\" or r._field == \"window_from\" or r._field == \"window_to\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.eval_id == \"${eval_id}\")\n  |> group()\n  |> findRecord(fn: (key) => true, idx: 0)\nw_from = if exists sel.window_from then time(v: sel.window_from) else date.sub(d: 1s, from: now())\nw_to = if exists sel.window_to then time(v: sel.window_to) else now()\nfrom(bucket: v.defaultBucket)\n  |> range(start: w_from, stop: w_to)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r._field == \"mem_mb\")\n  |> group(columns: [\"node\", \"ebpf_on\"])\n  |> mean()\n  |> map(fn: (r) => ({node: r.node, mode: if r.ebpf_on == \"true\" then \"eBPF on\" else \"eBPF off\", _value: r._value}))\n  |> group()\n  |> pivot(rowKey: [\"node\"], columnKey: [\"mode\"], valueColumn: \"_value\")\n  |> sort(columns: [\"node\"])"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "xField": "node",
+        "showValue": "always",
+        "groupWidth": 0.7,
+        "barWidth": 0.9,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        },
+        "stacking": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eBPF on"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eBPF off"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

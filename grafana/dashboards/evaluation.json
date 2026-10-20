@@ -135,7 +135,7 @@
               "type": "value",
               "options": {
                 "mock": {
-                  "text": "mock — 성능 결과 아님",
+                  "text": "Mock data",
                   "color": "red",
                   "index": 0
                 },

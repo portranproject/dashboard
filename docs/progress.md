@@ -574,3 +574,23 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 
 - **`python3-venv`가 없으면 `python3 -m venv .venv`가 반쯤 만들어진 `.venv`를 남긴다**(`bin/`에 `python`만 있고 `pip`·`activate`가 없음). 패키지를 설치한 뒤 `rm -rf .venv`로 지우고 다시 만든다. README 준비물과 문제 해결에 이미 있는 내용이다.
 - Ubuntu 26.04 기본 Python 3.14에서도 의존성 설치와 테스트에 문제가 없었다.
+
+---
+
+## 성능 검증 대시보드 데이터 출처 문구 변경 (2026-10-20, 브랜치 `fix/eval-source-label`)
+
+### 한 일
+
+- `grafana/dashboards/evaluation.json` 데이터 출처 패널: `mock` 값의 표시 문구를 "mock — 성능 결과 아님"에서 **"Mock data"**로 바꿨다(사용자 요청). 빨간 배경은 그대로 두었다.
+
+### 결정 사항
+
+| 결정 | 이유 | 팀 확인 |
+|---|---|---|
+| 패널 설명(툴팁)의 "mock이면 … 성능 결과가 아니다" 문장은 남김 | CLAUDE.md 12절 7항 취지(mock 숫자는 성능 결과가 아님)는 빨간 배경과 툴팁으로 계속 드러난다 | 불필요 |
+| 실시간 관제의 데이터 출처 문구, evaluator 리포트 문구는 그대로 | 요청 범위가 성능 검증 대시보드였다 | 불필요 |
+
+### 확인 결과
+
+- `pytest`: 174 passed (대시보드 16)
+- Grafana API로 provisioning 반영 확인: 매핑 문구 `Mock data`

@@ -9,7 +9,7 @@
 | M3 collector | 완료 (PR #2 병합) | 2026-10-19 |
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
-| M6 replay | 완료 (PR 대기) | 2026-10-19 |
+| M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
 
 ---
 
@@ -325,7 +325,7 @@ Table I 항목은 숫자 지표가 아니라 UE별 식별자·상태값이라, �
 - CLAUDE.md 0절: 세션을 시작하면 코드를 보기 전에 두 논문을 먼저 읽는다는 규칙을 추가했다. 4절 디렉터리 구조에도 반영했다.
 - `.gitattributes`에 `*.pdf binary`를 추가했다 (줄바꿈 변환·diff 대상에서 제외).
 - 5G-Spector를 읽고 보니 mock의 신호 폭주 모양이 논문의 BTS Resource Depletion과 다르다 → Q12 (아래에서 해결).
-- 환경 메모: Claude Code의 Read 도구로 PDF를 읽으려면 `poppler-utils`가 필요한데 아직 설치되지 않았다. 이번에는 임시 폴더에 설치한 `pypdf`로 텍스트를 뽑아 읽었다(표·그림은 깨질 수 있음).
+- 환경 메모: Claude Code의 Read 도구로 PDF를 읽으려면 `poppler-utils`가 필요한데 아직 설치되지 않았다. 이번에는 임시 폴더에 설치한 `pypdf`로 텍스트를 뽑아 읽었다(표·그림은 깨질 수 있음). → 2026-10-20 README 준비물에 추가함.
 
 ---
 
@@ -548,3 +548,29 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 2. **Q5 attack_run 발행 시점 / Q6 반복 탐지** — 공격 도구·탐지 엔진의 동작에 따라 evaluator 결과(precision 등)가 달라진다.
 3. **Q8 시계 동기화** — 노드가 여러 대면 NTP/PTP 필수. 어긋나면 collector 경고 로그로 보인다.
 4. 각 파트는 `python -m collector.collector --dry-run`으로 자기 메시지가 스키마를 통과하는지 먼저 확인한다(SCHEMA.md 8절).
+
+---
+
+## 새 PC 환경 구성 확인 (2026-10-20, 브랜치 `docs/readme-poppler`)
+
+새 PC(Ubuntu 26.04 / WSL2, Python 3.14.4)에서 README "처음 실행하기"를 따라 처음부터 구성하면서 확인했다.
+
+### 한 일
+
+- `README.md` 준비물 표에 `poppler-utils`를 추가했다(Claude Code가 `reference/` 논문 PDF를 읽을 때 필요). 이전에는 CLAUDE.md 0절에만 있었다.
+- 맨 위 마일스톤 표의 M6 상태를 "PR 대기"에서 "PR #7 병합"으로 고쳤다.
+
+### 확인 결과
+
+- `docker compose ps`: influxdb `(healthy)`, grafana 실행 중. Grafana datasource health `OK` (bucket 3개), PortRAN 폴더에 대시보드 2개
+- `pytest`: **174 passed** (Python 3.14.4)
+- mock 10분치(seed 42)를 파일로 만들어 `collector --once`로 넣음: 12,836건 저장, 거부 0
+- collector UDP 실시간 + mock `--scenario normal --duration 15`: 보낸 294건 = 저장 294건, 거부 0, SIGTERM 종료 시 남은 배치까지 저장
+- evaluator 1회: `eval_result` 6건 저장, `reports/eval-*.md/.csv` 생성
+- 두 대시보드의 패널 쿼리를 Grafana `/api/ds/query`로 실행: 성능 검증 9/9, 실시간 관제 8/10 패널에 데이터 있음. 빈 2개("최근 5분 탐지 건수", "최고 severity")는 공격이 든 mock 데이터가 5분보다 이전 시각이라 정상
+- 브라우저 화면은 직접 보지 않았다(API로만 확인)
+
+### 환경 메모
+
+- **`python3-venv`가 없으면 `python3 -m venv .venv`가 반쯤 만들어진 `.venv`를 남긴다**(`bin/`에 `python`만 있고 `pip`·`activate`가 없음). 패키지를 설치한 뒤 `rm -rf .venv`로 지우고 다시 만든다. README 준비물과 문제 해결에 이미 있는 내용이다.
+- Ubuntu 26.04 기본 Python 3.14에서도 의존성 설치와 테스트에 문제가 없었다.

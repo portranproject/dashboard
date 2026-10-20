@@ -21,6 +21,7 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 |---|---|
 | Docker + Docker Compose | Windows는 Docker Desktop 실행 + Settings → Resources → WSL integration에서 사용하는 배포판 켜기 |
 | Python 3.10+ | Ubuntu/WSL에서 venv가 없으면 `sudo apt install python3-venv` |
+| poppler-utils | Claude Code로 작업할 때 필요. `reference/`의 논문 PDF를 읽는 데 쓴다(`pdftoppm`). `sudo apt install poppler-utils` |
 
 ## 처음 실행하기
 

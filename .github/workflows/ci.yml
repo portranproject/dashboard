@@ -1,6 +1,7 @@
-# CI: dev·main으로 가는 PR과 dev push마다 전체 테스트를 돌린다.
-# InfluxDB·Grafana는 저장소의 docker-compose.yml로 띄운다(.env는 .env.example을 복사).
-# 서비스가 필요한 테스트가 건너뛰어지면 실패로 센다(tests/conftest.py, PORTRAN_REQUIRE_SERVICES).
+# CI: dev·main으로 가는 PR과 dev push마다 돈다.
+#   test       : 전체 테스트. InfluxDB·Grafana는 저장소의 docker-compose.yml로 띄운다(.env는 .env.example을 복사).
+#                서비스가 필요한 테스트가 건너뛰어지면 실패로 센다(tests/conftest.py, PORTRAN_REQUIRE_SERVICES).
+#   aws-compose: AWS 배포 구성(docker-compose.aws.yml)을 서버와 같은 방식으로 띄워 mock → collector → InfluxDB까지 확인.
 name: CI
 
 on:
@@ -57,6 +58,50 @@ jobs:
         env:
           PORTRAN_REQUIRE_SERVICES: "1"
         run: pytest -rs
+
+      - name: 컨테이너 로그 (실패 시)
+        if: failure()
+        run: docker compose logs --no-color
+
+  aws-compose:
+    name: AWS 배포 구성
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 서버와 같은 방식으로 기동 (docs/deploy.md)
+        run: |
+          cp .env.example .env
+          echo "COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml" >> .env
+          mkdir -p reports
+          # 컨테이너는 uid 1000으로 돈다. 녹화·리포트 폴더는 호스트에 마운트되므로 주인을 맞춘다
+          sudo chown 1000:1000 recordings reports
+          docker compose up -d --build --wait --wait-timeout 180
+
+      - name: InfluxDB·collector가 서버 안(127.0.0.1)에서만 열렸는지
+        run: |
+          docker compose port influxdb 8086 | grep '^127\.0\.0\.1:'
+          docker compose port --protocol udp collector 9999 | grep '^127\.0\.0\.1:'
+
+      - name: mock → collector → InfluxDB
+        run: |
+          docker compose run --rm tools python -m mock.generator --scenario normal --duration 20 --seed 1 --speed 0
+          sleep 3  # collector는 1초마다 배치를 쓴다
+          docker compose run --rm -T tools python - <<'EOF'
+          from influxdb_client import InfluxDBClient
+          from common.config import influx_settings
+          s = influx_settings()
+          with InfluxDBClient(url=s.url, token=s.token, org=s.org) as client:
+              tables = client.query_api().query(
+                  f'from(bucket: "{s.bucket}") |> range(start: -1h, stop: 1h) '
+                  '|> filter(fn: (r) => r._measurement == "metric" and r._field == "value") '
+                  '|> group() |> count()')
+              n = sum(r.get_value() for t in tables for r in t.records)
+          print(f"InfluxDB에 저장된 metric {n}건")
+          assert n > 0
+          EOF
+          docker compose logs --no-color collector | tail -5
 
       - name: 컨테이너 로그 (실패 시)
         if: failure()

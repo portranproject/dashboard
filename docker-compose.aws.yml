@@ -1,0 +1,49 @@
+# AWS(EC2) 배포용 override. docker-compose.yml 위에 겹쳐 쓴다.
+# 서버의 .env에 COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml을 넣어 두면
+# `docker compose up -d`만으로 두 파일이 함께 적용된다(docs/deploy.md).
+#
+# 기본 구성과 다른 점:
+#   - collector를 컨테이너로 띄운다 (로컬은 지금처럼 호스트에서 Python 실행)
+#   - InfluxDB와 collector UDP는 서버 안(127.0.0.1)에서만 받는다. 밖으로 여는 건 Grafana 3000뿐
+#   - mock·replay·evaluator는 tools 서비스로 필요할 때 실행한다
+#     docker compose run --rm tools python -m mock.generator --duration 600 --seed 42
+#
+# `!override`는 Docker Compose 2.24.4 이상이 필요하다.
+
+x-app: &app
+  build: .
+  image: portran-app:local
+  env_file: .env
+
+services:
+  influxdb:
+    ports: !override
+      - "127.0.0.1:${INFLUX_PORT:-8086}:8086"
+
+  collector:
+    <<: *app
+    restart: unless-stopped
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    environment:
+      INFLUX_URL: http://influxdb:8086
+      COLLECTOR_UDP_HOST: 0.0.0.0
+    command: ["python", "-m", "collector.collector"]
+    ports:
+      - "127.0.0.1:${COLLECTOR_UDP_PORT:-9999}:${COLLECTOR_UDP_PORT:-9999}/udp"
+    volumes:
+      - ./recordings:/app/recordings
+
+  tools:
+    <<: *app
+    profiles: [tools]
+    depends_on:
+      - collector
+    environment:
+      INFLUX_URL: http://influxdb:8086
+      # mock·replay의 기본 출력(udp://COLLECTOR_UDP_HOST:PORT)이 collector 컨테이너를 가리키도록
+      COLLECTOR_UDP_HOST: collector
+    volumes:
+      - ./recordings:/app/recordings
+      - ./reports:/app/reports

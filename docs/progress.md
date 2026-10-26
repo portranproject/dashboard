@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료: PR #11 체크 통과) | |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료: PR #11 병합 / EC2 배포 준비 완료, 배포 전) | |
 
 ---
 
@@ -625,9 +625,10 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 
 ---
 
-## M7 — AWS 배포 · CI/CD (2026-10-26~, 브랜치 `feat/dashboard-M7`)
+## M7 — AWS 배포 · CI/CD (2026-10-26~, 브랜치 `feat/dashboard-M7` → `feat/dashboard-M7-aws`)
 
-CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD. 이 기록은 CI까지다.
+CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD. 이 기록은 CI(PR #11 병합)와 EC2 배포 준비(이미지·compose override·절차 문서)까지다.
+CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에서 만든 `feat/dashboard-M7-aws`에서 했다.
 
 ### 한 일
 
@@ -637,19 +638,33 @@ CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI 
 | `tests/conftest.py` | `PORTRAN_REQUIRE_SERVICES=1`이면 건너뛴(skip) 테스트를 실패로 바꿈. CI가 켬. 로컬 기본 동작(서비스 없으면 skip)은 그대로 |
 | `README.md` | "CI" 섹션, 문제 해결에 WSL에서 `docker`를 못 찾는 경우, 디렉터리 표에 `.github/` |
 | `CLAUDE.md` | 13절 마일스톤 표에 M7(범위·완료 조건), 4절 디렉터리 구조에 `.github/workflows/ci.yml` (사용자 확인 받음) |
+| `Dockerfile` | AWS 배포용 이미지 하나로 collector·mock·replay·evaluator를 모두 돌림. `python:3.14.8-slim-trixie`, 코드는 root 소유, 실행은 uid 1000 |
+| `.dockerignore` | `.env`(접속 정보)를 이미지에 넣지 않음. 녹화·논문·테스트 등 실행에 필요 없는 것 제외 |
+| `docker-compose.aws.yml` | AWS용 override. collector 서비스 추가, InfluxDB(8086)·collector(9999/udp)는 `127.0.0.1`에만 열기(`!override`), `tools` 서비스(profile)로 mock·replay·evaluator 실행 |
+| `.github/workflows/ci.yml` | `aws-compose` 작업 추가: 서버와 같은 방식(`.env`의 `COMPOSE_FILE`)으로 띄워 포트 잠금과 mock → collector → InfluxDB 저장 확인 |
+| `docs/deploy.md` | EC2 배포 절차: 비용 알람, IAM 역할·보안 그룹·인스턴스·탄력적 IP, Session Manager, Docker 설치, 배포 키, `.env`, 기동·확인, 데이터 넣기, 운영, 문제 해결 |
+| `README.md`, `CLAUDE.md` | README "AWS 배포" 섹션·디렉터리 표, CLAUDE.md 3절(AWS만 컨테이너)·4절(새 파일) |
 
 ### 결정 사항
 
 | # | 결정 | 이유 | 팀원 확인 |
 |---|---|---|---|
 | D85 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올린다. CU/DU·eBPF 에이전트·탐지 엔진은 테스트베드 LAN에 둔다. AWS 쪽은 원격 확인·mock/replay 데모·보관용 | USRP·eBPF는 물리 호스트에 묶임. 5G-Spector도 탐지를 near-RT RIC(제어 루프 10ms~1s)에 두고 지연 140~280ms를 보고함. 엔진을 인터넷 너머에 두면 탐지 지연에 네트워크 지연·시계 오차(Q8)가 섞이고, TeleRAN이 지적한 평문 텔레메트리와 인증 없는 collector UDP가 인터넷에 노출됨 | 필요 (Q16) |
-| D86 | AWS 구성은 EC2 한 대 + docker compose. collector는 compose override 파일(`docker-compose.aws.yml`)로 컨테이너화하고 로컬 실행 방식(CLAUDE.md 3절, 호스트에서 Python 실행)은 그대로 둔다 | compose 한 장짜리 구성이고 InfluxDB가 디스크에 데이터를 쌓음. ECS Fargate는 UDP에 NLB가 필요하고 저장소를 따로 붙여야 해서 발표 일정에 비해 무거움. **다음 단계에서 구현** | 불필요 |
+| D86 | AWS 구성은 EC2 한 대 + docker compose. collector는 compose override 파일(`docker-compose.aws.yml`)로 컨테이너화하고 로컬 실행 방식(CLAUDE.md 3절, 호스트에서 Python 실행)은 그대로 둔다 | compose 한 장짜리 구성이고 InfluxDB가 디스크에 데이터를 쌓음. ECS Fargate는 UDP에 NLB가 필요하고 저장소를 따로 붙여야 해서 발표 일정에 비해 무거움 | 불필요 |
 | D87 | CD는 GitHub OIDC → IAM Role → SSM Run Command. `main` push 때만 배포 | 장기 액세스 키와 열린 SSH 포트가 필요 없음. `main` = 배포·발표용(CLAUDE.md 12절 9항). **다음 단계에서 구현** | 불필요 |
 | D88 | CI의 InfluxDB·Grafana는 GitHub service 컨테이너 대신 저장소의 `docker-compose.yml`로 띄운다 | 설정값을 워크플로에 다시 적지 않아도 되고, compose·provisioning 자체도 함께 검증됨. CD가 배포할 구성과 같음 | 불필요 |
 | D89 | CI에서는 건너뛴 테스트를 실패로 센다 | 서비스가 없으면 skip하는 테스트 4개(InfluxDB 2, Grafana 2)가 CI에서 통과로 묻히지 않게 | 불필요 |
 | D90 | Python 3.10, 3.14 두 버전으로 테스트 | 3.10은 CLAUDE.md 최소 버전, 3.14는 팀 PC(Ubuntu 26.04) 기본. 3.10은 2026-10 지원 종료라 최소 버전을 올릴지는 나중에 정함 | 불필요 |
 | D91 | 액션은 커밋 SHA로 고정하고, 나온 지 2주가 안 된 릴리스는 쓰지 않는다(`setup-python` v7.1.0 대신 v7.0.0) | 태그가 옮겨지거나 탈취돼도 같은 코드가 돌도록(공급망). 갓 나온 릴리스는 문제가 생겨 회수되기도 함 | 불필요 |
 | D92 | PR은 새 커밋이 오면 이전 CI 실행을 취소하고, `dev` push는 끝까지 돌린다 | 비공개 저장소라 Actions 사용 시간에 한도가 있음. 병합 결과는 매번 확인 | 불필요 |
+| D93 | AWS 접근: Grafana(TCP 3000)만 보안 그룹에서 **내 IP**로 열고, InfluxDB·collector UDP는 컨테이너 포트도 `127.0.0.1`에만 연다. AWS 데이터는 서버 안에서 돌리는 mock·replay뿐 | 사용자 결정(본인 IP만, mock·replay는 필요할 때 실행). 보안 그룹을 실수로 넓혀도 InfluxDB·UDP는 노출되지 않게 이중으로 막음 | 불필요 |
+| D94 | 서버 접속은 SSM Session Manager. 키 페어 없이 만들고 22번을 열지 않는다. IMDSv2 필수 | 열린 포트와 관리할 키를 줄임. CD(D87)도 같은 SSM 경로를 씀 | 불필요 |
+| D95 | 서버는 저장소 전용 **읽기 전용 배포 키**로 clone한다 | 비공개 저장소. 개인 계정 키나 토큰을 서버에 두지 않음 | 불필요 |
+| D96 | 서버 `.env`에 `COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml`을 넣는다 | 서버에서도 `docker compose up -d`처럼 로컬과 같은 명령을 쓰고, `-f`를 빠뜨려 기본 구성(InfluxDB 공개 포트)으로 뜨는 실수를 막음. CI `aws-compose`도 같은 방식 | 불필요 |
+| D97 | 이미지 하나(`portran-app:local`)로 collector와 `tools`를 함께 쓴다. 베이스는 `python:3.14.8-slim-trixie` | 같은 코드·의존성. 3.14.9는 나온 지 5일이라 D91 기준으로 하나 전 패치를 씀 | 불필요 |
+| D98 | 녹화·리포트는 호스트 폴더에 bind mount하고 주인을 uid 1000으로 맞춘다 | 서버에서 바로 보고 옮길 수 있게. 컨테이너는 root가 아닌 uid 1000으로 돎 | 불필요 |
+| D99 | 인스턴스는 t3.small + 스왑 2GiB, gp3 30GiB, 서울 리전 | InfluxDB·Grafana·collector와 이미지 빌드에 충분한 최소 구성 | 불필요 |
+| D100 | 수동 배포는 `dev`에서 한다. CD 완성 후 `dev` → `main` PR로 `main`을 따라잡게 하고 그때부터 `main`을 배포 | 현재 `main`은 M1(`8209215`)에 멈춰 있어 `dev`보다 22커밋 뒤 | 불필요 |
 
 ### 확인 결과
 
@@ -662,22 +677,32 @@ CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI 
 | 액션 버전 | GitHub API로 릴리스·태그 조회 | checkout v7.0.1(2026-07-20) `3d3c42e`, setup-python v7.0.0(2026-07-20) `5fda3b9` |
 | 러너용 Python | `actions/python-versions` manifest | ubuntu-24.04 x64용 3.10.22, 3.14.9 있음 |
 | **GitHub Actions 첫 실행** | PR #11 (`5855215`) | `pytest (Python 3.10)`, `pytest (Python 3.14)` 모두 통과, 각각 약 1분. skip을 실패로 세므로 compose 기동과 서비스 테스트 4개를 포함한 174개가 모두 실행·통과한 것 |
+| AWS compose 합성 결과 | Docker Compose v5.6.0 단독 실행 파일로 `config` (데몬 없이 동작) | 서비스: influxdb·collector·grafana(+ `tools` profile). 포트: influxdb `127.0.0.1:8086`, collector `127.0.0.1:9999/udp`, grafana `3000`. collector·tools의 `INFLUX_URL`=`http://influxdb:8086`, `INFLUX_TOKEN`은 `.env`에서 들어감. 기본 `docker-compose.yml`만 쓸 때는 기존과 같음(influxdb·grafana) |
+| `COMPOSE_FILE` 방식 | `.env`에 `COMPOSE_FILE`을 넣고 `-f` 없이 `config --services` | influxdb·collector·grafana — override까지 적용됨 |
+| CI `aws-compose` 작업 | actionlint, 작업 안의 Python 확인 코드를 `compile()` | 오류 없음 |
+| 기존 테스트 | 로컬 `pytest` | 170 passed, 4 skipped |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
 - Python 3.14 로컬 실행(2026-10-20 다른 PC의 3.14.4에서 174 passed 기록이 있음).
+- **이미지 빌드와 `aws-compose` 작업 실행**: 같은 이유로 로컬에서 못 했다. 이번 PR의 CI에서 처음 확인한다.
+- **실제 EC2 배포**: `docs/deploy.md`대로 사용자가 진행한다(AWS 콘솔 권한 필요).
 
 ### 환경 메모
 
 - **이 PC의 WSL(Ubuntu 24.04)에서 `The command 'docker' could not be found in this WSL 2 distro`**: Docker Desktop의 Settings → Resources → WSL integration에서 이 배포판을 켜야 한다(Docker Desktop이 꺼져 있어도 같은 메시지). README "문제 해결"에 옮겼다.
 - 다른 Python 버전으로 테스트할 때는 `pip install uv` → `uv python install 3.10` → `uv venv -p 3.10`이 가장 빠르다(시스템 Python은 건드리지 않음).
+- Docker 없이 compose 파일만 검사하려면 [docker/compose 릴리스](https://github.com/docker/compose/releases)의 `docker-compose-linux-x86_64`를 받아 `./docker-compose -f docker-compose.yml -f docker-compose.aws.yml config`를 실행하면 된다(데몬이 필요 없음).
+- PR #11은 기록 커밋(`8df98be`)이 push되기 전에 병합돼서 그 커밋이 `dev`에 빠졌다. `feat/dashboard-M7-aws`로 cherry-pick해 가져왔다(`7a03a96`). PR에 커밋을 더 올릴 때는 CI가 끝난 뒤 병합한다.
 
 ### 남은 일
 
 - [x] 커밋 `5855215` → `feat/dashboard-M7` push → PR #11에서 CI 첫 실행 통과 (2026-10-26)
-- [ ] PR #11 병합 (병합되면 `dev` push로 CI가 한 번 더 돈다)
-- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`. M1부터 남아 있던 `main` 보호 규칙도 함께
-- [ ] EC2 수동 배포와 절차 문서(`docs/deploy.md`)
-- [ ] collector Dockerfile, `docker-compose.aws.yml` (D86)
-- [ ] CD 워크플로 (D87)
+- [x] PR #11 병합 (`296dd8c`)
+- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`, `AWS 배포 구성`. M1부터 남아 있던 `main` 보호 규칙도 함께
+- [x] collector Dockerfile, `docker-compose.aws.yml` (D86), 절차 문서 `docs/deploy.md`
+- [ ] 이 브랜치 PR → CI(`aws-compose` 포함) 통과 → 병합
+- [ ] EC2 수동 배포 (사용자, `docs/deploy.md` 1~7절) → 결과 기록
+- [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
+- [ ] CD 워크플로 (D87): IAM OIDC 공급자, 배포용 역할, `.github/workflows/deploy.yml`
 - [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)

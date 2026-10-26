@@ -1,0 +1,18 @@
+# 이미지에 넣지 않을 것.
+# .env(접속 정보)는 절대 넣지 않는다. 컨테이너에는 compose의 env_file로 넘긴다.
+.env
+.git
+.github
+.venv
+venv
+**/__pycache__
+.pytest_cache
+
+# 실행에 필요 없는 것
+recordings
+reports
+personal
+reference
+docs
+tests
+grafana

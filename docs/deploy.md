@@ -184,7 +184,7 @@ chown 1000:1000 recordings reports
 
 ```bash
 docker compose up -d --build --wait
-docker compose ps        # influxdb (healthy), grafana, collector 가 running
+docker compose ps        # influxdb (healthy), collector (healthy), grafana 가 running
 ```
 
 ```bash
@@ -204,7 +204,7 @@ docker compose logs --tail 5 collector
 
 ## 7. 데이터 넣기 (mock · replay · evaluator)
 
-모두 `tools` 컨테이너로 실행한다. 출력 기본값이 collector 컨테이너(`udp://collector:9999`)로 잡혀 있다.
+모두 `tools` 컨테이너로 실행한다. 출력 기본값이 collector 컨테이너(`udp://collector:9999`)로 잡혀 있다. `tools`는 collector를 다시 띄우지 않으므로, 먼저 6절대로 collector가 `(healthy)`인지 확인한다.
 
 ```bash
 # mock 10분, 1배속 실시간 (백그라운드)

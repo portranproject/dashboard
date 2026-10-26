@@ -53,7 +53,7 @@
 | 의존성 | `influxdb-client`(InfluxDB 2.x용), `pyyaml`, `jsonschema`, `pytest` |
 | DB | InfluxDB 2.7 (Docker), 타임스탬프 precision = ns |
 | 시각화 | Grafana OSS (Docker), datasource와 대시보드는 **provisioning 파일로 코드화** |
-| 실행 | `docker compose` (InfluxDB + Grafana), Python 프로그램은 호스트에서 실행 |
+| 실행 | `docker compose` (InfluxDB + Grafana), Python 프로그램은 호스트에서 실행. AWS 배포만 collector 등도 컨테이너로 띄운다(`docker-compose.aws.yml`, M7) |
 
 - Docker 이미지는 `latest` 대신 고정 버전 태그를 쓴다.
 - 접속 정보(토큰, org, bucket, 포트)는 `.env`로 관리하고 `.env.example`만 커밋한다.
@@ -69,10 +69,13 @@
 │   ├── TeleRAN.pdf
 │   └── 5GSpector.pdf
 ├── docs/
-│   └── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+│   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+│   └── deploy.md                 # AWS(EC2) 배포 절차 (M7)
 ├── .github/
 │   └── workflows/ci.yml          # CI: PR마다 전체 테스트 (M7)
 ├── docker-compose.yml
+├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
+├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)
 ├── .env.example
 ├── requirements.txt
 ├── schema/

@@ -278,6 +278,15 @@ PORTRAN_REQUIRE_SERVICES=1 pytest -rs   # 건너뛴 테스트가 있으면 실�
 
 Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 수 있다. 몇 초 뒤 다시 돌린다.
 
+`aws-compose` 작업은 AWS 배포 구성(`docker-compose.aws.yml`)을 서버와 같은 방식으로 띄워, InfluxDB·collector 포트가 서버 안에만 열렸는지와 mock → collector → InfluxDB 경로를 확인한다.
+
+## AWS 배포
+
+대시보드 스택(InfluxDB + Grafana + collector)을 EC2 한 대에 올린다. 절차는 [`docs/deploy.md`](docs/deploy.md).
+
+- 로컬 실행 방법은 바뀌지 않는다. AWS에서만 [`docker-compose.aws.yml`](docker-compose.aws.yml)을 겹쳐 collector도 컨테이너([`Dockerfile`](Dockerfile))로 띄운다.
+- AWS에는 mock·replay 데이터만 넣는다. 테스트베드 실시간 경로(eBPF 에이전트, 탐지 엔진)는 테스트베드 LAN에 둔다.
+
 ## 메시지 검증
 
 모든 메시지는 [`schema/messages.schema.json`](schema/messages.schema.json)으로 검증한다. Python에서는:
@@ -293,6 +302,8 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 |---|---|
 | `reference/` | 참고 논문(TeleRAN, 5G-Spector)과 요약 `README.md` |
 | `docs/progress.md` | 마일스톤별 진행 기록, 팀 확인 대기 항목 |
+| `docs/deploy.md` | AWS(EC2) 배포 절차 |
+| `Dockerfile`, `docker-compose.aws.yml` | AWS 배포용 이미지(collector·mock·replay·evaluator)와 compose override |
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증·메시지 시각(`schema.py`), UDP·파일 송수신·배속 전송(`transport.py`) |
 | `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |

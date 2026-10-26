@@ -1,0 +1,63 @@
+# CI: dev·main으로 가는 PR과 dev push마다 전체 테스트를 돌린다.
+# InfluxDB·Grafana는 저장소의 docker-compose.yml로 띄운다(.env는 .env.example을 복사).
+# 서비스가 필요한 테스트가 건너뛰어지면 실패로 센다(tests/conftest.py, PORTRAN_REQUIRE_SERVICES).
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # PR은 새 커밋이 오면 이전 실행을 취소한다. dev push는 병합마다 끝까지 돌린다.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10: CLAUDE.md의 최소 버전 / 3.14: 팀 PC(Ubuntu 26.04) 기본 버전
+        python: ["3.10", "3.14"]
+    steps:
+      # 서드파티 액션은 태그 대신 커밋 SHA로 고정한다(태그가 바뀌어도 같은 코드가 돌도록)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: InfluxDB·Grafana 기동
+        run: |
+          cp .env.example .env
+          docker compose up -d --wait --wait-timeout 120
+          # Grafana는 compose에 healthcheck가 없어서 --wait는 컨테이너 실행까지만 기다린다
+          for i in $(seq 60); do
+            curl -sf http://localhost:3000/api/health && exit 0
+            sleep 1
+          done
+          echo "Grafana가 60초 안에 응답하지 않음"
+          exit 1
+
+      - name: pytest
+        env:
+          PORTRAN_REQUIRE_SERVICES: "1"
+        run: pytest -rs
+
+      - name: 컨테이너 로그 (실패 시)
+        if: failure()
+        run: docker compose logs --no-color

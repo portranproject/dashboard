@@ -10,6 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 작성, PR 전) | |
 
 ---
 
@@ -35,6 +36,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q13 | 통신 방식을 **UDP로 통일할 예정**(팀 방침, 2026-10-21 전달받음). collector는 이미 UDP를 지원하므로(데이터그램 하나에 JSON 한 줄) 코드 변경은 없다. 파일 입력은 mock·테스트용으로 남긴다. 확정되면 CLAUDE.md 5절·SCHEMA.md 1절의 "UDP 또는 파일" 문구를 고친다 | 전 파트 | 아래 "열린 항목 추가 — UDP 통일" |
 | Q14 | UDP 손실 때 `attack_run`(정답) 유실 대책. 잃으면 그 run이 평가에서 사라지고, 그 run에 대한 탐지가 모두 오탐으로 세어진다. 후보: 파일로도 함께 남기기, 두 번 보내기(collector·evaluator의 중복 처리를 먼저 확인해야 함) | 공격 도구 | Q5 |
 | Q15 | 다른 호스트에서 보낼 때의 네트워크 구성. collector는 기본으로 `127.0.0.1`에서만 받으므로 `--in udp://0.0.0.0:9999`처럼 열고 방화벽을 열어야 한다. collector를 Windows의 WSL2에서 돌리면 외부 UDP가 WSL2까지 들어오는지 따로 확인해야 한다(테스트베드 Ubuntu에서 돌리면 해당 없음). 메시지는 1,400B 아래로 유지(넘으면 IP 단편화로 손실 위험이 커짐) | 테스트베드 담당, 전 파트 | Q8 |
+| Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드 LAN(RIC 자리)에 둔다. 탐지 엔진을 AWS에 두면 탐지 지연에 인터넷 구간 지연과 호스트 간 시계 오차가 섞이고, 평문 텔레메트리와 인증 없는 UDP가 인터넷을 지난다(그래도 두려면 VPN·NTP가 필요) | 탐지 엔진, 테스트베드 담당 | M7 D85 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -620,3 +622,61 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 
 - 발표 백업용 녹화를 새로 만들었다: `recordings/raw-20261021-132738.jsonl` (5분, 세 공격 포함, seed 42). 이전 녹화 `raw-20261019-143902.jsonl`은 신호 폭주를 고치기 전(`af78ab4`)에 만든 것이라 폭주 구간의 연결 UE 수가 오르지 않는다. 그 녹화를 재생하면서 다시 녹화된 `raw-20261021-132149.jsonl`도 내용이 같다. 둘 다 replay에 쓰지 않는다. 녹화는 git에서 제외되므로 따로 백업한다.
 - 기본 bucket에 오늘 데이터가 두 벌 있다: 옛 녹화 재생분(13:22~13:27 KST)과 새 mock(13:27~13:32 KST).
+
+---
+
+## M7 — AWS 배포 · CI/CD (2026-10-26~, 브랜치 `feat/dashboard-M7`)
+
+CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD. 이 기록은 CI까지다.
+
+### 한 일
+
+| 파일 | 역할 |
+|---|---|
+| `.github/workflows/ci.yml` | `dev`·`main` 대상 PR, `dev` push, 수동 실행 때 Python 3.10·3.14로 `pytest` 전체. InfluxDB·Grafana는 저장소의 `docker-compose.yml`로 띄움(`.env`는 `.env.example` 복사). 실패하면 컨테이너 로그 출력 |
+| `tests/conftest.py` | `PORTRAN_REQUIRE_SERVICES=1`이면 건너뛴(skip) 테스트를 실패로 바꿈. CI가 켬. 로컬 기본 동작(서비스 없으면 skip)은 그대로 |
+| `README.md` | "CI" 섹션, 문제 해결에 WSL에서 `docker`를 못 찾는 경우, 디렉터리 표에 `.github/` |
+| `CLAUDE.md` | 13절 마일스톤 표에 M7(범위·완료 조건), 4절 디렉터리 구조에 `.github/workflows/ci.yml` (사용자 확인 받음) |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀원 확인 |
+|---|---|---|---|
+| D85 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올린다. CU/DU·eBPF 에이전트·탐지 엔진은 테스트베드 LAN에 둔다. AWS 쪽은 원격 확인·mock/replay 데모·보관용 | USRP·eBPF는 물리 호스트에 묶임. 5G-Spector도 탐지를 near-RT RIC(제어 루프 10ms~1s)에 두고 지연 140~280ms를 보고함. 엔진을 인터넷 너머에 두면 탐지 지연에 네트워크 지연·시계 오차(Q8)가 섞이고, TeleRAN이 지적한 평문 텔레메트리와 인증 없는 collector UDP가 인터넷에 노출됨 | 필요 (Q16) |
+| D86 | AWS 구성은 EC2 한 대 + docker compose. collector는 compose override 파일(`docker-compose.aws.yml`)로 컨테이너화하고 로컬 실행 방식(CLAUDE.md 3절, 호스트에서 Python 실행)은 그대로 둔다 | compose 한 장짜리 구성이고 InfluxDB가 디스크에 데이터를 쌓음. ECS Fargate는 UDP에 NLB가 필요하고 저장소를 따로 붙여야 해서 발표 일정에 비해 무거움. **다음 단계에서 구현** | 불필요 |
+| D87 | CD는 GitHub OIDC → IAM Role → SSM Run Command. `main` push 때만 배포 | 장기 액세스 키와 열린 SSH 포트가 필요 없음. `main` = 배포·발표용(CLAUDE.md 12절 9항). **다음 단계에서 구현** | 불필요 |
+| D88 | CI의 InfluxDB·Grafana는 GitHub service 컨테이너 대신 저장소의 `docker-compose.yml`로 띄운다 | 설정값을 워크플로에 다시 적지 않아도 되고, compose·provisioning 자체도 함께 검증됨. CD가 배포할 구성과 같음 | 불필요 |
+| D89 | CI에서는 건너뛴 테스트를 실패로 센다 | 서비스가 없으면 skip하는 테스트 4개(InfluxDB 2, Grafana 2)가 CI에서 통과로 묻히지 않게 | 불필요 |
+| D90 | Python 3.10, 3.14 두 버전으로 테스트 | 3.10은 CLAUDE.md 최소 버전, 3.14는 팀 PC(Ubuntu 26.04) 기본. 3.10은 2026-10 지원 종료라 최소 버전을 올릴지는 나중에 정함 | 불필요 |
+| D91 | 액션은 커밋 SHA로 고정하고, 나온 지 2주가 안 된 릴리스는 쓰지 않는다(`setup-python` v7.1.0 대신 v7.0.0) | 태그가 옮겨지거나 탈취돼도 같은 코드가 돌도록(공급망). 갓 나온 릴리스는 문제가 생겨 회수되기도 함 | 불필요 |
+| D92 | PR은 새 커밋이 오면 이전 CI 실행을 취소하고, `dev` push는 끝까지 돌린다 | 비공개 저장소라 Actions 사용 시간에 한도가 있음. 병합 결과는 매번 확인 | 불필요 |
+
+### 확인 결과
+
+| 확인 | 방법 | 결과 |
+|---|---|---|
+| 기존 동작 유지 | 로컬 `pytest` (Python 3.12.3, Docker 없음) | 170 passed, 4 skipped (추가 전과 같음) |
+| Python 3.10 호환 | uv로 3.10.22를 받아 `pytest` | 170 passed, 4 skipped |
+| skip → 실패 전환 | `PORTRAN_REQUIRE_SERVICES=1 pytest` (3.12, 3.10) | 둘 다 170 passed, **4 errors**, 종료 코드 1. 사유: "PORTRAN_REQUIRE_SERVICES=1인데 건너뜀 — InfluxDB에 접속할 수 없음" 등 |
+| 워크플로 문법 | actionlint 1.7.12 | 오류 없음 |
+| 액션 버전 | GitHub API로 릴리스·태그 조회 | checkout v7.0.1(2026-07-20) `3d3c42e`, setup-python v7.0.0(2026-07-20) `5fda3b9` |
+| 러너용 Python | `actions/python-versions` manifest | ubuntu-24.04 x64용 3.10.22, 3.14.9 있음 |
+
+미확인:
+- **GitHub에서 실제 실행.** 아직 push하지 않았다. 특히 `docker compose up --wait`, Grafana 응답 대기, 서비스가 필요한 테스트 4개 통과는 첫 PR에서 확인한다.
+- 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
+- Python 3.14 로컬 실행(2026-10-20 다른 PC의 3.14.4에서 174 passed 기록이 있음).
+
+### 환경 메모
+
+- **이 PC의 WSL(Ubuntu 24.04)에서 `The command 'docker' could not be found in this WSL 2 distro`**: Docker Desktop의 Settings → Resources → WSL integration에서 이 배포판을 켜야 한다(Docker Desktop이 꺼져 있어도 같은 메시지). README "문제 해결"에 옮겼다.
+- 다른 Python 버전으로 테스트할 때는 `pip install uv` → `uv python install 3.10` → `uv venv -p 3.10`이 가장 빠르다(시스템 Python은 건드리지 않음).
+
+### 남은 일
+
+- [ ] 커밋 → `feat/dashboard-M7` push → `dev`로 PR을 열어 CI 첫 실행 확인 (사용자 확인 후)
+- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`. M1부터 남아 있던 `main` 보호 규칙도 함께
+- [ ] EC2 수동 배포와 절차 문서(`docs/deploy.md`)
+- [ ] collector Dockerfile, `docker-compose.aws.yml` (D86)
+- [ ] CD 워크플로 (D87)
+- [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)

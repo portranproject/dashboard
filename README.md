@@ -234,6 +234,10 @@ Docker Desktop의 WSL integration을 켠 직후에는 계정이 `docker` 그룹�
 WSL 터미널을 모두 닫고 다시 열거나, PowerShell에서 `wsl --shutdown` 후 다시 연다.
 당장은 `sg docker -c "docker compose up -d"`처럼 실행해도 된다.
 
+**`The command 'docker' could not be found in this WSL 2 distro`**
+Docker Desktop이 꺼져 있거나, 이 WSL 배포판에 대한 integration이 꺼져 있다.
+Docker Desktop을 켜고 Settings → Resources → WSL integration에서 사용하는 배포판(예: Ubuntu-24.04)을 켠 뒤 WSL 터미널을 다시 연다.
+
 **venv 안에서 `pip`가 없거나 `ImportError`가 난다**
 venv 생성이 중간에 깨진 경우다. `rm -rf .venv` 후 다시 만든다.
 
@@ -256,6 +260,23 @@ git switch -c feat/dashboard-M3
 # ... 작업, 커밋 ...
 git push -u origin feat/dashboard-M3   # 이후 GitHub에서 dev로 PR
 ```
+
+## CI
+
+`dev`·`main`으로 가는 PR과 `dev` push마다 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)이 돈다. GitHub의 **Actions** 탭이나 PR 아래 체크 결과에서 확인한다.
+
+- Python 3.10(최소 버전)과 3.14에서 `pytest` 전체를 돌린다.
+- InfluxDB·Grafana는 이 저장소의 `docker-compose.yml`로 띄운다(`.env`는 `.env.example` 복사). 그래서 compose나 provisioning 파일이 깨져도 CI가 잡는다.
+- InfluxDB·Grafana가 필요한 테스트 4개는 로컬에서 서비스가 없으면 건너뛰지만(skip), CI는 `PORTRAN_REQUIRE_SERVICES=1`을 켜서 건너뛰면 실패로 센다([`tests/conftest.py`](tests/conftest.py)).
+
+로컬에서 CI와 같은 조건으로 돌리기:
+
+```bash
+docker compose up -d --wait
+PORTRAN_REQUIRE_SERVICES=1 pytest -rs   # 건너뛴 테스트가 있으면 실패
+```
+
+Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 수 있다. 몇 초 뒤 다시 돌린다.
 
 ## 메시지 검증
 
@@ -280,4 +301,5 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 | `replay/` | 녹화 데이터 재생 (`replay.py`) |
 | `grafana/` | datasource·대시보드 provisioning, 대시보드 JSON |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
-| `tests/` | pytest |
+| `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈) |
+| `.github/workflows/` | CI (`ci.yml`) |

@@ -70,6 +70,8 @@
 │   └── 5GSpector.pdf
 ├── docs/
 │   └── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+├── .github/
+│   └── workflows/ci.yml          # CI: PR마다 전체 테스트 (M7)
 ├── docker-compose.yml
 ├── .env.example
 ├── requirements.txt
@@ -288,3 +290,4 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
 | M4 | 실시간 관제 대시보드 | mock 데이터로 9.1의 모든 패널 표시, annotation 동작 |
 | M5 | evaluator + 성능 검증 대시보드 | 경계 사례 테스트 통과, `eval_result` 저장, 9.2 패널 표시 |
 | M6 | replay | 녹화 파일 재생 시 실시간 대시보드에 표시 |
+| M7 | AWS 배포 · CI/CD. AWS에는 대시보드 스택(InfluxDB + Grafana + collector)만 올리고, 테스트베드 실시간 경로(eBPF → 탐지 엔진)는 로컬에 둔다 | CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과. AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시. CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 |

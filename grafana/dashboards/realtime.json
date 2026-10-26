@@ -150,7 +150,7 @@
         },
         "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: v.defaultBucket, tag: \"node\", start: -30d)",
         "definition": "schema.tagValues(bucket: v.defaultBucket, tag: \"node\", start: -30d)",
-        "refresh": 1,
+        "refresh": 2,
         "sort": 1,
         "multi": true,
         "includeAll": true,

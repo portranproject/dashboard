@@ -206,17 +206,30 @@ docker compose logs --tail 5 collector
 
 모두 `tools` 컨테이너로 실행한다. 출력 기본값이 collector 컨테이너(`udp://collector:9999`)로 잡혀 있다. `tools`는 collector를 다시 띄우지 않으므로, 먼저 6절대로 collector가 `(healthy)`인지 확인한다.
 
+아래는 따로따로 쓰는 명령이다. 한 번에 붙여 넣지 말고 필요한 것만 실행한다.
+
+**mock** (10분, 1배속 실시간, 백그라운드)
+
 ```bash
-# mock 10분, 1배속 실시간 (백그라운드)
 docker compose run -d --rm tools python -m mock.generator --duration 600 --seed 42
+docker compose logs -f --tail 3 collector     # 수신 N 저장 N 거부 0 이면 정상 (Ctrl+C로 나오기)
+```
 
-# 녹화 재생 (recordings/에 있는 파일, 시각을 지금으로 옮김)
-docker compose run -d --rm tools python -m replay.replay recordings/raw-YYYYMMDD-HHMMSS.jsonl --speed 1 --retime now
+**replay**: 파일 이름을 `ls recordings/`로 확인해 바꿔 넣는다. 시각은 지금으로 옮겨 재생한다.
 
-# 평가. 서버와 컨테이너는 UTC라서 시각에 +09:00을 붙인다
-docker compose run --rm tools python -m evaluator.evaluate --from 2026-10-26T15:00:00+09:00 --to 2026-10-26T15:10:00+09:00
+```bash
+ls recordings/
+docker compose run -d --rm tools python -m replay.replay recordings/<녹화 파일>.jsonl --speed 1 --retime now
+```
+
+**evaluator**: mock·replay가 **끝난 뒤** 그 구간을 평가한다. 서버와 컨테이너는 UTC라서 `date`로 시간대가 붙은 시각을 만든다(예: 최근 15분).
+
+```bash
+docker compose run --rm tools python -m evaluator.evaluate --from "$(date -d '15 min ago' --iso-8601=seconds)"
 ls reports/
 ```
+
+직접 시각을 쓸 때는 `--from 2026-10-26T16:40:00+09:00`처럼 `+09:00`을 붙인다. `--to`를 빼면 지금까지 평가한다.
 
 collector가 받은 메시지는 `recordings/raw-*.jsonl`로 녹화된다(로컬과 같다).
 
@@ -243,6 +256,9 @@ compose가 2.24.4보다 오래됐다. 3-2절대로 Docker 공식 저장소의 `d
 
 **collector가 `PermissionError: … recordings/…`로 계속 재시작한다**
 `chown 1000:1000 recordings reports`를 하지 않았다. 하고 나서 `docker compose restart collector`.
+
+**대시보드 그래프가 No data인데 "수집 상태"는 몇 초 전에 받았다고 나온다**
+노드 목록 같은 변수를 데이터가 들어오기 전에 읽어서 비어 있는 경우다. 대시보드는 새로고침마다 변수를 다시 읽도록 되어 있으니(D103) 몇 초 기다리거나 브라우저를 새로고침(F5)한다.
 
 **브라우저에서 Grafana가 안 열린다**
 서버에서 `curl -s localhost:3000/api/health`가 되면 서버는 정상이다. 보안 그룹 인바운드의 소스가 지금 내 IP인지 확인한다(IP가 바뀌었을 수 있음).

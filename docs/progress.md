@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 작성, PR 전) | |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료: PR #11 체크 통과) | |
 
 ---
 
@@ -661,9 +661,9 @@ CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI 
 | 워크플로 문법 | actionlint 1.7.12 | 오류 없음 |
 | 액션 버전 | GitHub API로 릴리스·태그 조회 | checkout v7.0.1(2026-07-20) `3d3c42e`, setup-python v7.0.0(2026-07-20) `5fda3b9` |
 | 러너용 Python | `actions/python-versions` manifest | ubuntu-24.04 x64용 3.10.22, 3.14.9 있음 |
+| **GitHub Actions 첫 실행** | PR #11 (`5855215`) | `pytest (Python 3.10)`, `pytest (Python 3.14)` 모두 통과, 각각 약 1분. skip을 실패로 세므로 compose 기동과 서비스 테스트 4개를 포함한 174개가 모두 실행·통과한 것 |
 
 미확인:
-- **GitHub에서 실제 실행.** 아직 push하지 않았다. 특히 `docker compose up --wait`, Grafana 응답 대기, 서비스가 필요한 테스트 4개 통과는 첫 PR에서 확인한다.
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
 - Python 3.14 로컬 실행(2026-10-20 다른 PC의 3.14.4에서 174 passed 기록이 있음).
 
@@ -674,7 +674,8 @@ CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI 
 
 ### 남은 일
 
-- [ ] 커밋 → `feat/dashboard-M7` push → `dev`로 PR을 열어 CI 첫 실행 확인 (사용자 확인 후)
+- [x] 커밋 `5855215` → `feat/dashboard-M7` push → PR #11에서 CI 첫 실행 통과 (2026-10-26)
+- [ ] PR #11 병합 (병합되면 `dev` push로 CI가 한 번 더 돈다)
 - [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`. M1부터 남아 있던 `main` 보호 규칙도 함께
 - [ ] EC2 수동 배포와 절차 문서(`docs/deploy.md`)
 - [ ] collector Dockerfile, `docker-compose.aws.yml` (D86)

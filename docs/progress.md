@@ -665,6 +665,8 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D98 | 녹화·리포트는 호스트 폴더에 bind mount하고 주인을 uid 1000으로 맞춘다 | 서버에서 바로 보고 옮길 수 있게. 컨테이너는 root가 아닌 uid 1000으로 돎 | 불필요 |
 | D99 | 인스턴스는 t3.small + 스왑 2GiB, gp3 30GiB, 서울 리전 | InfluxDB·Grafana·collector와 이미지 빌드에 충분한 최소 구성 | 불필요 |
 | D100 | 수동 배포는 `dev`에서 한다. CD 완성 후 `dev` → `main` PR로 `main`을 따라잡게 하고 그때부터 `main`을 배포 | 현재 `main`은 M1(`8209215`)에 멈춰 있어 `dev`보다 22커밋 뒤 | 불필요 |
+| D101 | `tools`에서 `build`·`depends_on: collector`를 빼고 `pull_policy: never`. 이미지는 collector만 빌드 | `dev` push CI(#4)에서 `docker compose run tools`가 collector를 다시 만들었고, 재시작 중에 보낸 mock UDP가 모두 사라짐(저장 0건). 서버에서도 tools를 쓸 때마다 collector가 재시작돼 수신이 끊기고 녹화 파일이 새로 생겼을 것 | 불필요 |
+| D102 | collector에 healthcheck: `/proc/net/udp`에 수신 포트가 열려 있으면 healthy | collector는 InfluxDB 확인 뒤 포트를 열므로 "받을 준비 됨"과 같다. `up --wait`이 여기까지 기다려 CI·CD의 경쟁 상태를 없앰 | 불필요 |
 
 ### 확인 결과
 
@@ -681,11 +683,13 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | `COMPOSE_FILE` 방식 | `.env`에 `COMPOSE_FILE`을 넣고 `-f` 없이 `config --services` | influxdb·collector·grafana — override까지 적용됨 |
 | CI `aws-compose` 작업 | actionlint, 작업 안의 Python 확인 코드를 `compile()` | 오류 없음 |
 | 기존 테스트 | 로컬 `pytest` | 170 passed, 4 skipped |
+| **CI `aws-compose` 첫 실행** | PR #12 (`c7d7704`) | 체크 3개 모두 통과. 이미지 빌드, `COMPOSE_FILE` 방식 기동, InfluxDB·collector 포트가 `127.0.0.1`인지, mock → collector → InfluxDB 저장까지 확인됨(저장 건수는 로그를 직접 보지 않음) |
+| **병합 후 `dev` push CI 실패** | CI #4 (`d96732e`) | pytest 2개는 통과, `AWS 배포 구성` 실패: "InfluxDB에 저장된 metric 0건". 로그상 `run tools` 때 collector가 Recreate → Started 직후 mock 366건이 한꺼번에 전송됨. 같은 코드가 PR에서는 통과했으므로 타이밍에 따라 갈리는 경쟁 상태 → D101·D102로 수정 |
+| 수정 확인 (로컬) | healthcheck 명령을 UDP 소켓 열기 전·후로 실행, compose `config` | 닫힘 exit 1 / 열림 exit 0. 합성 결과 tools는 build·depends_on 없음, `pull_policy: never`, collector에만 healthcheck. 실제 동작은 수정 PR의 CI에서 확인 |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
 - Python 3.14 로컬 실행(2026-10-20 다른 PC의 3.14.4에서 174 passed 기록이 있음).
-- **이미지 빌드와 `aws-compose` 작업 실행**: 같은 이유로 로컬에서 못 했다. 이번 PR의 CI에서 처음 확인한다.
 - **실제 EC2 배포**: `docs/deploy.md`대로 사용자가 진행한다(AWS 콘솔 권한 필요).
 
 ### 환경 메모
@@ -701,7 +705,9 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] PR #11 병합 (`296dd8c`)
 - [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`, `AWS 배포 구성`. M1부터 남아 있던 `main` 보호 규칙도 함께
 - [x] collector Dockerfile, `docker-compose.aws.yml` (D86), 절차 문서 `docs/deploy.md`
-- [ ] 이 브랜치 PR → CI(`aws-compose` 포함) 통과 → 병합
+- [x] PR #12 CI 통과 (체크 3개, 2026-10-26)
+- [x] PR #12 병합 (`d96732e`)
+- [ ] collector 재시작 문제 수정(D101·D102) PR → CI 통과 → 병합. **서버 6절(기동) 전에** 병합해야 서버가 고친 구성을 받음
 - [ ] EC2 수동 배포 (사용자, `docs/deploy.md` 1~7절) → 결과 기록
 - [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [ ] CD 워크플로 (D87): IAM OIDC 공급자, 배포용 역할, `.github/workflows/deploy.yml`

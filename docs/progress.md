@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료: PR #11 병합 / EC2 배포 준비 완료, 배포 전) | |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료, 대시보드 변수 수정 중 / CD 전) | |
 
 ---
 
@@ -37,6 +37,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q14 | UDP 손실 때 `attack_run`(정답) 유실 대책. 잃으면 그 run이 평가에서 사라지고, 그 run에 대한 탐지가 모두 오탐으로 세어진다. 후보: 파일로도 함께 남기기, 두 번 보내기(collector·evaluator의 중복 처리를 먼저 확인해야 함) | 공격 도구 | Q5 |
 | Q15 | 다른 호스트에서 보낼 때의 네트워크 구성. collector는 기본으로 `127.0.0.1`에서만 받으므로 `--in udp://0.0.0.0:9999`처럼 열고 방화벽을 열어야 한다. collector를 Windows의 WSL2에서 돌리면 외부 UDP가 WSL2까지 들어오는지 따로 확인해야 한다(테스트베드 Ubuntu에서 돌리면 해당 없음). 메시지는 1,400B 아래로 유지(넘으면 IP 단편화로 손실 위험이 커짐) | 테스트베드 담당, 전 파트 | Q8 |
 | Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드 LAN(RIC 자리)에 둔다. 탐지 엔진을 AWS에 두면 탐지 지연에 인터넷 구간 지연과 호스트 간 시계 오차가 섞이고, 평문 텔레메트리와 인증 없는 UDP가 인터넷을 지난다(그래도 두려면 VPN·NTP가 필요) | 탐지 엔진, 테스트베드 담당 | M7 D85 |
+| Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -659,7 +660,7 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D92 | PR은 새 커밋이 오면 이전 CI 실행을 취소하고, `dev` push는 끝까지 돌린다 | 비공개 저장소라 Actions 사용 시간에 한도가 있음. 병합 결과는 매번 확인 | 불필요 |
 | D93 | AWS 접근: Grafana(TCP 3000)만 보안 그룹에서 **내 IP**로 열고, InfluxDB·collector UDP는 컨테이너 포트도 `127.0.0.1`에만 연다. AWS 데이터는 서버 안에서 돌리는 mock·replay뿐 | 사용자 결정(본인 IP만, mock·replay는 필요할 때 실행). 보안 그룹을 실수로 넓혀도 InfluxDB·UDP는 노출되지 않게 이중으로 막음 | 불필요 |
 | D94 | 서버 접속은 SSM Session Manager. 키 페어 없이 만들고 22번을 열지 않는다. IMDSv2 필수 | 열린 포트와 관리할 키를 줄임. CD(D87)도 같은 SSM 경로를 씀 | 불필요 |
-| D95 | 서버는 저장소 전용 **읽기 전용 배포 키**로 clone한다 | 비공개 저장소. 개인 계정 키나 토큰을 서버에 두지 않음 | 불필요 |
+| D95 | 서버는 저장소 전용 **읽기 전용 배포 키**로 clone한다 | 비공개 저장소. 개인 계정 키나 토큰을 서버에 두지 않음. 배포 키가 조직 정책으로 막혀 있어 조직 소유자가 허용함(사용자 결정, A안) | 필요 (Q17) |
 | D96 | 서버 `.env`에 `COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml`을 넣는다 | 서버에서도 `docker compose up -d`처럼 로컬과 같은 명령을 쓰고, `-f`를 빠뜨려 기본 구성(InfluxDB 공개 포트)으로 뜨는 실수를 막음. CI `aws-compose`도 같은 방식 | 불필요 |
 | D97 | 이미지 하나(`portran-app:local`)로 collector와 `tools`를 함께 쓴다. 베이스는 `python:3.14.8-slim-trixie` | 같은 코드·의존성. 3.14.9는 나온 지 5일이라 D91 기준으로 하나 전 패치를 씀 | 불필요 |
 | D98 | 녹화·리포트는 호스트 폴더에 bind mount하고 주인을 uid 1000으로 맞춘다 | 서버에서 바로 보고 옮길 수 있게. 컨테이너는 root가 아닌 uid 1000으로 돎 | 불필요 |
@@ -667,6 +668,7 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D100 | 수동 배포는 `dev`에서 한다. CD 완성 후 `dev` → `main` PR로 `main`을 따라잡게 하고 그때부터 `main`을 배포 | 현재 `main`은 M1(`8209215`)에 멈춰 있어 `dev`보다 22커밋 뒤 | 불필요 |
 | D101 | `tools`에서 `build`·`depends_on: collector`를 빼고 `pull_policy: never`. 이미지는 collector만 빌드 | `dev` push CI(#4)에서 `docker compose run tools`가 collector를 다시 만들었고, 재시작 중에 보낸 mock UDP가 모두 사라짐(저장 0건). 서버에서도 tools를 쓸 때마다 collector가 재시작돼 수신이 끊기고 녹화 파일이 새로 생겼을 것 | 불필요 |
 | D102 | collector에 healthcheck: `/proc/net/udp`에 수신 포트가 열려 있으면 healthy | collector는 InfluxDB 확인 뒤 포트를 열므로 "받을 준비 됨"과 같다. `up --wait`이 여기까지 기다려 CI·CD의 경쟁 상태를 없앰 | 불필요 |
+| D103 | 대시보드의 query 변수(실시간 `node`, 성능 검증 `eval_id`)를 `refresh: 2`(새로고침·시간 범위 변경마다)로. 테스트로 고정 | 새 서버에서 데이터가 들어오기 전에 대시보드를 열자 `node` 목록이 비어 "All"이 빈 집합이 됐고, 노드로 거르는 패널 7개가 계속 No data였음(수집 상태 패널만 정상). `refresh: 1`은 대시보드를 열 때만 읽어 5초 자동 새로고침으로는 회복되지 않음. 실제 eBPF 에이전트가 새 노드를 보낼 때도 같은 문제 | 불필요 |
 
 ### 확인 결과
 
@@ -686,6 +688,10 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | **CI `aws-compose` 첫 실행** | PR #12 (`c7d7704`) | 체크 3개 모두 통과. 이미지 빌드, `COMPOSE_FILE` 방식 기동, InfluxDB·collector 포트가 `127.0.0.1`인지, mock → collector → InfluxDB 저장까지 확인됨(저장 건수는 로그를 직접 보지 않음) |
 | **병합 후 `dev` push CI 실패** | CI #4 (`d96732e`) | pytest 2개는 통과, `AWS 배포 구성` 실패: "InfluxDB에 저장된 metric 0건". 로그상 `run tools` 때 collector가 Recreate → Started 직후 mock 366건이 한꺼번에 전송됨. 같은 코드가 PR에서는 통과했으므로 타이밍에 따라 갈리는 경쟁 상태 → D101·D102로 수정 |
 | 수정 확인 (로컬) | healthcheck 명령을 UDP 소켓 열기 전·후로 실행, compose `config` | 닫힘 exit 1 / 열림 exit 0. 합성 결과 tools는 build·depends_on 없음, `pull_policy: never`, collector에만 healthcheck. 실제 동작은 수정 PR의 CI에서 확인 |
+| 수정 PR CI | PR #13 (`0f1e88a`) | 체크 3개 통과 → 병합(`4f94f5e`) |
+| **EC2 수동 배포** | `docs/deploy.md` 0~6절 (사용자 진행) | Ubuntu 24.04.5, 29G 디스크, 스왑 2.0Gi, Docker 29.9.2, Compose v5.6.1. 저장소 Deploy keys가 조직 정책으로 막혀 있어 A안(조직 소유자가 허용)으로 진행, 배포 키로 clone한 것으로 보임(사용자 확인 필요). 처음엔 병합 전 코드(collector healthcheck 없음)로 떠서 `git pull` 후 다시 띄움 → influxdb·collector `(healthy)`, InfluxDB health `pass`, Grafana `ok`, datasource `OK`, collector 1초 로그 정상 |
+| 브라우저 · mock | `http://<탄력적 IP>:3000` 로그인, mock 10분 실행 | 대시보드 2개 보임. 실시간 관제의 "수집 상태"는 KPM 2초·eKPM 7초 전 수신으로 데이터 유입 확인. **그러나 노드로 거르는 패널은 전부 No data** → 브라우저 새로고침(F5) 후 모두 표시됨(원인 확인) → D103 |
+| D103 확인 (로컬) | 새 테스트를 고치기 전 JSON에 돌림, 전체 `pytest` | 고치기 전: `node`, `eval_id`에서 실패 / 고친 뒤 통과. 전체 172 passed, 4 skipped |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
@@ -707,8 +713,10 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] collector Dockerfile, `docker-compose.aws.yml` (D86), 절차 문서 `docs/deploy.md`
 - [x] PR #12 CI 통과 (체크 3개, 2026-10-26)
 - [x] PR #12 병합 (`d96732e`)
-- [ ] collector 재시작 문제 수정(D101·D102) PR → CI 통과 → 병합. **서버 6절(기동) 전에** 병합해야 서버가 고친 구성을 받음
-- [ ] EC2 수동 배포 (사용자, `docs/deploy.md` 1~7절) → 결과 기록
+- [x] collector 재시작 문제 수정(D101·D102) PR #13 → CI 통과 → 병합
+- [x] EC2 수동 배포 0~6절 (사용자)
+- [ ] 대시보드 변수 수정(D103) PR → CI 통과 → 병합 → 서버 `git pull` (Grafana는 10초 안에 대시보드를 다시 읽음, 재시작 불필요) → 실시간 관제 패널 표시 확인
+- [ ] 7절 evaluator를 mock이 끝난 구간으로 실행 → 성능 검증 대시보드 확인
 - [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [ ] CD 워크플로 (D87): IAM OIDC 공급자, 배포용 역할, `.github/workflows/deploy.yml`
 - [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)

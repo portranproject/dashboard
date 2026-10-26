@@ -90,6 +90,15 @@ def test_referenced_variables_are_defined(path):
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_query_variables_refresh_on_time_range_change(path):
+    """query 변수는 새로고침마다 다시 읽는다(refresh=2). 대시보드를 열 때만 읽으면(1) 데이터가 들어오기 전에 연
+    대시보드에서 목록이 비어, 그 변수로 거르는 패널이 계속 No data가 된다(새 서버 첫 배포에서 겪음, M7 D103)."""
+    for v in load(path)["templating"]["list"]:
+        if v["type"] == "query":
+            assert v["refresh"] == 2, v["name"]
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_annotation_filters_point_to_existing_panels(path):
     d = load(path)
     ids = {p["id"] for p in d["panels"]}

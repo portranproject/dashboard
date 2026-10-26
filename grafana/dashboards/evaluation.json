@@ -53,7 +53,7 @@
         "description": "evaluator 실행 한 번 (최신순). python -m evaluator.evaluate 로 만든다",
         "query": "from(bucket: v.defaultBucket)\n  |> range(start: -365d)\n  |> filter(fn: (r) => r._measurement == \"eval_result\" and r._field == \"eval_id\")\n  |> group()\n  |> keep(columns: [\"_value\"])\n  |> unique(column: \"_value\")",
         "definition": "eval_result의 eval_id (최신순)",
-        "refresh": 1,
+        "refresh": 2,
         "sort": 2,
         "multi": false,
         "includeAll": false

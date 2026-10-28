@@ -47,7 +47,7 @@ jobs:
           cp .env.example .env
           docker compose up -d --wait --wait-timeout 120
           # Grafana는 compose에 healthcheck가 없어서 --wait는 컨테이너 실행까지만 기다린다
-          for i in $(seq 60); do
+          for _ in $(seq 60); do
             curl -sf http://localhost:3000/api/health && exit 0
             sleep 1
           done

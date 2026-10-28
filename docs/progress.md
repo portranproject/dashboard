@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료: mock·replay 표시 / CD 작성, 콘솔 설정·첫 실행 전) | |
+| M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
 
 ---
 
@@ -628,7 +628,12 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 
 ## M7 — AWS 배포 · CI/CD (2026-10-26~, 브랜치 `feat/dashboard-M7` → `feat/dashboard-M7-aws`)
 
-CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD. 이 기록은 CI(PR #11 병합)와 EC2 배포 준비(이미지·compose override·절차 문서)까지다.
+CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD.
+
+**완료 조건 확인 (2026-10-28)**
+- CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과 → PR #11부터 체크 3개(`pytest` 2 + `AWS 배포 구성`)
+- AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시 → 수동 배포 후 mock(10/26), replay(10/28) 확인
+- CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 → PR #17(`dev` → `main`) 병합으로 Deploy 첫 실행 성공
 CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에서 만든 `feat/dashboard-M7-aws`에서 했다.
 
 ### 한 일
@@ -709,6 +714,8 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | **replay** (2026-10-28) | collector가 쓰던 `raw-20261026-074049.jsonl`(2MB)을 `mock-seed42.jsonl`로 복사해 `--speed 1 --retime now`로 재생 | 실시간 관제 "데이터 출처"가 **mock 재생 (성능 결과 아님)**, 지금 시각에 공격 구간·탐지선이 새로 그려짐. 성능 검증은 evaluator를 다시 돌리기 전까지 이전 결과("Mock data") 그대로 — 정상 |
 | CD 파일 검사 (로컬) | shellcheck 0.11.0 `deploy/server-deploy.sh`, actionlint 1.7.12(shellcheck 포함) 두 워크플로, JSON 파싱, SSM 문서 `allowedPattern`에 값 넣어 보기 | 모두 통과(ci.yml의 쓰지 않는 반복 변수 경고는 고침). 40자리 소문자 SHA만 허용, `abc; rm -rf /`·짧은 SHA·대문자 거부 |
 | OIDC 형식·버전 조사 | GitHub 문서·changelog, 공개 API | 조직 `portranproject` ID `337596278`, 생성 2026-10-04 → ID 포함 `sub` 형식 대상. `configure-aws-credentials` v6.3.0(2026-09-15) `e125382` |
+| CD PR | PR #16 (`f4c7602`) | CI 체크 3개 통과 → `dev` 병합(`20bb0f3`) |
+| **CD 첫 실행** | PR #17(`dev` → `main`, merge commit) 병합 → Actions → Deploy (run `40641895501`, 커밋 `6ac2cf0`) | **Success**, 24초. AWS 역할 받기(신뢰 정책의 ID 포함 `sub` 일치) → SSM 문서 실행 → 이미지 다시 빌드, collector만 Recreate → Healthy, InfluxDB·Grafana는 계속 실행(데이터 유지) → 헬스 체크 3개 통과. 서버는 이제 `6ac2cf0`에 detached HEAD |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
@@ -730,7 +737,6 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 
 - [x] 커밋 `5855215` → `feat/dashboard-M7` push → PR #11에서 CI 첫 실행 통과 (2026-10-26)
 - [x] PR #11 병합 (`296dd8c`)
-- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`, `AWS 배포 구성`. M1부터 남아 있던 `main` 보호 규칙도 함께
 - [x] collector Dockerfile, `docker-compose.aws.yml` (D86), 절차 문서 `docs/deploy.md`
 - [x] PR #12 CI 통과 (체크 3개, 2026-10-26)
 - [x] PR #12 병합 (`d96732e`)
@@ -740,11 +746,15 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] 7절 evaluator를 mock이 끝난 구간으로 실행 → 성능 검증 대시보드 확인
 - [x] 서버에서 replay → 실시간 관제 "mock 재생" 표시 (2026-10-28). **M7 완료 조건 중 AWS 항목 충족**
 - [x] 병합된 브랜치 정리 (원격·로컬 5개)
-- [ ] 저장소 관리자: Settings → General → Pull Requests → "Automatically delete head branches" 켜기 (병합 후 브랜치 자동 삭제)
-- [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [x] CD 워크플로·서버 스크립트·AWS 설정 JSON 작성 (D105~D109)
 - [x] 저장소 ID(`1421775186`, 저장소 페이지 소스의 `octolytics-dimension-repository_id`)로 신뢰 정책 채움 (D106)
 - [x] 콘솔 설정 (사용자, 2026-10-28, `docs/deploy.md` 9-1~9-4): OIDC 공급자 → SSM 문서 `portran-deploy` → IAM 역할 `portran-github-deploy`(인라인 정책 `portran-deploy-ssm`) → 저장소 변수 3개
-- [ ] 이 브랜치 PR → CI 통과 → 병합
-- [ ] `dev` → `main` PR 병합 → **Actions → Deploy 첫 실행**, 헬스 체크 통과 확인 (M7 완료 조건 중 CD 항목)
-- [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)
+- [x] CD PR #16 → CI 통과 → 병합
+- [x] `dev` → `main` PR #17 병합 → Deploy 첫 실행 성공 (M7 완료)
+- [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/`·`deploy/` 추가 (사용자 확인 받음)
+
+M7 이후로 넘기는 것:
+- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호(PR 필수, CI 체크 `pytest (Python 3.10)`·`pytest (Python 3.14)`·`AWS 배포 구성` 통과 필수, M1부터 남은 일). **CD가 `main` push로 서버에 배포하므로 `main` 보호가 특히 중요하다** (D105로 서버 권한은 좁혔지만, `main`에 들어간 코드는 그대로 배포된다)
+- [ ] 저장소 관리자: "Automatically delete head branches" 켜기. 남은 원격 브랜치 `docs/m7-deploy-record`, `feat/dashboard-M7-cd` 정리
+- [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
+- [ ] 팀 확인: Q16(탐지 엔진 위치), Q17(조직 Deploy keys 정책)

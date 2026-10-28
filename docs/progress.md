@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료, 대시보드 변수 수정 중 / CD 전) | |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료: mock·replay 표시 / CD 전) | |
 
 ---
 
@@ -645,6 +645,7 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | `.github/workflows/ci.yml` | `aws-compose` 작업 추가: 서버와 같은 방식(`.env`의 `COMPOSE_FILE`)으로 띄워 포트 잠금과 mock → collector → InfluxDB 저장 확인 |
 | `docs/deploy.md` | EC2 배포 절차: 비용 알람, IAM 역할·보안 그룹·인스턴스·탄력적 IP, Session Manager, Docker 설치, 배포 키, `.env`, 기동·확인, 데이터 넣기, 운영, 문제 해결 |
 | `README.md`, `CLAUDE.md` | README "AWS 배포" 섹션·디렉터리 표, CLAUDE.md 3절(AWS만 컨테이너)·4절(새 파일) |
+| `docs/deploy.md` (배포 후 보완) | 2절: 터미널은 브라우저 안, 내 PC와 서버 프롬프트 구분. 7절: 명령을 따로 나누고 replay는 녹화 복사본을 재생. 8절: 다시 작업하러 들어올 때(인스턴스 시작 → 접속 → 상태 확인), 안 쓸 때 중지("종료"는 누르지 않기) |
 
 ### 결정 사항
 
@@ -669,6 +670,7 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D101 | `tools`에서 `build`·`depends_on: collector`를 빼고 `pull_policy: never`. 이미지는 collector만 빌드 | `dev` push CI(#4)에서 `docker compose run tools`가 collector를 다시 만들었고, 재시작 중에 보낸 mock UDP가 모두 사라짐(저장 0건). 서버에서도 tools를 쓸 때마다 collector가 재시작돼 수신이 끊기고 녹화 파일이 새로 생겼을 것 | 불필요 |
 | D102 | collector에 healthcheck: `/proc/net/udp`에 수신 포트가 열려 있으면 healthy | collector는 InfluxDB 확인 뒤 포트를 열므로 "받을 준비 됨"과 같다. `up --wait`이 여기까지 기다려 CI·CD의 경쟁 상태를 없앰 | 불필요 |
 | D103 | 대시보드의 query 변수(실시간 `node`, 성능 검증 `eval_id`)를 `refresh: 2`(새로고침·시간 범위 변경마다)로. 테스트로 고정 | 새 서버에서 데이터가 들어오기 전에 대시보드를 열자 `node` 목록이 비어 "All"이 빈 집합이 됐고, 노드로 거르는 패널 7개가 계속 No data였음(수집 상태 패널만 정상). `refresh: 1`은 대시보드를 열 때만 읽어 5초 자동 새로고침으로는 회복되지 않음. 실제 eBPF 에이전트가 새 노드를 보낼 때도 같은 문제 | 불필요 |
+| D104 | 서버가 코드를 받는 방식은 배포 키(A안)를 유지하고, CD도 서버에서 `git fetch`하는 방식으로 만든다. S3로 코드를 보내는 B안은 Q17이 반대되면 그때 바꾼다 | 배포 키는 이 저장소 하나에 읽기 전용이라, 서버가 뚫려도 추가로 잃는 건 이미 서버에 있는 코드뿐. B안은 S3 버킷·권한 2개·코드 묶음 풀기 로직이 더 필요해 발표 일정에 비해 부품이 많음. 바꿀 때도 CD의 "서버에 명령 보내기"는 그대로 두고 코드 받는 한 단계만 바꾸면 됨 | 필요 (Q17) |
 
 ### 확인 결과
 
@@ -689,9 +691,12 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | **병합 후 `dev` push CI 실패** | CI #4 (`d96732e`) | pytest 2개는 통과, `AWS 배포 구성` 실패: "InfluxDB에 저장된 metric 0건". 로그상 `run tools` 때 collector가 Recreate → Started 직후 mock 366건이 한꺼번에 전송됨. 같은 코드가 PR에서는 통과했으므로 타이밍에 따라 갈리는 경쟁 상태 → D101·D102로 수정 |
 | 수정 확인 (로컬) | healthcheck 명령을 UDP 소켓 열기 전·후로 실행, compose `config` | 닫힘 exit 1 / 열림 exit 0. 합성 결과 tools는 build·depends_on 없음, `pull_policy: never`, collector에만 healthcheck. 실제 동작은 수정 PR의 CI에서 확인 |
 | 수정 PR CI | PR #13 (`0f1e88a`) | 체크 3개 통과 → 병합(`4f94f5e`) |
-| **EC2 수동 배포** | `docs/deploy.md` 0~6절 (사용자 진행) | Ubuntu 24.04.5, 29G 디스크, 스왑 2.0Gi, Docker 29.9.2, Compose v5.6.1. 저장소 Deploy keys가 조직 정책으로 막혀 있어 A안(조직 소유자가 허용)으로 진행, 배포 키로 clone한 것으로 보임(사용자 확인 필요). 처음엔 병합 전 코드(collector healthcheck 없음)로 떠서 `git pull` 후 다시 띄움 → influxdb·collector `(healthy)`, InfluxDB health `pass`, Grafana `ok`, datasource `OK`, collector 1초 로그 정상 |
+| **EC2 수동 배포** | `docs/deploy.md` 0~6절 (사용자 진행) | Ubuntu 24.04.5, 29G 디스크, 스왑 2.0Gi, Docker 29.9.2, Compose v5.6.1. 저장소 Deploy keys가 조직 정책으로 막혀 있어 A안(조직 소유자가 허용)으로 진행, 배포 키로 clone(사용자 확인). 처음엔 병합 전 코드(collector healthcheck 없음)로 떠서 `git pull` 후 다시 띄움 → influxdb·collector `(healthy)`, InfluxDB health `pass`, Grafana `ok`, datasource `OK`, collector 1초 로그 정상 |
 | 브라우저 · mock | `http://<탄력적 IP>:3000` 로그인, mock 10분 실행 | 대시보드 2개 보임. 실시간 관제의 "수집 상태"는 KPM 2초·eKPM 7초 전 수신으로 데이터 유입 확인. **그러나 노드로 거르는 패널은 전부 No data** → 브라우저 새로고침(F5) 후 모두 표시됨(원인 확인) → D103 |
 | D103 확인 (로컬) | 새 테스트를 고치기 전 JSON에 돌림, 전체 `pytest` | 고치기 전: `node`, `eval_id`에서 실패 / 고친 뒤 통과. 전체 172 passed, 4 skipped |
+| D103 반영 | PR #14 CI 통과 → 병합(`2112066`) → 서버 `git pull` | 컨테이너 재시작 없이 실시간 관제 패널이 F5 없이 모두 표시됨(KPM·eKPM 그래프, 공격 구간·탐지선, 탐지 표, 접속 UE 수) |
+| evaluator | 서버에서 `docker compose run --rm tools python -m evaluator.evaluate --from "$(date -d '15 min ago' --iso-8601=seconds)"` | `eval-20261026-075423`: 구간 16:39~16:54 KST, 공격 run 6, grace 5초. 성능 검증 패널 전부 표시, 데이터 출처 "Mock data". 숫자는 mock이라 성능 결과 아님 |
+| **replay** (2026-10-28) | collector가 쓰던 `raw-20261026-074049.jsonl`(2MB)을 `mock-seed42.jsonl`로 복사해 `--speed 1 --retime now`로 재생 | 실시간 관제 "데이터 출처"가 **mock 재생 (성능 결과 아님)**, 지금 시각에 공격 구간·탐지선이 새로 그려짐. 성능 검증은 evaluator를 다시 돌리기 전까지 이전 결과("Mock data") 그대로 — 정상 |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
@@ -704,6 +709,10 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - 다른 Python 버전으로 테스트할 때는 `pip install uv` → `uv python install 3.10` → `uv venv -p 3.10`이 가장 빠르다(시스템 Python은 건드리지 않음).
 - Docker 없이 compose 파일만 검사하려면 [docker/compose 릴리스](https://github.com/docker/compose/releases)의 `docker-compose-linux-x86_64`를 받아 `./docker-compose -f docker-compose.yml -f docker-compose.aws.yml config`를 실행하면 된다(데몬이 필요 없음).
 - PR #11은 기록 커밋(`8df98be`)이 push되기 전에 병합돼서 그 커밋이 `dev`에 빠졌다. `feat/dashboard-M7-aws`로 cherry-pick해 가져왔다(`7a03a96`). PR에 커밋을 더 올릴 때는 CI가 끝난 뒤 병합한다.
+- **서버 명령을 내 PC의 PowerShell에서 실행하는 실수**: Windows에도 `sudo`가 있어 `sudo -i`가 "unexpected argument '-i'"로 실패한다. 서버 터미널은 Session Manager로 **브라우저 안에** 열린다. `docs/deploy.md` 2절에 프롬프트로 구분하는 법(`PS C:\...>` vs `$`/`root@ip-...#`)을 적었다.
+- **문서의 꺾쇠 자리표시를 그대로 입력**: `recordings/<녹화 파일>.jsonl`을 그대로 넣으면 셸이 `<`를 입력 리다이렉션으로 해석한다(`-bash: 방금: No such file or directory`). `docs/deploy.md`는 실제 예시 이름을 쓰고 "바꿔 넣는다"고 적는 방식으로 고쳤다.
+- **collector가 쓰고 있는 녹화 파일을 그대로 replay하면** 재생한 메시지가 같은 파일 끝에 다시 녹화된다. 복사본을 만들어 재생한다(`docs/deploy.md` 7절).
+- 2026-10-26: 병합이 끝난 브랜치 5개(`docs/udp-open-items`, `feat/dashboard-M7`, `feat/dashboard-M7-aws`, `feat/dashboard-M7-deploy`, `fix/dashboard-variable-refresh`)를 원격·로컬에서 지웠다. `feat/dashboard-M7`의 남은 커밋 `8df98be`는 `git cherry`로 `dev`에 같은 변경(`7a03a96`)이 있음을 확인한 뒤 지웠다.
 
 ### 남은 일
 
@@ -715,8 +724,11 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] PR #12 병합 (`d96732e`)
 - [x] collector 재시작 문제 수정(D101·D102) PR #13 → CI 통과 → 병합
 - [x] EC2 수동 배포 0~6절 (사용자)
-- [ ] 대시보드 변수 수정(D103) PR → CI 통과 → 병합 → 서버 `git pull` (Grafana는 10초 안에 대시보드를 다시 읽음, 재시작 불필요) → 실시간 관제 패널 표시 확인
-- [ ] 7절 evaluator를 mock이 끝난 구간으로 실행 → 성능 검증 대시보드 확인
+- [x] 대시보드 변수 수정(D103) PR #14 → CI 통과 → 병합 → 서버 `git pull` → 실시간 관제 패널 표시 확인
+- [x] 7절 evaluator를 mock이 끝난 구간으로 실행 → 성능 검증 대시보드 확인
+- [x] 서버에서 replay → 실시간 관제 "mock 재생" 표시 (2026-10-28). **M7 완료 조건 중 AWS 항목 충족**
+- [x] 병합된 브랜치 정리 (원격·로컬 5개)
+- [ ] 저장소 관리자: Settings → General → Pull Requests → "Automatically delete head branches" 켜기 (병합 후 브랜치 자동 삭제)
 - [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [ ] CD 워크플로 (D87): IAM OIDC 공급자, 배포용 역할, `.github/workflows/deploy.yml`
 - [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)

@@ -83,7 +83,8 @@ SSH(22), InfluxDB(8086), UDP 9999는 **추가하지 않는다.** 집·학교를 
 
 **EC2 → 인스턴스 → `portran-dashboard` 선택 → 연결(Connect) → Session Manager 탭 → 연결**
 
-브라우저에 터미널이 열린다. 아래 명령은 모두 root로 실행한다.
+**브라우저 안에** 서버 터미널이 열린다. 이 문서의 서버 명령은 모두 여기서 실행한다. 내 PC의 PowerShell·WSL에서 실행하는 게 아니다(프롬프트가 `PS C:\...>`면 내 PC, `$`나 `root@ip-172-31-...#`면 서버).
+아래 명령은 모두 root로 실행한다.
 
 ```bash
 sudo -i
@@ -215,12 +216,15 @@ docker compose run -d --rm tools python -m mock.generator --duration 600 --seed 
 docker compose logs -f --tail 3 collector     # 수신 N 저장 N 거부 0 이면 정상 (Ctrl+C로 나오기)
 ```
 
-**replay**: 파일 이름을 `ls recordings/`로 확인해 바꿔 넣는다. 시각은 지금으로 옮겨 재생한다.
+**replay**: 시각은 지금으로 옮겨 재생한다. collector가 **지금 쓰고 있는** 녹화 파일(가장 최근 `raw-*.jsonl`)을 그대로 재생하면 재생한 메시지가 같은 파일 끝에 다시 녹화되므로, 복사본을 만들어 재생한다. 아래 파일 이름은 예시라 `ls`로 확인한 실제 이름으로 바꾼다.
 
 ```bash
-ls recordings/
-docker compose run -d --rm tools python -m replay.replay recordings/<녹화 파일>.jsonl --speed 1 --retime now
+ls -l recordings/
+cp recordings/raw-20261026-074049.jsonl recordings/mock-seed42.jsonl
+docker compose run -d --rm tools python -m replay.replay recordings/mock-seed42.jsonl --speed 1 --retime now
 ```
+
+실시간 관제의 "데이터 출처"가 **mock 재생**(실제 녹화면 **녹화 재생**)으로 바뀐다.
 
 **evaluator**: mock·replay가 **끝난 뒤** 그 구간을 평가한다. 서버와 컨테이너는 UTC라서 `date`로 시간대가 붙은 시각을 만든다(예: 최근 15분).
 
@@ -234,6 +238,24 @@ ls reports/
 collector가 받은 메시지는 `recordings/raw-*.jsonl`로 녹화된다(로컬과 같다).
 
 ## 8. 운영
+
+### 다시 작업하러 들어올 때
+
+1. AWS 콘솔 오른쪽 위 리전이 **서울**인지 확인
+2. **EC2 → 인스턴스 → `portran-dashboard`** 상태 확인. **중지됨**이면 **인스턴스 상태 → 인스턴스 시작**, 상태 검사 통과까지 2~3분. 탄력적 IP라 주소는 그대로이고 컨테이너는 자동으로 다시 뜬다
+3. 2절대로 Session Manager 연결 → 서버 터미널에서:
+
+```bash
+sudo -i
+cd /opt/portran/dashboard
+docker compose ps        # influxdb·collector (healthy), grafana Up
+```
+
+### 안 쓸 때
+
+**인스턴스 상태 → 인스턴스 중지**. 컴퓨팅 요금이 멈추고 데이터(디스크)는 남는다. 디스크와 탄력적 IP 요금은 중지해도 계속 나간다(0절). **인스턴스 종료(Terminate)는 서버와 디스크를 지우는 것**이라 누르지 않는다.
+
+### 자주 쓰는 명령
 
 | 할 일 | 명령 (`/opt/portran/dashboard`에서, root) |
 |---|---|

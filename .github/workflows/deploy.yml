@@ -1,0 +1,74 @@
+# CD: main에 push되면(= dev → main PR 병합) EC2에 배포한다. 수동 실행도 되지만 main에서만 AWS 역할을 받을 수 있다.
+#   1. GitHub OIDC로 AWS 역할을 임시로 받는다(액세스 키 없음). 역할은 deploy/aws/iam-github-deploy-*.json
+#   2. SSM 문서 portran-deploy로 서버에 "이 커밋으로 배포"를 보낸다. 문서가 커밋을 checkout하고 deploy/server-deploy.sh를 부른다
+#   3. 서버의 빌드·기동·헬스 체크 결과를 기다려 로그를 보여 준다. 실패하면 이 작업도 실패한다
+# 설정과 절차는 docs/deploy.md 9절.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # OIDC 토큰 발급
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false  # 배포는 중간에 끊지 않고 순서대로
+
+jobs:
+  deploy:
+    name: EC2 배포
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+    steps:
+      # AWS 로그인이 거부되면 이 값과 IAM 신뢰 정책의 sub 조건을 비교한다 (sub는 비밀이 아니다. 토큰 자체는 출력하지 않음)
+      - name: OIDC 토큰의 sub 확인
+        run: |
+          curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+          | python3 -c 'import base64,json,sys; p=json.load(sys.stdin)["value"].split(".")[1]; print(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["sub"])'
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: portran-deploy-${{ github.run_id }}
+
+      - name: 서버에 배포 명령 보내기 (SSM)
+        id: send
+        run: |
+          command_id=$(aws ssm send-command \
+            --document-name portran-deploy \
+            --instance-ids "$INSTANCE_ID" \
+            --parameters "CommitSha=$GITHUB_SHA" \
+            --comment "GitHub Actions run $GITHUB_RUN_ID" \
+            --query Command.CommandId --output text)
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+          echo "SSM 명령 $command_id → $INSTANCE_ID (커밋 $GITHUB_SHA)"
+
+      - name: 서버 배포·헬스 체크 결과
+        env:
+          COMMAND_ID: ${{ steps.send.outputs.command_id }}
+        run: |
+          status=Pending
+          for _ in $(seq 180); do  # 5초 × 180 = 최대 15분
+            status=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in
+              Pending | InProgress | Delayed) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+          echo "== 서버 출력"
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          echo "== 서버 오류 출력"
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardErrorContent --output text
+          echo "== 결과: $status"
+          test "$status" = Success

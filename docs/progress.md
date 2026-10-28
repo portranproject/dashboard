@@ -10,7 +10,7 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료: mock·replay 표시 / CD 전) | |
+| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료: mock·replay 표시 / CD 작성, 콘솔 설정·첫 실행 전) | |
 
 ---
 
@@ -646,6 +646,11 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | `docs/deploy.md` | EC2 배포 절차: 비용 알람, IAM 역할·보안 그룹·인스턴스·탄력적 IP, Session Manager, Docker 설치, 배포 키, `.env`, 기동·확인, 데이터 넣기, 운영, 문제 해결 |
 | `README.md`, `CLAUDE.md` | README "AWS 배포" 섹션·디렉터리 표, CLAUDE.md 3절(AWS만 컨테이너)·4절(새 파일) |
 | `docs/deploy.md` (배포 후 보완) | 2절: 터미널은 브라우저 안, 내 PC와 서버 프롬프트 구분. 7절: 명령을 따로 나누고 replay는 녹화 복사본을 재생. 8절: 다시 작업하러 들어올 때(인스턴스 시작 → 접속 → 상태 확인), 안 쓸 때 중지("종료"는 누르지 않기) |
+| `.github/workflows/deploy.yml` | CD. `main` push·수동 실행 → OIDC 토큰의 `sub` 출력 → AWS 역할 받기(`configure-aws-credentials` v6.3.0, SHA 고정) → SSM 문서 `portran-deploy`로 배포 명령 → 서버 결과를 최대 15분 기다려 출력, 실패면 작업 실패 |
+| `deploy/server-deploy.sh` | 서버에서 현재 커밋으로 다시 빌드·기동(`up --build --wait`), 이전 이미지 정리, InfluxDB·Grafana·datasource 헬스 체크(60초 재시도). `.env`의 `COMPOSE_FILE` 줄이 없으면 중단 |
+| `deploy/aws/*.json` | 콘솔에 붙여 넣을 원본: SSM 문서(커밋 SHA만 받음), GitHub 배포 역할의 신뢰 정책·권한 정책 |
+| `docs/deploy.md` 9절, 8절 | CD 구조, 처음 한 번 설정(OIDC 공급자 → SSM 문서 → IAM 역할 → 저장소 변수), 실패할 때 확인할 것. 8절에 CD 이후 수동 업데이트 명령 |
+| `.github/workflows/ci.yml`, `.dockerignore`, README, CLAUDE.md 4절 | ci.yml의 shellcheck 경고(쓰지 않는 반복 변수) 정리, 이미지에서 `deploy/` 제외, README CD 안내, 디렉터리 구조에 `deploy.yml`·`deploy/` |
 
 ### 결정 사항
 
@@ -671,6 +676,11 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D102 | collector에 healthcheck: `/proc/net/udp`에 수신 포트가 열려 있으면 healthy | collector는 InfluxDB 확인 뒤 포트를 열므로 "받을 준비 됨"과 같다. `up --wait`이 여기까지 기다려 CI·CD의 경쟁 상태를 없앰 | 불필요 |
 | D103 | 대시보드의 query 변수(실시간 `node`, 성능 검증 `eval_id`)를 `refresh: 2`(새로고침·시간 범위 변경마다)로. 테스트로 고정 | 새 서버에서 데이터가 들어오기 전에 대시보드를 열자 `node` 목록이 비어 "All"이 빈 집합이 됐고, 노드로 거르는 패널 7개가 계속 No data였음(수집 상태 패널만 정상). `refresh: 1`은 대시보드를 열 때만 읽어 5초 자동 새로고침으로는 회복되지 않음. 실제 eBPF 에이전트가 새 노드를 보낼 때도 같은 문제 | 불필요 |
 | D104 | 서버가 코드를 받는 방식은 배포 키(A안)를 유지하고, CD도 서버에서 `git fetch`하는 방식으로 만든다. S3로 코드를 보내는 B안은 Q17이 반대되면 그때 바꾼다 | 배포 키는 이 저장소 하나에 읽기 전용이라, 서버가 뚫려도 추가로 잃는 건 이미 서버에 있는 코드뿐. B안은 S3 버킷·권한 2개·코드 묶음 풀기 로직이 더 필요해 발표 일정에 비해 부품이 많음. 바꿀 때도 CD의 "서버에 명령 보내기"는 그대로 두고 코드 받는 한 단계만 바꾸면 됨 | 필요 (Q17) |
+| D105 | GitHub 역할에는 `AWS-RunShellScript`(임의 셸 명령) 대신 **배포 전용 SSM 문서 `portran-deploy`** 실행 권한만 준다. 문서 입력은 `^[0-9a-f]{40}$`(커밋 SHA)만 허용 | 역할이나 워크플로가 악용돼도 서버에서 할 수 있는 건 "저장소에 있는 커밋으로 다시 배포"뿐. 입력 형식을 막아 명령을 끼워 넣을 수 없음(로컬에서 `abc; rm -rf /` 거부 확인) | 불필요 |
+| D106 | 신뢰 정책의 `sub`는 ID가 들어간 형식 `repo:portranproject@337596278/dashboard@<저장소 ID>:ref:refs/heads/main`, `StringEquals`로 `main`만 | GitHub는 2026-07-15 이후 만든 저장소에 이 형식을 쓴다(조직 생성 2026-10-04). 조직·저장소 이름을 다른 사람이 다시 가져가도 역할을 받을 수 없음. 저장소 ID는 비공개 저장소라 사용자에게 받아 채움. 형식이 다르면 워크플로 첫 단계가 찍은 `sub`로 맞춘다 | 불필요 |
+| D107 | 서버 쪽 배포 절차는 저장소의 `deploy/server-deploy.sh`에 두고, SSM 문서는 checkout과 이 스크립트 호출만 한다 | 배포 절차를 코드와 함께 리뷰·버전 관리. 문서(콘솔에서 고쳐야 함)는 거의 바뀌지 않게 | 불필요 |
+| D108 | 역할 ARN·리전·인스턴스 ID는 GitHub **Variables**(Secrets 아님)로 | 비밀이 아니고, 로그에 가려지지 않아 디버깅이 쉬움. 코드에 박지 않음(CLAUDE.md 12절 3항) | 불필요 |
+| D109 | 배포는 `concurrency: deploy`, 진행 중인 배포를 취소하지 않고 순서대로 | 빌드 중간에 끊으면 서버가 반쯤 바뀐 상태로 남을 수 있음 | 불필요 |
 
 ### 확인 결과
 
@@ -697,6 +707,8 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | D103 반영 | PR #14 CI 통과 → 병합(`2112066`) → 서버 `git pull` | 컨테이너 재시작 없이 실시간 관제 패널이 F5 없이 모두 표시됨(KPM·eKPM 그래프, 공격 구간·탐지선, 탐지 표, 접속 UE 수) |
 | evaluator | 서버에서 `docker compose run --rm tools python -m evaluator.evaluate --from "$(date -d '15 min ago' --iso-8601=seconds)"` | `eval-20261026-075423`: 구간 16:39~16:54 KST, 공격 run 6, grace 5초. 성능 검증 패널 전부 표시, 데이터 출처 "Mock data". 숫자는 mock이라 성능 결과 아님 |
 | **replay** (2026-10-28) | collector가 쓰던 `raw-20261026-074049.jsonl`(2MB)을 `mock-seed42.jsonl`로 복사해 `--speed 1 --retime now`로 재생 | 실시간 관제 "데이터 출처"가 **mock 재생 (성능 결과 아님)**, 지금 시각에 공격 구간·탐지선이 새로 그려짐. 성능 검증은 evaluator를 다시 돌리기 전까지 이전 결과("Mock data") 그대로 — 정상 |
+| CD 파일 검사 (로컬) | shellcheck 0.11.0 `deploy/server-deploy.sh`, actionlint 1.7.12(shellcheck 포함) 두 워크플로, JSON 파싱, SSM 문서 `allowedPattern`에 값 넣어 보기 | 모두 통과(ci.yml의 쓰지 않는 반복 변수 경고는 고침). 40자리 소문자 SHA만 허용, `abc; rm -rf /`·짧은 SHA·대문자 거부 |
+| OIDC 형식·버전 조사 | GitHub 문서·changelog, 공개 API | 조직 `portranproject` ID `337596278`, 생성 2026-10-04 → ID 포함 `sub` 형식 대상. `configure-aws-credentials` v6.3.0(2026-09-15) `e125382` |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
@@ -730,5 +742,9 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] 병합된 브랜치 정리 (원격·로컬 5개)
 - [ ] 저장소 관리자: Settings → General → Pull Requests → "Automatically delete head branches" 켜기 (병합 후 브랜치 자동 삭제)
 - [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
-- [ ] CD 워크플로 (D87): IAM OIDC 공급자, 배포용 역할, `.github/workflows/deploy.yml`
+- [x] CD 워크플로·서버 스크립트·AWS 설정 JSON 작성 (D105~D109)
+- [x] 저장소 ID(`1421775186`, 저장소 페이지 소스의 `octolytics-dimension-repository_id`)로 신뢰 정책 채움 (D106)
+- [x] 콘솔 설정 (사용자, 2026-10-28, `docs/deploy.md` 9-1~9-4): OIDC 공급자 → SSM 문서 `portran-deploy` → IAM 역할 `portran-github-deploy`(인라인 정책 `portran-deploy-ssm`) → 저장소 변수 3개
+- [ ] 이 브랜치 PR → CI 통과 → 병합
+- [ ] `dev` → `main` PR 병합 → **Actions → Deploy 첫 실행**, 헬스 체크 통과 확인 (M7 완료 조건 중 CD 항목)
 - [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)

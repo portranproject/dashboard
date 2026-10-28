@@ -260,6 +260,7 @@ docker compose ps        # influxdb·collector (healthy), grafana Up
 | 할 일 | 명령 (`/opt/portran/dashboard`에서, root) |
 |---|---|
 | 수동 업데이트 (CD 전) | `git pull && docker compose up -d --build --wait` |
+| 수동 업데이트 (CD 후) | `git fetch && git checkout --detach origin/main && bash deploy/server-deploy.sh`. CD가 커밋 단위로 checkout하므로 서버는 브랜치가 아닌 커밋(detached HEAD)에 있다. `git pull`은 쓰지 않는다 |
 | 상태 | `docker compose ps` |
 | 로그 | `docker compose logs -f collector` (grafana, influxdb도 같음) |
 | 재시작 | `docker compose restart collector` |
@@ -267,6 +268,75 @@ docker compose ps        # influxdb·collector (healthy), grafana Up
 
 - **`docker compose down -v`는 쓰지 않는다.** InfluxDB 데이터가 전부 지워진다.
 - 인스턴스를 재부팅하면 컨테이너는 `restart: unless-stopped`로 자동으로 다시 뜬다.
+
+## 9. CD (자동 배포)
+
+`main`에 push되면(= `dev` → `main` PR 병합) GitHub Actions(`.github/workflows/deploy.yml`)가 서버에 배포한다.
+
+```
+GitHub Actions (main)
+  │ OIDC 임시 자격 증명 (액세스 키 없음)
+  ▼
+IAM 역할 portran-github-deploy  ── 할 수 있는 것: 이 인스턴스에서 SSM 문서 portran-deploy 실행, 결과 읽기
+  │ ssm:SendCommand (CommitSha = 배포할 커밋)
+  ▼
+EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기동·헬스 체크) → 결과를 Actions 로그로
+```
+
+- GitHub에 주는 권한은 "아무 셸 명령 실행"이 아니라 **배포 전용 문서 하나 실행**이다. 문서는 40자리 커밋 SHA만 받는다(`allowedPattern`).
+- `portranproject/dashboard`의 **`main`에서 돈 워크플로만** 역할을 받을 수 있다(신뢰 정책의 `sub` 조건).
+- 열린 포트는 그대로 Grafana 3000뿐이다. 서버는 배포 키로 GitHub에서 코드를 받는다(D104).
+- 설정 JSON은 `deploy/aws/`에 있다. 콘솔에 붙여 넣는 원본이므로 콘솔에서 바꾸면 이 파일도 같이 고친다.
+
+처음 한 번만 아래를 설정한다.
+
+### 9-1. GitHub OIDC 공급자
+
+**IAM → 자격 증명 공급자(Identity providers) → 공급자 추가**
+- 공급자 유형: **OpenID Connect**
+- 공급자 URL: `https://token.actions.githubusercontent.com`
+- 대상(Audience): `sts.amazonaws.com`
+
+### 9-2. SSM 문서 `portran-deploy`
+
+**Systems Manager → 문서(Documents) → 문서 생성 → 명령 또는 세션(Command or Session)**
+- 이름: `portran-deploy`, 문서 유형: 명령 문서
+- 콘텐츠: **JSON**을 고르고 [`deploy/aws/ssm-document-portran-deploy.json`](../deploy/aws/ssm-document-portran-deploy.json) 내용을 그대로 붙여 넣는다
+
+### 9-3. 배포용 IAM 역할 `portran-github-deploy`
+
+**IAM → 역할 → 역할 생성**
+1. 신뢰할 수 있는 엔터티 유형: **사용자 지정 신뢰 정책** → [`deploy/aws/iam-github-deploy-trust.json`](../deploy/aws/iam-github-deploy-trust.json) 붙여 넣기
+2. 권한 추가 화면은 아무것도 고르지 않고 다음
+3. 역할 이름 `portran-github-deploy` → 역할 생성
+4. 만든 역할 → **권한 추가 → 인라인 정책 생성 → JSON** → [`deploy/aws/iam-github-deploy-policy.json`](../deploy/aws/iam-github-deploy-policy.json) 붙여 넣기 → 정책 이름 `portran-deploy-ssm`
+
+신뢰 정책의 `sub`는 `repo:portranproject@<조직 ID>/dashboard@<저장소 ID>:ref:refs/heads/main` 형식이다. 2026-07-15 이후 만든 저장소는 GitHub가 이름 대신 ID가 들어간 형식을 쓴다(조직·저장소 이름을 다른 사람이 다시 가져가도 이 역할을 받을 수 없게). 조직 ID `337596278`, 저장소 ID는 결정 D106에 적었다.
+
+### 9-4. GitHub 저장소 변수
+
+**저장소 Settings → Secrets and variables → Actions → Variables 탭 → New repository variable**. 비밀이 아니므로 Secrets가 아니라 Variables에 넣는다.
+
+| 이름 | 값 |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | `arn:aws:iam::409852989722:role/portran-github-deploy` |
+| `AWS_REGION` | `ap-northeast-2` |
+| `EC2_INSTANCE_ID` | `i-08c7915e4b02d7e3f` |
+
+### 9-5. 배포하기와 확인
+
+- `dev` → `main` PR을 병합하면 **Actions → Deploy**가 돈다. 수동 실행은 Actions → Deploy → Run workflow에서 브랜치 `main`으로 한다(다른 브랜치는 신뢰 정책에서 거부됨).
+- 로그의 "서버 배포·헬스 체크 결과"에 서버 출력(`== 배포: <커밋>`, `ok InfluxDB` 등)과 `== 결과: Success`가 나오면 성공이다.
+- 배포 뒤 서버는 그 커밋에 detached HEAD로 있다. 손으로 업데이트할 때는 8절의 "CD 후" 명령을 쓴다.
+
+### 9-6. CD가 실패할 때
+
+| 증상 | 확인 |
+|---|---|
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | 첫 단계 "OIDC 토큰의 sub 확인"에 찍힌 값과 신뢰 정책의 `sub`가 글자 그대로 같은지. `main`이 아닌 브랜치에서 실행했는지 |
+| `AccessDeniedException ... ssm:SendCommand` | 인라인 정책의 리전·계정·인스턴스 ID·문서 이름 |
+| `InvalidInstanceId` | 인스턴스가 중지됐거나 SSM 에이전트가 오프라인(Session Manager로 접속되는지) |
+| `== 결과: Failed` | 로그의 "서버 출력"·"서버 오류 출력". 예: `.env에 COMPOSE_FILE ... 줄이 없습니다`, `실패 Grafana datasource` |
 
 ## 문제 해결
 

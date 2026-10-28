@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunDeployDocumentOnDashboardInstance",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:409852989722:instance/i-08c7915e4b02d7e3f",
+        "arn:aws:ssm:ap-northeast-2:409852989722:document/portran-deploy"
+      ]
+    },
+    {
+      "Sid": "ReadDeployResult",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*"
+    }
+  ]
+}

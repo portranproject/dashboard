@@ -72,7 +72,10 @@
 │   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
 │   └── deploy.md                 # AWS(EC2) 배포 절차 (M7)
 ├── .github/
-│   └── workflows/ci.yml          # CI: PR마다 전체 테스트 (M7)
+│   └── workflows/
+│       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
+│       └── deploy.yml            # CD: main push 시 EC2 배포 (M7)
+├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7)
 ├── docker-compose.yml
 ├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
 ├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)

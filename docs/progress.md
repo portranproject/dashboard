@@ -755,6 +755,27 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 
 M7 이후로 넘기는 것:
 - [ ] 저장소 관리자: `dev`·`main` 브랜치 보호(PR 필수, CI 체크 `pytest (Python 3.10)`·`pytest (Python 3.14)`·`AWS 배포 구성` 통과 필수, M1부터 남은 일). **CD가 `main` push로 서버에 배포하므로 `main` 보호가 특히 중요하다** (D105로 서버 권한은 좁혔지만, `main`에 들어간 코드는 그대로 배포된다)
-- [ ] 저장소 관리자: "Automatically delete head branches" 켜기. 남은 원격 브랜치 `docs/m7-deploy-record`, `feat/dashboard-M7-cd` 정리
+- [ ] 저장소 관리자: "Automatically delete head branches" 켜기 (남은 원격 브랜치 `docs/m7-deploy-record`, `feat/dashboard-M7-cd`, `docs/m7-complete`는 2026-10-28에 지움)
 - [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [ ] 팀 확인: Q16(탐지 엔진 위치), Q17(조직 Deploy keys 정책)
+
+---
+
+## CLAUDE.md 보완 — 배포 규칙 (2026-10-28, 브랜치 `docs/claude-md-deploy-rules`)
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `CLAUDE.md` 2절 | "포함하는 것"에 7번 AWS 배포 · CI/CD 추가 |
+| `CLAUDE.md` 12절 9항 | `main` 병합 = 곧바로 EC2 배포, `dev` → `main` PR은 "Create a merge commit"으로 병합(squash·rebase 금지)과 그 이유 |
+
+### 결정 사항
+
+| 결정 | 이유 | 팀 확인 |
+|---|---|---|
+| `dev` → `main`은 merge commit만 쓴다 | squash·rebase는 `main`에 `dev`와 다른 커밋을 만들어 다음 PR에서 같은 변경이 다시 차이로 보이고 충돌하기 쉬움. M7 첫 배포(PR #17)를 merge commit으로 했고, PR #18(`main` → `dev`)로 이력도 맞춤 | 불필요 (이 저장소 규칙) |
+
+### 확인 결과
+
+- `pytest`: 172 passed, 4 skipped (CLAUDE.md의 JSON 예시를 읽는 스키마 테스트 포함, 서비스 테스트 4개는 로컬 Docker 없음)

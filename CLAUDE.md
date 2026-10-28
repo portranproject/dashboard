@@ -42,6 +42,7 @@
 4. Grafana 대시보드 2개 (실시간 관제, 성능 검증)
 5. evaluator (탐지율·오탐·지연 계산)
 6. replay (녹화 데이터 재생, 발표 시연 백업용)
+7. AWS 배포 · CI/CD (M7). AWS에는 대시보드 스택만 올린다. 절차는 `docs/deploy.md`
 
 포함하지 않는 것: 탐지 로직, eBPF 코드, 공격 코드, 기지국 제어(대응)
 
@@ -282,6 +283,8 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
    문서 맨 위의 "열린 항목"(팀 확인 대기, 미정 사항)은 마일스톤과 상관없이 항상 최신으로 유지한다. 해결된 항목은 지우지 말고 해결 내용과 함께 해결됨으로 옮긴다.
 9. **브랜치 규칙.**
    - `main`: 배포·발표용. 직접 커밋하지 않고 `dev` → `main` PR로만 반영한다.
+     - **`main`에 병합되면 CD(`.github/workflows/deploy.yml`)가 곧바로 EC2에 배포한다.** 배포할 준비가 된 것만 `main`에 올린다.
+     - `dev` → `main` PR은 **"Create a merge commit"**으로 병합한다. squash·rebase로 합치면 `main`과 `dev`의 이력이 갈라져, 다음 `dev` → `main` PR에서 이미 들어간 변경이 다시 차이로 보이고 충돌하기 쉽다.
    - `dev`: 개발 통합 브랜치 (GitHub default 브랜치).
    - `feat/dashboard-M<n>`: 마일스톤 작업 브랜치. 항상 최신 `dev`에서 만들고, 끝나면 `dev`로 PR을 연다. 마일스톤이 아닌 작은 수정은 `fix/<내용>`, `docs/<내용>`.
    - push, PR 생성·병합은 사용자 확인을 받고 한다.

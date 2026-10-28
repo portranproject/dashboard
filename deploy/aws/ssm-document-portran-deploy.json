@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.2",
+  "description": "PortRAN dashboard: check out the given commit and redeploy with deploy/server-deploy.sh",
+  "parameters": {
+    "CommitSha": {
+      "type": "String",
+      "description": "Commit to deploy (40-character SHA)",
+      "allowedPattern": "^[0-9a-f]{40}$"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "deploy",
+      "inputs": {
+        "timeoutSeconds": "900",
+        "runCommand": [
+          "set -e",
+          "export HOME=/root",
+          "cd /opt/portran/dashboard",
+          "git fetch --quiet origin",
+          "git checkout --quiet --detach {{ CommitSha }}",
+          "bash deploy/server-deploy.sh"
+        ]
+      }
+    }
+  ]
+}

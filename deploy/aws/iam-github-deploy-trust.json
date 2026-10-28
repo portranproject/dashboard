@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GitHubActionsDashboardMainOnly",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::409852989722:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:portranproject@337596278/dashboard@1421775186:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}

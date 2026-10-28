@@ -54,3 +54,34 @@ def validation_errors(msg: Any) -> list[str]:
 
 def is_valid(msg: Any) -> bool:
     return get_validator().is_valid(msg)
+
+
+# 메시지 종류별 시각(ns) 필드. 첫 번째가 그 메시지의 대표 시각(보내는 시점)이다.
+TIME_FIELDS = {
+    "metric": ("ts",),
+    "overhead": ("ts",),
+    "detection": ("ts_detected", "ts_first_evidence"),
+    "attack_run": ("ts_start", "ts_end"),
+}
+
+
+def message_time(msg: dict) -> int:
+    """메시지의 대표 시각: metric·overhead는 ts, detection은 ts_detected, attack_run은 ts_start."""
+    return msg[TIME_FIELDS[msg["type"]][0]]
+
+
+def shift_times(msg: dict, delta_ns: int) -> dict:
+    """모든 시각 필드를 delta_ns만큼 옮긴 사본. 시각 사이의 간격은 그대로다."""
+    out = dict(msg)
+    for name in TIME_FIELDS[msg["type"]]:
+        out[name] = msg[name] + delta_ns
+    return out
+
+
+def count_key(msg: dict) -> str:
+    """로그용 분류: metric:ekpm, metric:kpm, detection:full, detection:kpm_only, attack_run, overhead."""
+    if msg["type"] == "metric":
+        return f"metric:{msg['kind']}"
+    if msg["type"] == "detection":
+        return f"detection:{msg['ruleset']}"
+    return msg["type"]

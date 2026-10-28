@@ -2,6 +2,20 @@
 
 이 문서는 Claude Code가 이 저장소에서 작업할 때 따르는 기준이다. 작업 전에 끝까지 읽는다.
 
+## 0. 작업 시작 전 필수: 참고 논문 읽기
+
+**세션을 시작하면(첫 컨텍스트에서) 코드를 보거나 고치기 전에 `reference/`의 두 논문을 먼저 끝까지 읽는다.** 이 저장소의 지표 정의, 공격 유형, 탐지 규칙, 평가 방식의 근거가 이 논문들이다.
+
+| 파일 | 논문 | 이 저장소에서 쓰는 곳 |
+|---|---|---|
+| `reference/TeleRAN.pdf` | TeleRAN: eBPF 기반 OpenRAN 텔레메트리 (FutureG 2026) | Table I → eKPM, Table II → 표준 KPM. mock 지표, `schema/SCHEMA.md` 6절, 대시보드 |
+| `reference/5GSpector.pdf` | 5G-Spector: O-RAN L3 공격 탐지 (NDSS 2024) | MobiFlow 텔레메트리, L3 공격 유형과 탐지 규칙, 탐지 지연·오버헤드 평가 방식 |
+
+- 요약과 이 저장소와의 대응 관계는 `reference/README.md`에 있다. 요약만 읽고 넘어가지 말고 원문을 읽는다.
+- 대화가 길어져 요약된 뒤 논문 내용이 필요하면 해당 부분을 다시 읽는다.
+- PDF를 읽을 수 없으면(Read 도구가 `pdftoppm`을 못 찾는 경우) 사용자에게 별도 Ubuntu 터미널에서 `sudo apt install poppler-utils`를 실행해 달라고 요청한다.
+- 논문과 이 문서의 내용이 다르면 임의로 고르지 말고 사용자에게 묻는다.
+
 ## 1. 프로젝트 배경
 
 - 팀 프로젝트: **O-RAN 기반 5G 기지국 위협 탐지 솔루션** (5인, 최종 발표 2026-12-04)
@@ -39,7 +53,7 @@
 | 의존성 | `influxdb-client`(InfluxDB 2.x용), `pyyaml`, `jsonschema`, `pytest` |
 | DB | InfluxDB 2.7 (Docker), 타임스탬프 precision = ns |
 | 시각화 | Grafana OSS (Docker), datasource와 대시보드는 **provisioning 파일로 코드화** |
-| 실행 | `docker compose` (InfluxDB + Grafana), Python 프로그램은 호스트에서 실행 |
+| 실행 | `docker compose` (InfluxDB + Grafana), Python 프로그램은 호스트에서 실행. AWS 배포만 collector 등도 컨테이너로 띄운다(`docker-compose.aws.yml`, M7) |
 
 - Docker 이미지는 `latest` 대신 고정 버전 태그를 쓴다.
 - 접속 정보(토큰, org, bucket, 포트)는 `.env`로 관리하고 `.env.example`만 커밋한다.
@@ -50,9 +64,21 @@
 .
 ├── CLAUDE.md
 ├── README.md                     # 실행 방법 (처음 보는 팀원 기준)
+├── reference/                    # 참고 논문 (0절). 작업 전에 읽는다
+│   ├── README.md                 # 논문 요약, 이 저장소와의 대응 관계
+│   ├── TeleRAN.pdf
+│   └── 5GSpector.pdf
 ├── docs/
-│   └── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+│   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+│   └── deploy.md                 # AWS(EC2) 배포 절차 (M7)
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
+│       └── deploy.yml            # CD: main push 시 EC2 배포 (M7)
+├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7)
 ├── docker-compose.yml
+├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
+├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)
 ├── .env.example
 ├── requirements.txt
 ├── schema/
@@ -146,7 +172,7 @@
 | `detection` | `ts_detected` | attack_type, severity, ruleset, rule_id, node | event_id, rule_version, ts_first_evidence, latency_ms, cell, ue_list(JSON 문자열), evidence_json(JSON 문자열) |
 | `attack_run` | `ts_start` | scenario | run_id, ts_end, params_json |
 | `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
-| `eval_result` | 평가 실행 시각 | scenario, ruleset | detection_rate, precision, fp_count, fp_per_hour, latency_p50_ms, latency_p95_ms, runs |
+| `eval_result` | 평가 실행 시각 | scenario, ruleset, data_source | detection_rate, precision, fp_count, fp_per_hour, latency_p50_ms, latency_p95_ms, runs, (M5에서 추가) tp, fn, detections, onset_p50_ms, onset_p95_ms, eval_id, window_from, window_to, grace_sec |
 
 - `event_id`, `run_id`처럼 값마다 고유한 것은 tag로 두지 않는다(cardinality 폭증 방지).
 - 테스트베드는 UE 수가 적으므로 `ue`는 metric에서 tag로 둔다.
@@ -161,8 +187,11 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 ```
 
 동작:
-1. **평상시**: 지표가 `scenarios.yaml`에 정의한 기본값 주변에서 약한 노이즈로 흔들린다. 주기 1초.
-2. **공격 구간**: `attack_run`을 내보내고, 그 구간 동안 **해당 eKPM 지표는 크게 튀지만 표준 KPM은 거의 변하지 않게(또는 약하게만)** 만든다. 프로젝트 핵심 주장을 화면으로 보여주는 데이터다.
+1. **평상시**: 정상 UE들이 등록·연결·해제·일시 중지·재개·재수립 같은 RRC/NAS 절차를 무작위 간격으로 반복한다. 같은 절차에서 eKPM(메시지 처리마다, UE별)과 표준 KPM(1초 주기, 셀 단위 집계)을 함께 뽑아 두 지표가 서로 맞도록 한다.
+2. **공격 구간**: `attack_run`을 내보내고, 공격 절차(가짜 UE, 공격자 UE, 메시지 변조)를 일으킨다. 표준 KPM은 **공격별로 현실대로** 변한다. 프로젝트 핵심 주장을 화면으로 보여주는 데이터다.
+   - `RRC_SIGNALING_STORM` (= 5G-Spector의 BTS Resource Depletion): 위조 연결이 인증 요청까지 진행한 뒤 응답 없이 몇 초 머물다 해제된다. KPM(연결 시도·성공, 연결 UE 수)도 크게 오르지만, 어떤 UE가 가짜인지(transient UE)는 eKPM만 안다.
+   - `ABNORMAL_UE_ATTACH`: KPM은 연결 시도가 조금 늘 뿐이고, eKPM에 반복되는 인증 실패·등록 거절과 바뀌는 S-TMSI가 보인다.
+   - `F1AP_MSG_TAMPER`: KPM은 거의 그대로이고, eKPM에서 보안 알고리즘이 NEA0/NIA0으로 떨어지고 C-RNTI가 어긋난다.
 3. **탐지 이벤트**:
    - `ruleset=full`: 공격 시작 후 200~800ms 지연, 높은 탐지율(예: 95%)
    - `ruleset=kpm_only`: 더 긴 지연, 낮은 탐지율(예: 30~50%)
@@ -172,9 +201,10 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 6. 지표 이름·기본값·공격 시 변화량·탐지율 같은 숫자는 전부 `scenarios.yaml`에 두고 코드에 하드코딩하지 않는다.
 7. 내보내는 모든 메시지는 JSON Schema 검증을 통과해야 한다.
 
-가안 지표 (`scenarios.yaml`에 정의):
-- eKPM: `rrc_setup_req_rate`, `rrc_setup_fail_ratio`, `ue_attach_attempt_rate`, `f1ap_msg_rate`, `f1ap_malformed_count`
-- 표준 KPM: `RRU.PrbUsedDl`, `DRB.UEThpDl`, `RRC.ConnMean`
+지표 (TeleRAN 논문 기준, `scenarios.yaml`에 정의, 이름·코드는 가안이라 eBPF 팀과 확정 예정):
+- eKPM = 논문 Table I (UE별 보안 텔레메트리, `labels.ue`별, 값은 숫자 코드 또는 식별자): `ue_c_rnti`, `ue_s_tmsi`, `ue_cipher_alg`, `ue_integrity_alg`, `ue_rrc_state`, `ue_nas_state`, `ue_rrc_sec_state`, `ue_nas_sec_state`, `rrc_msg_id`, `nas_msg_id`
+- 표준 KPM = 논문 Table II (3GPP TS 28.552, 셀 단위): `RRC.ConnEstabAtt`, `RRC.ConnEstabSucc`, `RRC.ConnEstabFailCause`, `RRC.RelWithoutSuspendConfig`, `UECNTX.ConnEstabAtt`, `UECNTX.ConnEstabSucc`, `RRC.ReEstabAtt`, `RRC.ReEstabSuccWithUeContext`, `RRC.ResumeAtt`, `RRC.ResumeSucc`, `RRC.ConnMean`, `RRC.ConnMax`, `RRC.InactiveConnMean`, `RRC.InactiveConnMax`
+- 상태·알고리즘·메시지 ID의 숫자 코드표는 `scenarios.yaml`의 `codes`와 `schema/SCHEMA.md` 6절에 있다.
 
 ## 8. collector 요구사항
 
@@ -250,6 +280,11 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
    - **남은 일·TODO**
    
    문서 맨 위의 "열린 항목"(팀 확인 대기, 미정 사항)은 마일스톤과 상관없이 항상 최신으로 유지한다. 해결된 항목은 지우지 말고 해결 내용과 함께 해결됨으로 옮긴다.
+9. **브랜치 규칙.**
+   - `main`: 배포·발표용. 직접 커밋하지 않고 `dev` → `main` PR로만 반영한다.
+   - `dev`: 개발 통합 브랜치 (GitHub default 브랜치).
+   - `feat/dashboard-M<n>`: 마일스톤 작업 브랜치. 항상 최신 `dev`에서 만들고, 끝나면 `dev`로 PR을 연다. 마일스톤이 아닌 작은 수정은 `fix/<내용>`, `docs/<내용>`.
+   - push, PR 생성·병합은 사용자 확인을 받고 한다.
 
 ## 13. 마일스톤
 
@@ -261,3 +296,4 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
 | M4 | 실시간 관제 대시보드 | mock 데이터로 9.1의 모든 패널 표시, annotation 동작 |
 | M5 | evaluator + 성능 검증 대시보드 | 경계 사례 테스트 통과, `eval_result` 저장, 9.2 패널 표시 |
 | M6 | replay | 녹화 파일 재생 시 실시간 대시보드에 표시 |
+| M7 | AWS 배포 · CI/CD. AWS에는 대시보드 스택(InfluxDB + Grafana + collector)만 올리고, 테스트베드 실시간 경로(eBPF → 탐지 엔진)는 로컬에 둔다 | CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과. AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시. CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 |

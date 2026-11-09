@@ -340,7 +340,8 @@ EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기�
 | `Not authorized to perform sts:AssumeRoleWithWebIdentity` | 첫 단계 "OIDC 토큰의 sub 확인"에 찍힌 값과 신뢰 정책의 `sub`가 글자 그대로 같은지. `main`이 아닌 브랜치에서 실행했는지 |
 | `AccessDeniedException ... ssm:SendCommand` | 인라인 정책의 리전·계정·인스턴스 ID·문서 이름 |
 | `InvalidInstanceId` | 인스턴스가 중지됐거나 SSM 에이전트가 오프라인(Session Manager로 접속되는지) |
-| `== 결과: Failed` | 로그의 "서버 출력"·"서버 오류 출력". 예: `.env에 COMPOSE_FILE ... 줄이 없습니다`, `실패 Grafana datasource` |
+| `== 결과: Failed` | 로그의 "서버 출력"·"서버 오류 출력". 예: `.env에 COMPOSE_FILE ... 줄이 없습니다`, `실패 Grafana datasource`. 헬스 체크는 하나가 실패해도 모두 돌고 맨 끝 `== 헬스 체크 실패: …`에 실패한 것이 모인다. 컨테이너는 이미 새 커밋으로 떠 있다(되돌리지 않음) |
+| `실패 Grafana datasource (… 마지막 응답 HTTP 401)` | `.env`의 `GRAFANA_ADMIN_PASSWORD`가 Grafana에 실제로 저장된 비밀번호와 다르다. Grafana 비밀번호는 **처음 기동할 때만** `.env`에서 들어가고, 그 뒤 웹 화면에서 바꾸면 `.env`와 어긋난다. 웹에서 바꾼 비밀번호를 쓰려면 `.env`를 그 값으로 고치고, `.env` 값으로 맞추려면 `docker compose exec grafana grafana cli admin reset-admin-password "<.env의 비밀번호>"`. 그다음 Deploy 워크플로를 다시 실행 |
 
 ## 10. 탐지 엔진 수집 경로 `/ingest` (M9)
 

@@ -43,8 +43,10 @@ docker compose up -d --build --wait --wait-timeout 300
 docker image prune -f >/dev/null  # 다시 빌드하면서 남은 이전 이미지 정리
 
 # check <이름> <URL> <찾을 패턴> [curl 옵션...]: 60초까지 다시 시도한다(Grafana는 healthcheck가 없어 --wait가 기다려 주지 않음)
+# 하나가 실패해도 나머지를 모두 확인하고 맨 끝에서 실패로 끝낸다(어디가 문제인지 한 번에 보이도록)
+failed=()
 check() {
-  local name=$1 url=$2 pattern=$3
+  local name=$1 url=$2 pattern=$3 status
   shift 3
   for _ in $(seq 30); do
     if curl -fsS "$@" "$url" 2>/dev/null | grep -Eq "$pattern"; then
@@ -53,13 +55,16 @@ check() {
     fi
     sleep 2
   done
-  echo "  실패 $name ($url)" >&2
-  return 1
+  status=$(curl -s -o /dev/null -w '%{http_code}' "$@" "$url" 2>/dev/null || true)
+  if [[ -z $status || $status == 000 ]]; then status="연결 실패"; else status="마지막 응답 HTTP $status"; fi
+  echo "  실패 $name ($url, $status)" >&2
+  failed+=("$name")
 }
 
 echo "== 헬스 체크"
 check "InfluxDB" "http://localhost:${INFLUX_PORT:-8086}/health" '"status": *"pass"'
 check "Grafana" "http://localhost:${GRAFANA_PORT:-3000}/api/health" '"database": *"ok"'
+# HTTP 401이면 .env의 GRAFANA_ADMIN_PASSWORD가 Grafana에 실제로 저장된 비밀번호와 다르다(docs/deploy.md 문제 해결)
 check "Grafana datasource" "http://localhost:${GRAFANA_PORT:-3000}/api/datasources/uid/portran-influxdb/health" '"status": *"OK"' \
   -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD"
 # 공인 IP 주소로 검증하되 연결은 이 서버 안으로 보낸다(보안 그룹은 p4 CU 박스만 열어 두므로)
@@ -67,4 +72,8 @@ ingest_port=${INGEST_HTTPS_PORT:-443}
 check "/ingest (nginx TLS → collector)" "https://$ingest_ip:$ingest_port/healthz" '"status": *"ok"' \
   --cacert certs/ingest.crt --connect-to "$ingest_ip:$ingest_port:127.0.0.1:$ingest_port"
 docker compose ps --format 'table {{.Service}}\t{{.Status}}'
+if (( ${#failed[@]} )); then
+  echo "== 헬스 체크 실패: ${failed[*]}" >&2
+  exit 1
+fi
 echo "== 완료"

@@ -14,7 +14,7 @@ O-RAN 기반 5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
 - 탐지 엔진 레코드 형식의 기준: [`reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (탐지 엔진 담당, 11/05 확정)
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, mock 생성기, collector, 대시보드, evaluator, replay, AWS 배포) 완료. 지금은 탐지 엔진 연동 중이다(M8 수신·저장 → M9 AWS 앞단 → M10 대시보드 재구성).
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, mock 생성기, collector, 대시보드, evaluator, replay, AWS 배포), M8·M9(탐지 엔진 레코드 수신·저장, AWS `/ingest` HTTPS 경로 — 탐지 쪽 전송기 연동 시험 통과) 완료. 다음은 M10 대시보드 재구성이다.
 
 ## 준비물
 

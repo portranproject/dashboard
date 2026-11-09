@@ -12,7 +12,7 @@
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
 | M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
 | M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
-| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 진행 중 (브랜치 `feat/dashboard-M9`, 코드·문서·보안 그룹 끝, 배포·연동 시험 남음) | |
+| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 완료 (PR #22·#24, 배포 #23·#25, 탐지 쪽 전송기 연동 시험 통과) | 2026-11-09 |
 | M10 대시보드 재구성 · 옛 메시지 삭제 | 예정 | |
 
 ---
@@ -32,7 +32,6 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
 | Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
-| Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl` — 3초 묶음 `kpm2`·`hello`가 든 실제 전송 본문)가 받은 폴더(`탐지엔진-대시보드샘플/일반데이터/`)에 없다. 지금 `kpm2` 묶음은 27_ §4.1 예시 1줄로만 시험했다 | 탐지 엔진 (다시 받기) | M8 |
 | Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ② 단계 비교 재생 `X-Env`에 출처 붙이기(`p4-kpm-only`·`lab-kpm-only`). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
 | Q22 | `L3-20`(Blind DoS) 피해자 연결(`ues[].peers`)의 근거가 오지 않는다(샘플 3개 모두 공격 연결 UE 근거만). 27_ §6.3의 '피해자 타임라인 함께 그리기'를 하려면 피해자 근거가 필요 | 탐지 엔진 | `docs/dashboard-design.md` 7절 |
 | Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청')를 그대로 반영함 ② `/ingest`로 `ue_evt`·100 ms 원본 `kpm2`가 단독 줄로 오면 거부(전송기 `send_ue_evt`를 켜면 거부 로그만 쌓임) ③ `Content-Length` 없는 요청은 `411`(27_ §3 표대로면 전송기가 멈춤) | 탐지 엔진 | M8 D116·D121 |
@@ -48,6 +47,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 해결 |
 |---|---|---|
+| Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl`)를 받지 못해 `kpm2` 3초 묶음을 27_ 예시 1줄로만 시험함 | 11/09 연동 시험에서 탐지 쪽이 두 파일을 실제 전송기로 `X-Env: sample`로 보내 서버에 저장·녹화됨(`kpm2` 132, `hello` 2, 거부 0 — M9). 로컬 `tests/data/detection/`에는 아직 없음(필요하면 서버 녹화 `recordings/raw-20261109-072830-sample.jsonl`에서 꺼냄) |
 | T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
 | Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지 | 사용자 결정으로 바꿈 (D53~D55, 브랜치 `fix/mock-bts-depletion`) |
 | T1 | 실제 eKPM / KPM 지표 이름 | 11/04에 TeleRAN Table I·II의 24개로 고정했다가(D110·D111, 커밋 전), 탐지 쪽 27_ 확정(11/05)으로 바뀜: KPM2 = `kpm2`의 `cc`·`si` 키(Table II 이름 그대로), KPM1 = `ue_evt`(메시지 이름 문자열). SCHEMA.md 4절 (M8) |
@@ -911,11 +911,11 @@ M7 이후로 넘기는 것:
 
 ---
 
-## M9 — 탐지 엔진 연동 2: AWS 앞단 TLS · 연동 시험 (2026-11-09~, 브랜치 `feat/dashboard-M9`)
+## M9 — 탐지 엔진 연동 2: AWS 앞단 TLS · 연동 시험 (2026-11-09, 브랜치 `feat/dashboard-M9`, 완료)
 
 목표: 탐지 쪽 전송기(p4 CU 박스)가 `https://<대시보드 탄력적 IP>/ingest`로 보낸 레코드가 InfluxDB에 저장되게 한다(CLAUDE.md 13절). `feat/dashboard-M8`에서 브랜치를 만들었다가 M8 병합(PR #21) 뒤 `dev` 위로 옮겼다(rebase).
 
-### 한 일 (진행 중)
+### 한 일
 
 | 파일 | 변경 |
 |---|---|
@@ -944,7 +944,7 @@ M7 이후로 넘기는 것:
 | D141 | 서버 헬스 체크는 공인 IP 주소로 인증서를 검증하되 `curl --connect-to`로 서버 안(127.0.0.1)에 연결 | 보안 그룹이 443을 p4 CU 박스만 열어 두므로 서버 자신은 공인 IP로 못 들어옴 | 불필요 |
 | D142 | `nginx:1.30.5-alpine` | nginx 안정판 1.30 계열(짝수), 2026-09 빌드 — 고정 버전 태그(CLAUDE.md 3절) | 불필요 |
 
-### 확인 결과 (지금까지)
+### 확인 결과
 
 | 확인 | 결과 |
 |---|---|
@@ -953,17 +953,37 @@ M7 이후로 넘기는 것:
 | nginx 설정 | 우분투 nginx 1.24 패키지로 템플릿을 채워 `nginx -t` 통과 |
 | 로컬 종단 시험 | 그 nginx(127.0.0.1:18443)를 collector(`--dry-run --in http://127.0.0.1:18088`) 앞에 두고 CI와 같은 검사: `/healthz` ok, 그 밖 경로 404, 1.1 MB → 413, 엄격 TLS로 `T10` 샘플 두 번 → `accepted 667` / `duplicates 667`, collector를 멈추면 `/healthz`·`/ingest` 모두 503 |
 
-확인하지 못한 것: Docker로 띄운 `nginx:1.30.5-alpine` 컨테이너와 compose 전체(push 뒤 CI `aws-compose`에서 확인), 실제 EC2 배포·메타데이터 IP·보안 그룹, 탐지 쪽 전송기와의 연동.
+| CI (PR #22·#24 → `dev`, `dev` → `main`) | 사용자가 병합함. CI 결과(`aws-compose`의 Docker `nginx:1.30.5-alpine`·compose 전체 검사)는 이 세션에서 직접 보지 못했다(`gh` 없음) |
+| EC2 배포 (#23 → 재배포 #25) | #23 로그(사용자가 붙여 줌): 인증서 자동 생성(SAN `3.39.170.31`, 메타데이터 IP), `ingest`(nginx)·collector 기동 정상, Grafana 비밀번호 불일치로 `Grafana datasource` 확인만 실패. 서버 `.env`를 맞춘 뒤 #25 배포 — 사용자가 "배포 다 끝났어"로 알림(#25 로그는 보지 못함). `/ingest` 경로는 아래 연동 시험으로 확인 |
+| 바깥에서 | 대시보드 PC에서 443은 응답 없음(보안 그룹이 p4 CU 박스만 허용 — 의도대로), Grafana 3000은 정상 |
+
+**탐지 쪽 전송기 연동 시험** (2026-11-09 16:47 KST, p4 CU 박스 `43.202.191.147` → `https://3.39.170.31/ingest`, `X-Env: sample`, 전송기 `ran-detect-sender/1`)
+
+탐지 쪽이 11/05 샘플 34개(경보 경로 32 + 상시 경로 2)를 두 번 보냈다.
+
+| 확인 | 결과 |
+|---|---|
+| nginx 접속 기록 | `43.202.191.147 "POST /ingest" 200 "ran-detect-sender/1"` — 인증서 검증(전송기 `ca_file`)·보안 그룹·nginx → collector 정상 |
+| collector 통계 | 누적 수신 5,182 = 저장 2,591 + **중복 2,591**, 거부 0 — 두 번째 전송이 모두 중복으로 걸러짐 |
+| 녹화 | `recordings/raw-20261109-072830-sample.jsonl` 2,591줄, `rejected.jsonl` 없음 |
+| InfluxDB (`env=sample`) | `alert` 62 · `evidence` 2,394 · `gap` 1 · `hello` 2 · `kpm2` 132 = **2,591** — 샘플 분석표와 정확히 같음(경보 경로 32개 1,758 + `T10` 상시 693 + `SAN08` 상시 140). 점 수 = 줄 수라 덮어쓴 것 없음 |
+
+M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/ingest`로 보낸 레코드가 InfluxDB에 저장됨")을 충족했다. 상시 경로(`kpm2` 3초 묶음·`hello`)도 실제 전송기 출력으로 처음 확인됐다(Q19).
+
+아직 하지 않은 것: 분석 엔진과 함께 보내는 실측(`X-Env: p4`) — `session` 실제 형식·`ue_evt` 필드·Table II 나머지(T6)를 여기서 확인한다.
 
 ### 남은 일
 
-- [ ] 커밋·push → CI `aws-compose` 통과 확인
-- [ ] M9 PR (`feat/dashboard-M9` → `dev`) — M8 병합(PR #21) 뒤 `dev` 위로 옮김
+- [x] 커밋·push → CI `aws-compose` 통과 확인
+- [x] M9 PR (`feat/dashboard-M9` → `dev`, PR #22) — M8 병합(PR #21) 뒤 `dev` 위로 옮김
 - [x] (사용자, AWS 콘솔) 보안 그룹 인바운드 HTTPS 443, 소스 `43.202.191.147/32`(설명 `jesick`) — 2026-11-09 화면 확인
 - [x] (사용자) 대시보드 탄력적 IP = `3.39.170.31` 확인 (탐지 쪽 전송기 기본값과 같음, 2026-11-09)
 - [ ] 보안 그룹 점검: 같은 그룹에 소스 `49.1.157.235/32`의 **모든 트래픽** 규칙이 있다(설명 `nagyun-ho`). 문서(1-2절)는 3000만 여는 구성이라, 필요한 포트(3000, 시험용 443)로 줄이는 것을 권함 — 사용자 판단
 - [x] `dev` → `main` 병합 = EC2 배포 (PR #23, 2026-11-09). 배포 로그에서 PEM 확인 — SAN `3.39.170.31`, 2028-11-08까지, SHA-256 `AF:5D:C8:69:…:C4:99:A0`
   - 결과는 **Failed**: 인증서 생성·빌드·기동(nginx `ingest`, collector)은 정상이었고, 헬스 체크 `Grafana datasource`가 실패해 스크립트가 거기서 멈춤(`/ingest` 확인은 실행되지 않음). 원인은 Grafana 관리자 비밀번호를 웹에서 바꿔 서버 `.env`와 어긋난 것(사용자 확인). 코드와 무관
   - 고침(`fix/deploy-healthcheck`): 헬스 체크가 하나 실패해도 모두 돌고 끝에서 모아 실패, 실패 줄에 마지막 HTTP 코드. `docs/deploy.md` 문제 해결에 401 경우 추가
-- [ ] (사용자) 서버 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 바꾼 비밀번호로 맞추고 Deploy 다시 실행 → Success 확인
-- [ ] 탐지 쪽에 PEM·주소 전달(+ Q20 알릴 것) → 전송기 `--once` 연동 시험 → InfluxDB·녹화 확인 → M9 완료 기록
+- [x] (사용자) 서버 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 바꾼 비밀번호로 맞추고 다시 배포(PR #24 → #25)
+- [x] 탐지 쪽에 PEM·주소 전달 → 전송기 연동 시험 → InfluxDB·녹화 확인 → M9 완료 기록 (위 '탐지 쪽 전송기 연동 시험')
+- [ ] Q20 알릴 것이 탐지 쪽에 전달됐는지 확인 (연동 시험 안내문 초안에 넣음)
+- [ ] 실측: p4에서 분석 엔진 → 탐지 엔진 → 전송기, `X-Env: p4` (T6 확인)
+- [ ] 다음 마일스톤 M10 — 서버 InfluxDB의 `env=sample` 데이터로 대시보드 재구성을 시작할 수 있음(`docs/dashboard-design.md`)

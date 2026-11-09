@@ -27,6 +27,8 @@
 
 ### 1.1 테스트베드 환경 두 곳 = 대시보드의 데이터 출처
 
+원본 그림: [`docs/images/아키텍쳐.png`](docs/images/아키텍쳐.png). 아래는 그 내용을 글로 옮긴 것이다.
+
 ```
 ┌ AWS · 서울 리전(ap-northeast-2) ─────────────────────────────────────────┐
 │ 골든 AMI(공통 설치 이미지) ──복제──> 사람마다 CU·DU 세트 하나              │
@@ -110,7 +112,8 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   └── workflows/
 │       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
 │       └── deploy.yml            # CD: main push 시 EC2 배포 (M7)
-├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7)
+├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7),
+│                                 #   /ingest 앞단 nginx 설정(nginx/)과 인증서 스크립트(ingest-cert.sh) (M9)
 ├── docker-compose.yml
 ├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
 ├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)

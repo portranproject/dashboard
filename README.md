@@ -300,7 +300,7 @@ Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 
 대시보드 스택(InfluxDB + Grafana + collector)을 EC2 한 대에 올린다. 절차는 [`docs/deploy.md`](docs/deploy.md).
 
 - 로컬 실행 방법은 바뀌지 않는다. AWS에서만 [`docker-compose.aws.yml`](docker-compose.aws.yml)을 겹쳐 collector도 컨테이너([`Dockerfile`](Dockerfile))로 띄운다.
-- AWS에는 mock·replay 데이터만 넣는다. 테스트베드 실시간 경로(eBPF 에이전트, 탐지 엔진)는 테스트베드 LAN에 둔다.
+- 테스트베드 실시간 경로(eBPF 에이전트, 탐지 엔진)는 테스트베드에 둔다. 탐지 엔진 전송기가 HTTPS `POST /ingest`로 보내면 nginx(`ingest` 서비스, 443)가 TLS를 받아 collector로 넘긴다. 보안 그룹·인증서·확인 방법은 `docs/deploy.md` 10절(M9).
 - **CD**: `dev` → `main` PR을 병합하면 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)이 서버에 자동으로 배포하고 헬스 체크한다(GitHub OIDC → SSM, 액세스 키·열린 SSH 없음). 설정은 `docs/deploy.md` 9절.
 
 ## 메시지 검증

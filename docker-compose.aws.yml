@@ -4,7 +4,10 @@
 #
 # 기본 구성과 다른 점:
 #   - collector를 컨테이너로 띄운다 (로컬은 지금처럼 호스트에서 Python 실행)
-#   - InfluxDB와 collector UDP는 서버 안(127.0.0.1)에서만 받는다. 밖으로 여는 건 Grafana 3000뿐
+#   - InfluxDB와 collector UDP는 서버 안(127.0.0.1)에서만 받는다. 밖으로 여는 건 Grafana 3000과 ingest 443
+#   - ingest(nginx)가 443에서 TLS를 받아 collector의 POST /ingest로 넘긴다(M9, 탐지 엔진 전송기용).
+#     collector의 HTTP 포트는 compose 네트워크 안에만 있다. 443은 보안 그룹으로 p4 CU 박스 IP만 연다(docs/deploy.md 10절)
+#     인증서는 deploy/ingest-cert.sh가 certs/에 만든다(git 제외). 배포 스크립트가 없으면 만든다
 #   - mock·replay·evaluator는 tools 서비스로 필요할 때 실행한다
 #     docker compose run --rm tools python -m mock.generator --duration 600 --seed 42
 #
@@ -30,11 +33,15 @@ services:
         condition: service_healthy
     environment:
       INFLUX_URL: http://influxdb:8086
-      COLLECTOR_UDP_HOST: 0.0.0.0
-    command: ["python", "-m", "collector.collector"]
-    # collector는 InfluxDB 확인이 끝난 뒤 UDP 포트를 연다. 포트가 열렸으면(/proc/net/udp) 받을 준비가 된 것
+      COLLECTOR_UDP_PORT: ${COLLECTOR_UDP_PORT:-9999}
+      COLLECTOR_HTTP_PORT: ${COLLECTOR_HTTP_PORT:-8088}
+    # mock·replay는 UDP, 탐지 엔진 전송기는 ingest(nginx)를 거쳐 HTTP(POST /ingest)
+    command: ["python", "-m", "collector.collector",
+              "--in", "udp://0.0.0.0:${COLLECTOR_UDP_PORT:-9999}",
+              "--in", "http://0.0.0.0:${COLLECTOR_HTTP_PORT:-8088}"]
+    # collector는 InfluxDB 확인이 끝난 뒤 입력을 연다. UDP 포트가 열렸고(/proc/net/udp) /healthz가 답하면 받을 준비가 된 것
     healthcheck:
-      test: ["CMD", "python", "-c", "import os,sys; p=':%04X' % int(os.environ.get('COLLECTOR_UDP_PORT', '9999')); sys.exit(0 if any(l.split()[1].endswith(p) for l in open('/proc/net/udp').readlines()[1:]) else 1)"]
+      test: ["CMD", "python", "-c", "import os,sys,urllib.request; p=':%04X' % int(os.environ['COLLECTOR_UDP_PORT']); udp=any(l.split()[1].endswith(p) for l in open('/proc/net/udp').readlines()[1:]); http=urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ['COLLECTOR_HTTP_PORT'], timeout=2).status == 200; sys.exit(0 if udp and http else 1)"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -44,6 +51,23 @@ services:
       - "127.0.0.1:${COLLECTOR_UDP_PORT:-9999}:${COLLECTOR_UDP_PORT:-9999}/udp"
     volumes:
       - ./recordings:/app/recordings
+
+  # 탐지 엔진 전송기 → https://<공인 IP>/ingest → collector (M9). 설정은 deploy/nginx/ingest.conf.template
+  ingest:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    depends_on:
+      collector:
+        condition: service_healthy
+    # nginx 공식 이미지가 기동할 때 템플릿의 ${...}를 이 값으로 채운다. .env 전체(토큰 등)는 넘기지 않는다
+    environment:
+      COLLECTOR_HTTP_PORT: ${COLLECTOR_HTTP_PORT:-8088}
+      COLLECTOR_HTTP_MAX_BYTES: ${COLLECTOR_HTTP_MAX_BYTES:-1048576}
+    ports:
+      - "${INGEST_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/ingest.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./certs:/etc/nginx/certs:ro
 
   tools:
     <<: *app

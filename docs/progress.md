@@ -11,8 +11,8 @@
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
 | M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
-| M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (브랜치 `feat/dashboard-M8`, push 전) | 2026-11-09 |
-| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 예정 | |
+| M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
+| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 진행 중 (브랜치 `feat/dashboard-M9`, 코드·문서·보안 그룹 끝, 배포·연동 시험 남음) | |
 | M10 대시보드 재구성 · 옛 메시지 삭제 | 예정 | |
 
 ---
@@ -901,10 +901,66 @@ M7 이후로 넘기는 것:
 ### 남은 일·TODO
 
 - [x] 커밋 (`feat/dashboard-M8`, 2026-11-09)
-- [ ] push·PR (`feat/dashboard-M8` → `dev`) — 사용자 확인 후
+- [x] push·PR (`feat/dashboard-M8` → `dev`, PR #21 병합, 2026-11-09)
 - [ ] Q19 상시 경로 샘플 2개 다시 받기 → `tests/data/detection/`에 넣고 통합 테스트에 포함
 - [ ] Q20 탐지 쪽에 알리기 (중복 키·`X-Env` 반영, `ue_evt` 단독 거부, `411`)
 - [ ] M9: Caddy(443, TLS 1.2+, 자체 서명 인증서 IP SAN) → collector `127.0.0.1:8088`, 보안 그룹에 p4 CU 박스 `43.202.191.147`, `docker-compose.aws.yml`에 `--in http://…`와 헬스 체크, `.pem` 전달, 탐지 쪽 전송기와 연동 시험
 - [ ] M10: 대시보드 — 설계 초안 `docs/dashboard-design.md`(관제·성능, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
 - [ ] T6 첫 실측 녹화 뒤 확인 (`session` 형식, `ue_evt` 필드, Table II 나머지)
 - [ ] `docs/정리.md`(11/04 답변서, 이미 보냄)와 받은 폴더 `탐지엔진-대시보드샘플/`을 저장소에 남길지 정리
+
+---
+
+## M9 — 탐지 엔진 연동 2: AWS 앞단 TLS · 연동 시험 (2026-11-09~, 브랜치 `feat/dashboard-M9`)
+
+목표: 탐지 쪽 전송기(p4 CU 박스)가 `https://<대시보드 탄력적 IP>/ingest`로 보낸 레코드가 InfluxDB에 저장되게 한다(CLAUDE.md 13절). `feat/dashboard-M8`에서 브랜치를 만들었다가 M8 병합(PR #21) 뒤 `dev` 위로 옮겼다(rebase).
+
+### 한 일 (진행 중)
+
+| 파일 | 변경 |
+|---|---|
+| `deploy/nginx/ingest.conf.template` (새 파일) | 443 TLS(1.2·1.3) → `collector:${COLLECTOR_HTTP_PORT}`로 `/ingest`·`/healthz`만 넘김, 그 밖 404, 본문 `${COLLECTOR_HTTP_MAX_BYTES}` 넘으면 413, 502·504 → 503, `X-Real-IP` |
+| `deploy/ingest-cert.sh` (새 파일) | 자체 서명 인증서(SAN = 공인 IP) 생성. 같은 IP면 그대로, 다르면 옛 것을 `old-<시각>/`으로 옮기고 새로. 새로 만들면 PEM 출력 |
+| `docker-compose.aws.yml` | `ingest` 서비스(`nginx:1.30.5-alpine`, 443, 인증서·템플릿 마운트). collector에 `--in udp://…`·`--in http://0.0.0.0:8088`, 헬스 체크에 `/healthz` |
+| `deploy/server-deploy.sh` | 배포 전에 인증서 확인·생성(공인 IP = `.env` `INGEST_PUBLIC_IP` 또는 EC2 메타데이터), 헬스 체크에 HTTPS `/ingest` 경로 |
+| `.env.example` · `.gitignore` | `COLLECTOR_HTTP_PORT`, `INGEST_HTTPS_PORT`·`INGEST_PUBLIC_IP`·`INGEST_CERT_DAYS` · `certs/` 제외 |
+| `collector/ingest.py` | 거부 로그 `source`에 앞단이 붙인 `X-Real-IP`(전송기 주소) 기록 |
+| `.github/workflows/ci.yml` | `aws-compose` 작업: 인증서(127.0.0.1) 만들고 띄운 뒤 HTTPS 경로 검사 — collector 포트 비공개, `/healthz`, 404, 413, 엄격한 TLS 검증으로 샘플 두 번(667 저장 → 667 중복), InfluxDB `env=ci` 건수, collector를 멈추면 503 |
+| `tests/test_deploy.py` (새 파일) | 인증서가 파이썬 엄격 검증 통과·다른 IP 거부·재사용·교체·잘못된 IP 거부, compose·nginx 설정 검사 (11개) |
+| `tests/test_ingest.py` | `X-Real-IP` 기록 |
+| `docs/deploy.md` | 구성 그림·열린 포트, 10절(보안 그룹, 인증서, 확인, 문제 해결) |
+| `CLAUDE.md` · `README.md` | 디렉터리 구조, AWS 배포 설명 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D135 | 앞단은 Caddy(답변서 D2③에서 제안) 대신 **nginx** | 도메인 없이 IP로 접속하면 SNI가 없는데, nginx는 서버 블록의 인증서 하나를 그대로 쓴다(Caddy는 이름으로 인증서를 고르는 방식이라 따로 설정이 필요). 413·503을 앞단에서 정확히 낼 수 있고 `nginx -t`로 설정을 검사할 수 있다. 전송기 쪽에서 보이는 차이는 없다 | 불필요 |
+| D136 | nginx가 낸 502·504는 503으로 바꿔 답함 | 전송기는 503·연결 실패·시간 초과만 다시 보내고 그 밖의 코드는 설정 문제로 보고 멈춘다(27_ §3). 배포로 collector가 잠깐 내려가도 전송이 멈추지 않게 | 불필요 |
+| D137 | nginx가 collector 주소를 요청마다 Docker DNS(`127.0.0.11`)로 찾음 | 배포 때 collector 컨테이너가 다시 만들어지면 IP가 바뀔 수 있는데, nginx는 처음 찾은 주소를 계속 쓴다 | 불필요 |
+| D138 | 인증서: EC P-256 자체 서명, SAN = 공인 IP, `basicConstraints=critical,CA:TRUE`·`keyUsage=keyCertSign`, 730일(`INGEST_CERT_DAYS`) | 자체 서명 인증서가 곧 전송기의 신뢰 기준(`ca_file`). 파이썬 3.13+의 엄격한 검증(`VERIFY_X509_STRICT`)도 통과하게 함(테스트로 확인) | 불필요 |
+| D139 | 배포 스크립트가 인증서를 자동으로 만든다(없거나 IP가 바뀌었을 때만). 공인 IP는 `INGEST_PUBLIC_IP`, 비면 EC2 메타데이터(IMDSv2). 새로 만들면 PEM을 배포 로그에 출력 | 서버에 따로 들어가 만들 필요가 없음. PEM은 공개 정보라 로그에 나와도 됨. 개인 키는 서버 `certs/`에만(600) | 불필요 |
+| D140 | collector HTTP 포트(8088)는 호스트에 열지 않고, nginx 컨테이너에는 `.env` 전체가 아니라 필요한 값 2개만 넘김 | 바깥에서 TLS를 건너뛰고 collector로 바로 가는 길을 없앰. nginx에 InfluxDB 토큰 등이 들어가지 않게 | 불필요 |
+| D141 | 서버 헬스 체크는 공인 IP 주소로 인증서를 검증하되 `curl --connect-to`로 서버 안(127.0.0.1)에 연결 | 보안 그룹이 443을 p4 CU 박스만 열어 두므로 서버 자신은 공인 IP로 못 들어옴 | 불필요 |
+| D142 | `nginx:1.30.5-alpine` | nginx 안정판 1.30 계열(짝수), 2026-09 빌드 — 고정 버전 태그(CLAUDE.md 3절) | 불필요 |
+
+### 확인 결과 (지금까지)
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 316 passed, 2 failed (M8과 같은 Grafana 401 — 로컬 환경) |
+| 인증서 (`tests/test_deploy.py`) | 파이썬 엄격 검증으로 TLS 연결 성공, 다른 IP의 인증서는 검증 실패, 같은 IP면 그대로·다른 IP면 교체(옛 것 보관), 잘못된 IP 거부 |
+| nginx 설정 | 우분투 nginx 1.24 패키지로 템플릿을 채워 `nginx -t` 통과 |
+| 로컬 종단 시험 | 그 nginx(127.0.0.1:18443)를 collector(`--dry-run --in http://127.0.0.1:18088`) 앞에 두고 CI와 같은 검사: `/healthz` ok, 그 밖 경로 404, 1.1 MB → 413, 엄격 TLS로 `T10` 샘플 두 번 → `accepted 667` / `duplicates 667`, collector를 멈추면 `/healthz`·`/ingest` 모두 503 |
+
+확인하지 못한 것: Docker로 띄운 `nginx:1.30.5-alpine` 컨테이너와 compose 전체(push 뒤 CI `aws-compose`에서 확인), 실제 EC2 배포·메타데이터 IP·보안 그룹, 탐지 쪽 전송기와의 연동.
+
+### 남은 일
+
+- [ ] 커밋·push → CI `aws-compose` 통과 확인
+- [ ] M9 PR (`feat/dashboard-M9` → `dev`) — M8 병합(PR #21) 뒤 `dev` 위로 옮김
+- [x] (사용자, AWS 콘솔) 보안 그룹 인바운드 HTTPS 443, 소스 `43.202.191.147/32`(설명 `jesick`) — 2026-11-09 화면 확인
+- [x] (사용자) 대시보드 탄력적 IP = `3.39.170.31` 확인 (탐지 쪽 전송기 기본값과 같음, 2026-11-09)
+- [ ] 보안 그룹 점검: 같은 그룹에 소스 `49.1.157.235/32`의 **모든 트래픽** 규칙이 있다(설명 `nagyun-ho`). 문서(1-2절)는 3000만 여는 구성이라, 필요한 포트(3000, 시험용 443)로 줄이는 것을 권함 — 사용자 판단
+- [ ] `dev` → `main` 병합 = EC2 배포 (확인 후). 배포 로그에서 PEM 확인
+- [ ] 탐지 쪽에 PEM·주소 전달(+ Q20 알릴 것) → 전송기 `--once` 연동 시험 → InfluxDB·녹화 확인 → M9 완료 기록

@@ -4,18 +4,21 @@
 범위와 이유는 `docs/progress.md` M7의 결정 D85~D87에 있다.
 
 - **AWS에 올리는 것**: 원격에서 대시보드를 보고, mock·replay 데이터로 시연하고, 평가 리포트를 만드는 용도
-- **올리지 않는 것**: 테스트베드 실시간 경로(CU/DU, eBPF 에이전트, 탐지 엔진). 이것들은 테스트베드 LAN에 둔다
-- **AWS 데이터는 mock 또는 replay다.** 성능 결과로 쓰지 않는다(CLAUDE.md 12절 7항)
+- **올리지 않는 것**: 테스트베드 실시간 경로(CU/DU, eBPF 에이전트, 탐지 엔진). 이것들은 테스트베드(AWS의 CU·DU 세트, 연구실)에 둔다(CLAUDE.md 1.1절)
+- **탐지 엔진 데이터**는 테스트베드 CU의 전송기가 HTTPS `POST /ingest`로 보낸다(M9, 10절). 지금은 AWS 테스트베드 `p4`만 받는다
+- **mock·replay 데이터는 성능 결과로 쓰지 않는다**(CLAUDE.md 12절 7항)
 
 ## 구성
 
 ```
-내 PC 브라우저 ──(TCP 3000, 내 IP만)──> EC2 (Ubuntu 24.04, t3.small, 서울 리전)
-                                        └─ docker compose  (docker-compose.yml + docker-compose.aws.yml)
-                                           ├─ grafana    0.0.0.0:3000   ← 보안 그룹이 내 IP만 허용
-                                           ├─ influxdb   127.0.0.1:8086 ← 서버 안에서만
-                                           ├─ collector  127.0.0.1:9999/udp ← 서버 안에서만
-                                           └─ tools      (필요할 때 실행: mock, replay, evaluator)
+내 PC 브라우저 ──(TCP 3000, 내 IP만)──────────> EC2 (Ubuntu 24.04, t3.small, 서울 리전)
+p4 CU 박스 전송기 ──(TCP 443, p4 IP만, HTTPS)──>  └─ docker compose  (docker-compose.yml + docker-compose.aws.yml)
+                                                     ├─ grafana    0.0.0.0:3000   ← 보안 그룹이 내 IP만 허용
+                                                     ├─ ingest     0.0.0.0:443    ← 보안 그룹이 p4 CU 박스만 허용 (nginx, TLS, M9)
+                                                     │    └─> collector:8088 (POST /ingest, compose 네트워크 안에서만)
+                                                     ├─ influxdb   127.0.0.1:8086 ← 서버 안에서만
+                                                     ├─ collector  127.0.0.1:9999/udp ← 서버 안에서만
+                                                     └─ tools      (필요할 때 실행: mock, replay, evaluator)
 서버 접속: SSH 대신 SSM Session Manager (22번 포트를 열지 않는다)
 코드 받기: GitHub 배포 키(읽기 전용)
 ```
@@ -25,7 +28,7 @@
 | 리전 | 서울 `ap-northeast-2` |
 | 인스턴스 | t3.small (2 vCPU, 2GiB) + 스왑 2GiB |
 | 디스크 | gp3 30GiB |
-| 열린 포트 | TCP 3000 (내 IP만) |
+| 열린 포트 | TCP 3000 (내 IP만), TCP 443 (p4 CU 박스 `43.202.191.147`만, M9) |
 | 배포 브랜치 | CD가 생기기 전 수동 배포는 `dev`, CD 이후는 `main` |
 
 콘솔 메뉴 이름은 한국어 콘솔 기준이고, 괄호 안은 영어 콘솔 이름이다.
@@ -285,7 +288,8 @@ EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기�
 
 - GitHub에 주는 권한은 "아무 셸 명령 실행"이 아니라 **배포 전용 문서 하나 실행**이다. 문서는 40자리 커밋 SHA만 받는다(`allowedPattern`).
 - `portranproject/dashboard`의 **`main`에서 돈 워크플로만** 역할을 받을 수 있다(신뢰 정책의 `sub` 조건).
-- 열린 포트는 그대로 Grafana 3000뿐이다. 서버는 배포 키로 GitHub에서 코드를 받는다(D104).
+- CD가 여는 포트는 없다(Grafana 3000, M9부터 `/ingest` 443은 보안 그룹에서 손으로 연다). 서버는 배포 키로 GitHub에서 코드를 받는다(D104).
+- 배포 스크립트가 `/ingest` 인증서를 확인하고 없으면 만든다(10-2절). 새로 만들면 공개 인증서(PEM)가 Actions 로그에 나온다.
 - 설정 JSON은 `deploy/aws/`에 있다. 콘솔에 붙여 넣는 원본이므로 콘솔에서 바꾸면 이 파일도 같이 고친다.
 
 처음 한 번만 아래를 설정한다.
@@ -337,6 +341,80 @@ EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기�
 | `AccessDeniedException ... ssm:SendCommand` | 인라인 정책의 리전·계정·인스턴스 ID·문서 이름 |
 | `InvalidInstanceId` | 인스턴스가 중지됐거나 SSM 에이전트가 오프라인(Session Manager로 접속되는지) |
 | `== 결과: Failed` | 로그의 "서버 출력"·"서버 오류 출력". 예: `.env에 COMPOSE_FILE ... 줄이 없습니다`, `실패 Grafana datasource` |
+
+## 10. 탐지 엔진 수집 경로 `/ingest` (M9)
+
+탐지 쪽 전송기가 테스트베드 CU 박스에서 HTTPS로 레코드를 보낸다(약속은 `reference/detection/27_` §3, 받는 쪽 규칙은 `schema/SCHEMA.md` 2절).
+
+```
+p4 CU 박스 (탄력적 IP 43.202.191.147)
+  │ HTTPS POST https://<대시보드 탄력적 IP>/ingest  (X-Env: p4, 토큰 없음)
+  ▼
+보안 그룹 portran-dashboard ── 443은 p4 CU 박스 IP만
+  ▼
+ingest (nginx 컨테이너, 443) ── TLS 1.2+ 자체 서명 인증서(이름 = 대시보드 공인 IP), 1 MiB 넘으면 413
+  │ http://collector:8088/ingest  (compose 네트워크 안, 호스트에 안 열림)
+  ▼
+collector ── 검증·중복 제거 → 녹화 recordings/raw-<시각>-p4.jsonl → InfluxDB → 200 {"accepted","rejected","duplicates"}
+```
+
+- 토큰은 쓰지 않는다. **HTTPS + 보안 그룹 IP 제한**으로 받는다(11/02 합의).
+- collector가 재시작 중이면 nginx가 `503`으로 답한다(전송기는 `503`이면 다시 보내고, 그 밖의 오류 코드는 설정 문제로 보고 멈추기 때문).
+
+### 10-1. 보안 그룹에 443 열기 (처음 한 번)
+
+**EC2 → 보안 그룹 → `portran-dashboard` → 인바운드 규칙 편집 → 규칙 추가**
+
+| 유형 | 포트 | 소스 | 설명 |
+|---|---|---|---|
+| HTTPS | 443 | 사용자 지정 `43.202.191.147/32` | `ingest - p4 CU (탐지 엔진 전송기)` |
+
+- `0.0.0.0/0`(모든 곳)으로 열지 않는다. 토큰이 없어서 IP 제한이 유일한 접근 제어다.
+- 내 PC에서 시험하려면 잠깐 **내 IP**를 하나 더 넣고, 시험이 끝나면 지운다.
+- 대시보드 주소(탄력적 IP)가 탐지 쪽 전송기 기본값 `3.39.170.31`(27_ §3)과 같은지 확인한다. 다르면 탐지 쪽에 새 주소를 알린다.
+
+### 10-2. 인증서
+
+`deploy/server-deploy.sh`가 배포할 때마다 `deploy/ingest-cert.sh`를 부른다.
+
+- `certs/ingest.crt`(공개 인증서)·`certs/ingest.key`(개인 키)가 없거나, 인증서의 IP가 지금 공인 IP와 다르면 새로 만든다. 같으면 그대로 둔다.
+- 공인 IP는 `.env`의 `INGEST_PUBLIC_IP`. 비워 두면 EC2 메타데이터에서 읽는다(탄력적 IP).
+- `certs/`는 git에 없다(`.gitignore`). 개인 키는 이 서버 밖으로 내보내지 않는다.
+
+**탐지 쪽에 보낼 것**: 공개 인증서(PEM)와 주소 `https://<탄력적 IP>/ingest`.
+
+- PEM은 처음 만들 때 배포 로그(GitHub Actions의 "서버 배포·헬스 체크 결과")에 나온다. 또는 Session Manager로 접속해 `sudo cat /opt/portran/dashboard/certs/ingest.crt`.
+- 탐지 쪽은 이 파일을 전송기 `ca_file`에 지정한다. 전송기는 인증서 이름(SAN)의 IP와 접속 주소를 늘 검증한다.
+
+**다시 만들 때**(만료 730일 = `INGEST_CERT_DAYS`, 개인 키 유출 의심, 탄력적 IP 변경):
+
+```bash
+cd /opt/portran/dashboard
+sudo mv certs certs.bak-$(date +%Y%m%d)
+sudo bash deploy/server-deploy.sh      # 새 인증서를 만들고 PEM을 출력한다 → 탐지 쪽에 다시 보낸다
+```
+
+### 10-3. 확인
+
+| 어디서 | 명령 | 기대 |
+|---|---|---|
+| 배포 로그 | `deploy/server-deploy.sh`의 헬스 체크 | `ok   /ingest (nginx TLS → collector)` |
+| p4 CU 박스 (탐지 쪽) | `curl --cacert portran-ingest.pem https://<탄력적 IP>/healthz` | `{"status": "ok"}` |
+| p4 CU 박스 (탐지 쪽) | 전송기 `--once`로 한 번 보내기 | 전송기 로그에 `200`, `accepted` |
+| 서버 | `docker compose logs --tail 20 collector` | `수신 … 저장 …`, 다시 보낸 줄은 `중복` |
+| 서버 | `ls recordings/` · `tail -3 recordings/rejected.jsonl` | `raw-<시각>-p4.jsonl`. 거부된 줄은 `source`에 전송기 IP(`X-Real-IP`)와 사유 |
+| 서버 | `docker compose logs --tail 20 ingest` | nginx 접속 기록(`POST /ingest … 200`) |
+
+### 10-4. `/ingest` 문제 해결
+
+| 증상 (전송기 쪽) | 원인과 처리 |
+|---|---|
+| 연결 시간 초과 | 보안 그룹 443의 소스가 p4 CU 박스 IP(`/32`)인지, 대시보드 주소가 맞는지 |
+| 인증서 검증 실패 | 주소의 IP와 인증서 이름이 같은지 — `openssl x509 -in certs/ingest.crt -noout -text \| grep 'IP Address'`. 탐지 쪽 `ca_file`이 최신 PEM인지(인증서를 다시 만들었으면 다시 보냄) |
+| `503`이 계속 | collector가 떠 있는지 `docker compose ps collector`, `docker compose logs collector`(InfluxDB 장애면 `InfluxDB 쓰기 실패`) |
+| `413` | 요청이 1 MiB를 넘음. 전송기가 반으로 나눠 다시 보내므로 정상 |
+| `400` | 본문이 UTF-8이 아니거나 `X-Env` 형식 오류 — 응답 본문 `error`에 사유 |
+| `200`인데 `rejected` > 0 | 줄 형식 문제. 서버 `recordings/rejected.jsonl`의 `reasons` |
 
 ## 문제 해결
 

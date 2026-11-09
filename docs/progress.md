@@ -34,7 +34,6 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
 | Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ② 단계 비교 재생 `X-Env`에 출처 붙이기(`p4-kpm-only`·`lab-kpm-only`). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
 | Q22 | `L3-20`(Blind DoS) 피해자 연결(`ues[].peers`)의 근거가 오지 않는다(샘플 3개 모두 공격 연결 UE 근거만). 27_ §6.3의 '피해자 타임라인 함께 그리기'를 하려면 피해자 근거가 필요 | 탐지 엔진 | `docs/dashboard-design.md` 7절 |
-| Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청')를 그대로 반영함 ② `/ingest`로 `ue_evt`·100 ms 원본 `kpm2`가 단독 줄로 오면 거부(전송기 `send_ue_evt`를 켜면 거부 로그만 쌓임) ③ `Content-Length` 없는 요청은 `411`(27_ §3 표대로면 전송기가 멈춤) | 탐지 엔진 | M8 D116·D121 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -47,6 +46,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 해결 |
 |---|---|---|
+| Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청', 답 대기) 반영 ② 단독 `ue_evt`·100 ms 원본 `kpm2` 거부 ③ `Content-Length` 없으면 `411` | 2026-11-09 사용자 정리: ① 탐지 쪽에 전달함 ② 탐지 쪽은 `send_ue_evt`를 끈 채 보내지 않기로 해 알릴 필요 없음 ③ 전송기(파이썬)가 늘 길이를 보내 문제없음 (M8 D116·D121) |
 | Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl`)를 받지 못해 `kpm2` 3초 묶음을 27_ 예시 1줄로만 시험함 | 11/09 연동 시험에서 탐지 쪽이 두 파일을 실제 전송기로 `X-Env: sample`로 보내 서버에 저장·녹화됨(`kpm2` 132, `hello` 2, 거부 0 — M9). 로컬 `tests/data/detection/`에는 아직 없음(필요하면 서버 녹화 `recordings/raw-20261109-072830-sample.jsonl`에서 꺼냄) |
 | T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
 | Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지 | 사용자 결정으로 바꿈 (D53~D55, 브랜치 `fix/mock-bts-depletion`) |
@@ -903,7 +903,7 @@ M7 이후로 넘기는 것:
 - [x] 커밋 (`feat/dashboard-M8`, 2026-11-09)
 - [x] push·PR (`feat/dashboard-M8` → `dev`, PR #21 병합, 2026-11-09)
 - [ ] Q19 상시 경로 샘플 2개 다시 받기 → `tests/data/detection/`에 넣고 통합 테스트에 포함
-- [ ] Q20 탐지 쪽에 알리기 (중복 키·`X-Env` 반영, `ue_evt` 단독 거부, `411`)
+- [x] Q20 탐지 쪽에 알리기 (2026-11-09 — 해결됨 참고)
 - [ ] M9: Caddy(443, TLS 1.2+, 자체 서명 인증서 IP SAN) → collector `127.0.0.1:8088`, 보안 그룹에 p4 CU 박스 `43.202.191.147`, `docker-compose.aws.yml`에 `--in http://…`와 헬스 체크, `.pem` 전달, 탐지 쪽 전송기와 연동 시험
 - [ ] M10: 대시보드 — 설계 초안 `docs/dashboard-design.md`(관제·성능, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
 - [ ] T6 첫 실측 녹화 뒤 확인 (`session` 형식, `ue_evt` 필드, Table II 나머지)
@@ -984,6 +984,6 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
   - 고침(`fix/deploy-healthcheck`): 헬스 체크가 하나 실패해도 모두 돌고 끝에서 모아 실패, 실패 줄에 마지막 HTTP 코드. `docs/deploy.md` 문제 해결에 401 경우 추가
 - [x] (사용자) 서버 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 바꾼 비밀번호로 맞추고 다시 배포(PR #24 → #25)
 - [x] 탐지 쪽에 PEM·주소 전달 → 전송기 연동 시험 → InfluxDB·녹화 확인 → M9 완료 기록 (위 '탐지 쪽 전송기 연동 시험')
-- [ ] Q20 알릴 것이 탐지 쪽에 전달됐는지 확인 (연동 시험 안내문 초안에 넣음)
+- [x] Q20 정리 — ① 전달, ②·③ 알릴 필요 없음 (해결됨으로 옮김)
 - [ ] 실측: p4에서 분석 엔진 → 탐지 엔진 → 전송기, `X-Env: p4` (T6 확인)
 - [ ] 다음 마일스톤 M10 — 서버 InfluxDB의 `env=sample` 데이터로 대시보드 재구성을 시작할 수 있음(`docs/dashboard-design.md`)

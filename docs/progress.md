@@ -11,6 +11,9 @@
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
 | M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
+| M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (브랜치 `feat/dashboard-M8`, push 전) | 2026-11-09 |
+| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 예정 | |
+| M10 대시보드 재구성 · 옛 메시지 삭제 | 예정 | |
 
 ---
 
@@ -22,31 +25,22 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 확인 대상 | 관련 |
 |---|---|---|---|
-| Q1 | 스키마에 없는 필드는 **거부**한다 (필드를 추가하려면 스키마부터 수정) | 전 파트 | M1 결정 D1 |
-| Q2 | metric `labels`는 `cell`, `ue`만 허용 | eBPF | D2 |
-| Q3 | 시각은 2001년 이후 ns 정수만 허용, `1.0` 같은 실수 표기 거부 | 전 파트 (특히 탐지 엔진 C++) | D3, D4 |
-| Q4 | `attack_type`을 3종 열거형으로 고정 (목록 밖 값은 거부) | 탐지 엔진, 공격 도구 | D5 |
-| Q5 | `attack_run`을 공격 **시작 시점**에 보낼지 **종료 시점**에 보낼지. mock은 시작 시점(예정 종료 시각 포함)으로 냄 | 공격 도구 | SCHEMA.md 4절, M2 D15 |
-| Q6 | 탐지 엔진이 공격이 계속되는 동안 탐지 이벤트를 **반복해서** 내는지, 한 번만 내는지. mock은 full 룰셋이 10초마다 반복 | 탐지 엔진 | M2 D18 |
-| Q7 | 지표가 어느 노드에서 나오는지. mock은 eKPM·KPM 모두 `cu` (TeleRAN은 CU에서 F1AP·RRC·NAS를 봄). 표준 KPM을 FlexRIC(E2SM-KPM)로 받을지 eBPF 에이전트가 만들지도 확인 | eBPF, FlexRIC(KPM) | M2 보완 D51 |
-| Q9 | eKPM `labels.ue`에 무엇을 넣을지. mock은 그 RRC 연결의 C-RNTI 16진수(`"0x4601"`). 연결이 바뀌면 같은 단말도 라벨이 바뀜 | eBPF | M2 보완 D45 |
-| Q10 | Table I 값의 숫자 코드표(RRC/NAS 상태, 보안 상태, 알고리즘, 메시지 ID). NAS 메시지 ID만 TS 24.501 값이고 나머지는 가안. 탐지 엔진도 같은 코드를 써야 함 | eBPF, 탐지 엔진 | M2 보완 D42, SCHEMA.md 6.3 |
-| Q11 | `ue` 태그 개수(cardinality). 폭주 공격 땐 가짜 UE 수만큼 라벨이 생긴다. mock은 C-RNTI를 재사용해서 최대 512개. 실제 에이전트가 다른 키를 쓰면 InfluxDB 시리즈가 크게 늘 수 있음 | eBPF | M2 보완 D45 |
+| Q1 | 옛 메시지는 스키마에 없는 필드를 **거부**한다. 탐지 엔진 레코드(M8)는 27_ §2.4에 따라 **받는다** | mock 전용이라 확인 불필요 (M10에서 옛 메시지와 함께 정리) | M1 결정 D1, M8 D114 |
+| Q2 | metric `labels`는 `cell`, `ue`만 허용 — **옛 메시지 전용** | 없음 (M10에서 옛 메시지와 함께 정리) | D2 |
+| Q3 | 옛 메시지 시각은 2001년 이후 ns 정수. 탐지 엔진 레코드는 27_대로 **ms 정수**(2001~2286년 범위). 둘 다 `1.0` 같은 실수 표기 거부 | 탐지 엔진 (ms는 27_ 그대로라 사실상 확인됨) | D3, D4, M8 D118 |
+| Q4 | `attack_type`을 3종 열거형으로 고정 (목록 밖 값은 거부) — **옛 메시지 전용**. 실제 탐지 엔진은 `alert.rule`(룰 13개, 27_ §5.3)을 쓴다 | 없음 (M10에서 옛 메시지와 함께 정리) | D5 |
 | Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
-| Q13 | 통신 방식을 **UDP로 통일할 예정**(팀 방침, 2026-10-21 전달받음). collector는 이미 UDP를 지원하므로(데이터그램 하나에 JSON 한 줄) 코드 변경은 없다. 파일 입력은 mock·테스트용으로 남긴다. 확정되면 CLAUDE.md 5절·SCHEMA.md 1절의 "UDP 또는 파일" 문구를 고친다 | 전 파트 | 아래 "열린 항목 추가 — UDP 통일" |
-| Q14 | UDP 손실 때 `attack_run`(정답) 유실 대책. 잃으면 그 run이 평가에서 사라지고, 그 run에 대한 탐지가 모두 오탐으로 세어진다. 후보: 파일로도 함께 남기기, 두 번 보내기(collector·evaluator의 중복 처리를 먼저 확인해야 함) | 공격 도구 | Q5 |
-| Q15 | 다른 호스트에서 보낼 때의 네트워크 구성. collector는 기본으로 `127.0.0.1`에서만 받으므로 `--in udp://0.0.0.0:9999`처럼 열고 방화벽을 열어야 한다. collector를 Windows의 WSL2에서 돌리면 외부 UDP가 WSL2까지 들어오는지 따로 확인해야 한다(테스트베드 Ubuntu에서 돌리면 해당 없음). 메시지는 1,400B 아래로 유지(넘으면 IP 단편화로 손실 위험이 커짐) | 테스트베드 담당, 전 파트 | Q8 |
-| Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드 LAN(RIC 자리)에 둔다. 탐지 엔진을 AWS에 두면 탐지 지연에 인터넷 구간 지연과 호스트 간 시계 오차가 섞이고, 평문 텔레메트리와 인증 없는 UDP가 인터넷을 지난다(그래도 두려면 VPN·NTP가 필요) | 탐지 엔진, 테스트베드 담당 | M7 D85 |
+| Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
+| Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl` — 3초 묶음 `kpm2`·`hello`가 든 실제 전송 본문)가 받은 폴더(`탐지엔진-대시보드샘플/일반데이터/`)에 없다. 지금 `kpm2` 묶음은 27_ §4.1 예시 1줄로만 시험했다 | 탐지 엔진 (다시 받기) | M8 |
+| Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청')를 그대로 반영함 ② `/ingest`로 `ue_evt`·100 ms 원본 `kpm2`가 단독 줄로 오면 거부(전송기 `send_ue_evt`를 켜면 거부 로그만 쌓임) ③ `Content-Length` 없는 요청은 `411`(27_ §3 표대로면 전송기가 멈춤) | 탐지 엔진 | M8 D116·D121 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
 | # | 내용 | 현재 처리 |
 |---|---|---|
-| T1 | 실제 eKPM / KPM 지표 이름 | TeleRAN 논문 기준으로 정함 (KPM은 3GPP 이름 그대로, eKPM은 Table I 항목을 snake_case로 쓴 가안). 스키마는 형식만 검사 |
-| T2 | UE ID 형식 (예시는 `0x4601`) | 비어 있지 않은 문자열만 검사 |
-| T4 | 탐지 룰의 `rule_id` 체계, 임계값, severity | mock은 `scenarios.yaml`의 가안 값 (`R-RRC-001`, `R-KPM-RRC-001` 등) |
 | T5 | 절차 타이밍, UE 수, 공격 강도 | mock은 그럴듯한 가안 값. 테스트베드에서 실측하면 `scenarios.yaml`을 맞춘다 |
+| T6 | 분석 엔진 실측 녹화에서 확인할 것(27_ §8): `session` 실제 형식, `ue_evt` 필드(분석 엔진 팀 답 대기), Table II 나머지(재수립·재개 4종은 `null` 예상), 실제 양(셀·UE 수) | `evidence.raw`는 해석하지 않고 그대로 저장. `session`은 비어 있지 않은 문자열만 검사 |
 
 ### 해결됨
 
@@ -54,6 +48,13 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 |---|---|---|
 | T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
 | Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지 | 사용자 결정으로 바꿈 (D53~D55, 브랜치 `fix/mock-bts-depletion`) |
+| T1 | 실제 eKPM / KPM 지표 이름 | 11/04에 TeleRAN Table I·II의 24개로 고정했다가(D110·D111, 커밋 전), 탐지 쪽 27_ 확정(11/05)으로 바뀜: KPM2 = `kpm2`의 `cc`·`si` 키(Table II 이름 그대로), KPM1 = `ue_evt`(메시지 이름 문자열). SCHEMA.md 4절 (M8) |
+| T2 | UE ID 형식 | 27_ §2.3·§5.6: UE 키는 (`cell`, `du_ue_id`, `uid`), S-TMSI `"0x"`+16진 12자리, C-RNTI 10진 정수 (M8) |
+| T4 | 탐지 룰 체계·임계값·severity | 27_ §5.3: 룰 13개(`L3-xx`·`AN-xx`), 단계 1~4, severity `medium`·`high`, 임계값은 `alert.params`로 옴 (M8) |
+| Q5·Q6·Q14 | `attack_run` 발행 시점, 탐지 반복 여부, UDP 유실 대책 | 정답 기록을 대시보드로 받지 않기로 함(11/04 사용자 결정). 탐지는 `alert` 생애(`raise`·`update`·`clear`·`end`)로 옴. 평가는 전체 파이프라인 뒤 탐지 쪽과 정함(27_ §9) (M8) |
+| Q7·Q9·Q10·Q11 | 지표가 나오는 노드, eKPM `labels.ue`, Table I 숫자 코드표, `ue` 태그 수 | 27_로 해결: KPM2는 분석 엔진(eBPF)이 셀마다 100 ms로 세고 전송기가 3초로 묶음. KPM1은 `ue_evt`로 메시지 이름·알고리즘 이름을 문자열로 보냄(코드표 불필요). UE 값은 tag가 아니라 필드(`du_ue_id`·`uid`)로 저장 (M8) |
+| Q13·Q15 | UDP 통일, 다른 호스트에서 UDP로 보낼 때의 네트워크 | 탐지 엔진은 HTTPS `POST /ingest`로 보냄(11/02 합의). UDP는 mock·시험용으로만 남음 (M8) |
+| Q18 | 지표 이름 24개 고정의 팀 공유 | T1과 같은 이유로 공유할 필요가 없어짐 (M8) |
 
 ---
 
@@ -779,3 +780,129 @@ M7 이후로 넘기는 것:
 ### 확인 결과
 
 - `pytest`: 172 passed, 4 skipped (CLAUDE.md의 JSON 예시를 읽는 스키마 테스트 포함, 서비스 테스트 4개는 로컬 Docker 없음)
+
+---
+
+## 지표 이름 고정 — TeleRAN Table I·II (2026-11-04, 브랜치 `docs/schema-teleran-tables`)
+
+> **커밋하지 않고 M8에 합쳤다(2026-11-09, 사용자 결정 D113).** 다음 날 탐지 쪽 27_ 명세가 확정되면서 `metric` 형식 자체를 실제로 보내는 쪽이 없어졌다. 이 절은 기록으로 남긴다. Table I·II 대응은 SCHEMA.md 4절이 대신한다.
+
+사용자 요청: CLAUDE.md 5절 메시지 스키마를 TeleRAN 논문 4쪽 Table I·II로 고정, SCHEMA.md도 함께.
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `CLAUDE.md` 5.1절 | 지표 이름을 Table I(eKPM 10개)·Table II(표준 KPM 14개)로 고정. 두 표를 논문 열(Category·Handler / Type·Handler·Source)과 함께 넣음. 예시를 `rrc_msg_id`로 |
+| `CLAUDE.md` 5.2절 | 근거 예시를 `count(rrc_msg_id=RRCSetupRequest)`, `RRC.ConnEstabAtt`로. 근거 `metric` 규칙 한 줄 추가 |
+| `CLAUDE.md` 7절, 12절 6항 | 중복 목록을 5.1절 참조로 바꿈. "모르는 것" 예에서 지표 이름을 뺌 |
+| `schema/SCHEMA.md` | v0.2. 2·3절 예시와 필드 설명(`name`·`value`·`unit`·`labels`), 6절 "가안" 해제와 확정·가안 구분표, 6.2절을 지표별 14행 + TS 28.552 절 번호로, 6.4절, 변경 이력 |
+| `tests/test_collector.py` | SCHEMA.md 예시를 읽는 InfluxDB 변환 테스트 3곳의 기대값을 새 예시에 맞춤 (검사 로직은 그대로) |
+
+`messages.schema.json`, mock, collector, 대시보드 코드는 바꾸지 않았다. mock은 원래 이 24개 이름만 쓴다.
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D110 | 문서 예시(CLAUDE.md·SCHEMA.md)의 지표를 `rrc_setup_req_rate`·`RRU.PrbUsedDl`(목록 밖)에서 `rrc_msg_id`, `count(rrc_msg_id=RRCSetupRequest)`, `RRC.ConnEstabAtt`로 바꿈. 값은 `scenarios.yaml`의 `RRC_SIGNALING_STORM` 근거 범위와 맞춤 | 이름을 고정해 놓고 예시가 목록 밖 이름을 쓰면 보내는 쪽이 예시를 따라 할 수 있음 | 불필요 |
+| D111 | eKPM 이름은 기존 snake_case 식별자(`ue_c_rnti` … `nas_msg_id`)를 그대로 확정 | Table I에는 설명 이름("UE Cipher Algorithm")만 있고 식별자가 없음. 논문 그림의 예(Fig. 1 `RRC.CipheringAlgorithm`, Fig. 2b `s_tmsi`)는 표기가 서로 달라 기준으로 삼기 어려움. 이미 mock·대시보드·테스트가 이 이름을 씀 | 필요 (eBPF, Q18) |
+
+### 확인 결과
+
+- 문서 표의 이름 = `mock/scenarios.yaml`의 `ekpm`(10)·`kpm`(14): CLAUDE.md 5.1절, SCHEMA.md 6.1·6.2절 모두 순서까지 일치 (스크립트로 대조)
+- SCHEMA.md 2절의 인라인 표준 KPM 예시: 스키마 검증 통과
+- `pytest`: 176 passed (CLAUDE.md·SCHEMA.md JSON 예시 검증 테스트, 서비스 테스트 포함)
+
+### 남은 일·TODO
+
+- [ ] JSON Schema에서 목록 밖 이름을 거부할지 결정 (지금은 형식만 검사). 거부하면 `kind`별 이름 목록을 스키마에 넣고, eBPF 팀에 먼저 알린다
+- [ ] 팀 공유: Q18 (eBPF, 탐지 엔진)
+
+---
+
+## M8 — 탐지 엔진 연동 1: 스키마 v0.3 · collector `/ingest` (2026-11-09, 브랜치 `feat/dashboard-M8`)
+
+배경: 탐지 쪽이 11/05에 `27_탐지엔진_1-4단계-대시보드-지표_명세서.md`(확정)와 샘플을 보냈다. 대시보드 2차 답변서(11/04, `docs/정리.md`)에 대한 답이고, 10/31의 `17_` 명세를 대신한다. 실제로 오는 레코드가 우리 스키마(`metric`·`detection`·`attack_run`)와 형식부터 달라서(아래 비교), 11/04의 지표 이름 고정(v0.2, 커밋 전)을 따로 커밋하지 않고 이 작업에 합쳤다(사용자 결정).
+
+| 항목 | 이전 (v0.2) | 27_ |
+|---|---|---|
+| 레코드 | `metric`·`detection`·`attack_run`·`overhead` | 경보 경로 `alert`·`evidence`·`gap` + 상시 경로 `kpm2`(3초 묶음)·`hello`·`f1_evt` |
+| KPM2 (Table II) | `metric` 한 줄 = 지표 하나 | `kpm2` 한 줄 = 셀 하나 × 3초, `cc`·`si`·`ext` 안에 원인별 하위 키 |
+| KPM1 (Table I) | `metric` `kind: ekpm` 숫자 코드 | `ue_evt` 메시지 하나 = 한 줄, 이름 문자열. 상시로는 안 오고 `evidence.raw`로만 |
+| 탐지 | `detection` (룰셋 `full`·`kpm_only`) | `alert` 생애 `raise`→`update`→`clear`/`end`, 룰 13개, 단계 1~4 |
+| 정답 | `attack_run` | 없음 (평가는 전체 파이프라인 뒤) |
+| 시각 · 모르는 필드 · `null` | ns · 거부 · 없음 | **ms** · 받음 · "모름" |
+| 전송 · 중복 | UDP·파일 · 없음 | HTTPS `POST /ingest` + `X-Env` · 환경 + 레코드별 키 |
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `schema/messages.schema.json` | 탐지 엔진 레코드 6종 추가(모르는 필드 허용, `fmt`·`ver` 1, ms 시각, `kpm2`는 `agg_ms` 필수). `evidence.raw`가 KPM1 `ue_evt`면 `$defs.ue_evt`로 타임라인 필드 7개 검사. 옛 3종은 설명에 "mock 전용, 교체 예정". `$defs.evidence`(탐지 근거 항목)를 `$defs.detection_evidence`로 이름만 바꿈 |
+| `schema/SCHEMA.md` | v0.3으로 다시 씀: 두 갈래, `/ingest` 요청·응답·중복 키(2절), 레코드별 검사(3절), KPM1 `ue_evt` 형식·메시지별 `f` 표(3.7절), Table I·II ↔ `kpm2` 키·`ue_evt` 필드 대응(4절, v0.2의 24개 이름 고정을 대신함), InfluxDB 저장(5절), 옛 메시지는 6절에 모음 |
+| `collector/ingest.py` (새 파일) | `POST /ingest` HTTP 서버(표준 라이브러리), `X-Env` 검사, 중복 키(16바이트 해시), 크기 제한 LRU, `GET /healthz` |
+| `collector/collector.py` | `--in http://host:port` 입력, `handle_request()`(저장 후 응답, 503이면 아무것도 반영 안 함), 중복 제거, 환경별 녹화 `raw-<시각>-<환경>.jsonl`, 경보 세션(첫 `evidence`의 `raw.session`) 채우기, `--env`, 로그에 중복 수 |
+| `collector/influx_writer.py` | 새 measurement 6종 변환(5절 표), `kpm2` 지표 펴기, 룰별 대표 값 |
+| `.env.example` | `COLLECTOR_HTTP_MAX_BYTES`(1 MiB), `COLLECTOR_HTTP_TIMEOUT_MS`(30초), `COLLECTOR_DEDUP_MAX_KEYS`(20만) |
+| `tests/test_ingest.py` (새 파일) | 변환·중복 키·`X-Env`·요청 처리(재전송, 틀린 줄, 400, 503 뒤 재시도, InfluxDB 데이터 거부)·세션 채우기·UDP 입력·HTTP 서버(200/400/404/411/413/503, `/healthz`) 47개 |
+| `tests/test_schema.py` | SCHEMA.md 예시가 10종 모두 덮는지, 탐지 쪽 샘플 32개 전 줄 통과, 새 레코드 거부 사례 48개(그중 `ue_evt` 10개), 모르는 필드·`null`·목록 밖 메시지 이름 허용 |
+| `tests/test_influx_integration.py` | 실제 InfluxDB에 샘플 전체를 `/ingest` 요청처럼 넣어 타입 충돌·덮어쓰기가 없는지(점 수 = 줄 수), 모든 경보에 세션이 붙는지 |
+| `tests/data/detection/` · `reference/detection/` | 탐지 쪽 샘플 32개(경보 경로)와 27_ 명세·샘플 분석표를 저장소로 복사. 받은 폴더 `탐지엔진-대시보드샘플/`은 그대로 둠 |
+| `CLAUDE.md` | 맨 위에 "답변은 항상 한국어"(사용자 요청). 2절 그림, 4절 구조, 5·6절(두 갈래, 레코드 표, InfluxDB 매핑), 7절 mock 지표 참조, 8절 `/ingest` 약속, 13절에 M8~M10 |
+| `README.md` | 그림, collector `--in http://`·`--env`, 녹화 파일, 문제 해결(Grafana 401) |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D112 | 옛 메시지 `metric`·`detection`·`attack_run`은 **단계적으로 지운다** — 이번엔 새 6종만 더하고 M10(대시보드 재구성)에서 지움. `overhead`는 R5 협의 전까지 유지 | 사용자 결정(11/09). 한 번에 지우면 mock·evaluator·replay·대시보드가 함께 깨져 단계마다 테스트를 통과시킬 수 없음 | 불필요 |
+| D113 | v0.2(지표 이름 24개 고정)는 커밋하지 않고 v0.3에 합침. 24개는 `metric.name` 대신 `kpm2` 키·`ue_evt` 필드 대응표(SCHEMA.md 4절)로 | 사용자 결정(11/09). `metric` 형식을 보내는 쪽이 없어짐 | 불필요 |
+| D114 | 새 레코드는 **모르는 필드를 받는다**. `alert.fmt`, `kpm2`·`hello`·`f1_evt`의 `ver`가 1이 아니면 거부 | 27_ §2.4(필드는 형식 판을 올리지 않고 더함), 답변서 D8·27_ §9 동의 | 불필요(합의됨) |
+| D115 | 열거로 묶은 값: `event`·`unit`·`kind`·`stage`(1~4)·`phase`. `rule`·`severity`·`mode`는 비어 있지 않은 문자열이면 받음 | 생애·단계는 화면 로직이 기대는 값. 새 룰·심각도는 저장하고 화면이 처리(27_ §7 '모르는 값이 오면 그대로 표시') | 불필요 |
+| D116 | `/ingest`의 `kpm2`는 `agg_ms` 필수(묶은 줄만). `ue_evt`·100 ms 원본 `kpm2` 단독 줄은 거부(거부 로그에 남음) | 27_ §4.1 '`/ingest`로 오는 `kpm2`는 모두 묶은 줄', §4.2 `ue_evt`는 상시로 안 보냄 | 알림 (Q20) |
+| D117 | `evidence.raw`는 `type`만 검사하고 해석하지 않음 | 27_ §8: `ue_evt` 형식은 분석 엔진 답에 따라 바뀔 수 있음 | 불필요 |
+| D118 | ms 시각 범위 10¹²(2001-09-09) ~ 9,999,999,999,999(2286년) | 초·마이크로초·나노초로 잘못 보낸 값을 잡음(옛 ns 하한과 같은 생각) | 불필요 |
+| D119 | `/ingest`는 표준 라이브러리 `ThreadingHTTPServer`. 처리 스레드는 요청을 큐에 넣고 기다리고, collector 메인 루프 한 스레드가 처리 | 의존성 추가 없음. 중복 키·녹화·세션 표를 잠금 없이 한 스레드가 만짐 | 불필요 |
+| D120 | 요청 처리 순서: 검증·중복 검사 → InfluxDB에 바로 씀 → 성공하면 녹화·중복 키·세션 표 반영 → 응답. 일시 장애면 아무것도 반영하지 않고 `503` | 답변서 D1 "2xx는 저장 뒤". 반영 전에 실패해야 재전송이 처음처럼 저장됨(중복으로 걸러지지 않음) | 불필요 |
+| D121 | `Content-Length` 필수(없으면 `411`, chunked 미지원). 상한 검사는 본문을 읽기 전에 | 상한을 넘는 본문을 메모리에 올리지 않으려고. 전송기(파이썬)는 늘 길이를 보냄 | 알림 (Q20) |
+| D122 | `X-Env`는 영숫자로 시작, 영숫자·`._-` 64자 이하. 틀리면 `400` | 녹화 파일 이름에 들어감(`../` 같은 경로 방지) | 불필요 |
+| D123 | 중복 키는 메모리 LRU(`COLLECTOR_DEDUP_MAX_KEYS` 20만, 약 30 MB). 재시작하면 비지만 InfluxDB에서 같은 점에 덮어써져 결과는 같음(녹화엔 한 번 더 남을 수 있음) | 재전송은 끊긴 직후에 오므로 최근 키로 충분. 디스크 상태를 두지 않아 단순 | 불필요 |
+| D124 | InfluxDB에서 `alert_id`를 **tag**로 둠(CLAUDE.md 6절 원칙의 예외). `evidence`·`f1_evt` 시각은 ms × 10⁶ + `seq` mod 10⁶ | 샘플에서 같은 원본 줄이 두 경보의 근거로 옴(S24 판정 보류 9줄), 같은 ms 줄이 많음 → 이렇게 안 하면 서로 덮어씀. 경보 수만큼 series가 늘지만 경보는 공격마다 하나 | 사용자 확인(11/09) |
+| D125 | `kpm2`·근거 `kpm2` 지표는 모두 실수, `null`은 뺌. 룰마다 다른 묶음은 `<이름>_json` 문자열 | 27_ §7.1 타입 충돌 경고. `null`은 그래프에서 '데이터 없음' | 불필요 |
+| D126 | `alert`·`gap`의 `session` 필드: 같은 요청의 `evidence`에서 먼저 알아내고, 모르면 나중에 같은 점에 `session`만 덧씀. 표는 메모리(경보 1만 개) | 27_ §7 '첫 `evidence`의 `raw.session`이 경보의 세션'. `raise`가 묶음 끝에 오면 증거는 다음 요청에 옴 | 불필요 |
+| D127 | `hello`의 시각 = collector가 받은 시각 | `hello`에 시각 필드가 없음(27_ §4.3) | 불필요 |
+| D128 | `alert_id`는 field로 두지 않음 | 같은 이름의 tag·field가 있으면 Flux pivot 때 열이 겹침 | 불필요 |
+| D129 | 대표 값 `rep_key`·`rep_value`(실수) — 27_ §5.3 '대표 값(제안)', 판정 보류 경보는 `held_w` | 경보 목록·그래프에서 값 하나로 보이기. 룰마다 이름이 달라도 한 필드라 타입 충돌 없음 | 불필요 |
+| D130 | 탐지 엔진 레코드 녹화는 환경별 파일 `raw-<시각>-<환경>.jsonl`. 옛 메시지는 기존 `raw-<시각>.jsonl` | 줄에 환경이 없어서, 나중에 replay가 `X-Env`를 붙여 다시 보내려면 파일로 갈라야 함 | 불필요 |
+| D131 | UDP·파일 입력도 새 레코드를 받음(환경은 `--env`, 기본 `unknown`) | 샘플을 넣어 보거나 전송기 없이 시험할 때 | 불필요 |
+| D132 | HTTP 입력은 기본으로 켜지 않음(`--in http://…`). AWS 구성(compose·Caddy)은 M9 | 기본 동작·배포 구성을 이번에 바꾸지 않으려고 | 불필요 |
+| D133 | 마일스톤 M8(수신·저장) · M9(AWS 앞단·연동 시험) · M10(대시보드 재구성·옛 메시지 삭제)을 CLAUDE.md 13절에 추가 | 11/09 합의한 순서 | 불필요 |
+| D134 | `evidence.raw`가 KPM1 `ue_evt`면 타임라인에 쓰는 7개(`type`·`t_ms`·`cell_id`·`du_ue_id`(정수 또는 `null`)·`dir` `UL`/`DL`·`proto` `RRC`/`NAS`/`F1AP`·`msg`)만 검사하고, 나머지·모르는 필드·목록 밖 메시지 이름은 받음. 단독 `ue_evt`는 계속 거부(D116) | 사용자 선택(11/09, 문서 + 최소 검사). 27_ §8은 `ue_evt` 형식이 초안이라 해석하지 말라고 했지만, 화면이 기대는 값이 틀리면 저장 단계에서 잡는 편이 낫다. 샘플 655줄 모두 통과. 분석 엔진이 이 7개를 바꾸면 그 근거 줄만 거부 로그로 감(경보는 저장) | 알림 (분석 엔진 답이 오면 3.7절과 대조) |
+
+### 확인 결과
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | **304 passed, 2 failed.** 실패 2개는 `test_dashboards.py`의 Grafana 쿼리 — `HTTP 401 Invalid username or password`. 실행 중인 Grafana의 관리자 비밀번호가 `.env`와 달라서다(코드와 무관, README 문제 해결에 적음). 세션을 시작할 때는 Grafana·InfluxDB에 접속이 안 돼 172 passed, 4 skipped였다 |
+| 샘플 스키마 | 탐지 쪽 샘플 32개 1,758줄 모두 통과(그중 KPM1 `ue_evt` 근거 655줄 — 28개 파일, 메시지 24종 — 도 `ue_evt` 최소 검사 통과). 27_ 본문의 예시 중 묶은 `kpm2`·`hello`·`f1_evt`·`alert`·`evidence`·`gap` 통과, 원본 `ue_evt`·100 ms `kpm2`는 의도대로 거부 |
+| 실제 InfluxDB (`test_detection_samples_to_influx`) | 샘플 32개 + 예시 3줄 = 1,761줄을 요청 33개로 넣어 모두 `accepted`. measurement별 점 수가 줄 수와 같음(덮어쓴 것 없음), 경보 58개 모두 `session` 필드 있음 |
+| CLI | `python -m collector.collector --dry-run --in http://127.0.0.1:8088` + `curl`로 `T10_긴공격` 전송 → `{"accepted": 667, "rejected": 0, "duplicates": 0}`, 다시 보내면 `duplicates: 667`, `X-Env: a b` → `400`, `raw-…-lab.jsonl` 667줄, SIGTERM에 정상 종료 |
+
+확인하지 못한 것: TLS 앞단·AWS(M9), 실제 전송기와의 연동, 3초 묶음 `kpm2`가 든 실제 전송 본문(Q19 — 27_ 예시 1줄로만 시험), Python 3.14(CI에서 확인; 로컬은 3.12).
+
+### 환경 메모
+
+- 이 세션에서는 WSL에 `docker` 명령이 없었다(Docker Desktop WSL integration 꺼짐). 그래도 Docker Desktop의 InfluxDB·Grafana는 `localhost`로 접속돼 통합 테스트가 돌았다. `docker` 명령이 필요하면 README 문제 해결의 integration 항목대로 켠다.
+- 백그라운드(`&`)로 띄운 collector는 SIGINT(Ctrl+C)를 무시한다(비대화형 셸의 백그라운드 프로세스 성질). 끌 때는 `kill -TERM <pid>`(collector가 SIGTERM을 받아 flush 후 종료).
+
+### 남은 일·TODO
+
+- [x] 커밋 (`feat/dashboard-M8`, 2026-11-09)
+- [ ] push·PR (`feat/dashboard-M8` → `dev`) — 사용자 확인 후
+- [ ] Q19 상시 경로 샘플 2개 다시 받기 → `tests/data/detection/`에 넣고 통합 테스트에 포함
+- [ ] Q20 탐지 쪽에 알리기 (중복 키·`X-Env` 반영, `ue_evt` 단독 거부, `411`)
+- [ ] M9: Caddy(443, TLS 1.2+, 자체 서명 인증서 IP SAN) → collector `127.0.0.1:8088`, 보안 그룹에 p4 CU 박스 `43.202.191.147`, `docker-compose.aws.yml`에 `--in http://…`와 헬스 체크, `.pem` 전달, 탐지 쪽 전송기와 연동 시험
+- [ ] M10: 대시보드(27_ §7 '화면과 레코드'), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
+- [ ] T6 첫 실측 녹화 뒤 확인 (`session` 형식, `ue_evt` 필드, Table II 나머지)
+- [ ] `docs/정리.md`(11/04 답변서, 이미 보냄)와 받은 폴더 `탐지엔진-대시보드샘플/`을 저장소에 남길지 정리

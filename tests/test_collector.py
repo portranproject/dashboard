@@ -27,8 +27,8 @@ def example(msg_type, **changes):
 
 def test_metric_point():
     assert to_point(example("metric")).to_line_protocol() == (
-        "metric,cell=1,kind=ekpm,name=rrc_setup_req_rate,node=cu,src=ebpf,ue=0x4601 "
-        'unit="req/s",value=120 1763280000123456789'
+        "metric,cell=1,kind=ekpm,name=rrc_msg_id,node=cu,src=ebpf,ue=0x4601 "
+        'unit="code",value=0 1763280000123456789'
     )
 
 
@@ -36,7 +36,7 @@ def test_metric_without_labels_and_integer_value_is_float():
     msg = example("metric", value=3)
     msg.pop("labels")
     line = to_point(msg).to_line_protocol()
-    assert line.startswith("metric,kind=ekpm,name=rrc_setup_req_rate,node=cu,src=ebpf ")
+    assert line.startswith("metric,kind=ekpm,name=rrc_msg_id,node=cu,src=ebpf ")
     assert "value=3 " in line + " " and "value=3i" not in line  # 정수로 와도 float 필드
 
 
@@ -53,7 +53,7 @@ def test_detection_point():
     assert "latency_ms=400" in fields
     assert 'cell="1"' in fields
     assert r'ue_list="[\"0x4601\",\"0x4602\"]"' in fields
-    assert r'evidence_json="[{\"source\":\"ebpf\",\"metric\":\"rrc_setup_req_rate\"' in fields
+    assert r'evidence_json="[{\"source\":\"ebpf\",\"metric\":\"count(rrc_msg_id=RRCSetupRequest)\"' in fields
 
 
 def test_detection_without_cell_and_ue():

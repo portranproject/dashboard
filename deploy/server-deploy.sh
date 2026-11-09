@@ -14,6 +14,30 @@ fi
 mkdir -p reports
 chown 1000:1000 recordings reports
 
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
+
+# EC2 메타데이터(IMDSv2)에서 공인 IP(탄력적 IP)를 읽는다
+imds_public_ip() {
+  local token
+  token=$(curl -fsS -m 2 -X PUT http://169.254.169.254/latest/api/token \
+    -H 'X-aws-ec2-metadata-token-ttl-seconds: 60') || return 1
+  curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/public-ipv4
+}
+
+# /ingest TLS 인증서 (M9). 없거나 공인 IP가 바뀌었으면 만든다. 개인 키는 이 서버의 certs/에만 있다(git 제외)
+ingest_ip=${INGEST_PUBLIC_IP:-}
+if [ -z "$ingest_ip" ]; then
+  ingest_ip=$(imds_public_ip) || {
+    echo "공인 IP를 알 수 없습니다. .env에 INGEST_PUBLIC_IP=<탄력적 IP>를 넣으세요 (docs/deploy.md 10절)" >&2
+    exit 1
+  }
+fi
+echo "== /ingest 인증서"
+bash deploy/ingest-cert.sh "$ingest_ip" certs
+
 echo "== 배포: $(git log --oneline -1)"
 docker compose up -d --build --wait --wait-timeout 300
 docker image prune -f >/dev/null  # 다시 빌드하면서 남은 이전 이미지 정리
@@ -34,13 +58,13 @@ check() {
 }
 
 echo "== 헬스 체크"
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
 check "InfluxDB" "http://localhost:${INFLUX_PORT:-8086}/health" '"status": *"pass"'
 check "Grafana" "http://localhost:${GRAFANA_PORT:-3000}/api/health" '"database": *"ok"'
 check "Grafana datasource" "http://localhost:${GRAFANA_PORT:-3000}/api/datasources/uid/portran-influxdb/health" '"status": *"OK"' \
   -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD"
+# 공인 IP 주소로 검증하되 연결은 이 서버 안으로 보낸다(보안 그룹은 p4 CU 박스만 열어 두므로)
+ingest_port=${INGEST_HTTPS_PORT:-443}
+check "/ingest (nginx TLS → collector)" "https://$ingest_ip:$ingest_port/healthz" '"status": *"ok"' \
+  --cacert certs/ingest.crt --connect-to "$ingest_ip:$ingest_port:127.0.0.1:$ingest_port"
 docker compose ps --format 'table {{.Service}}\t{{.Status}}'
 echo "== 완료"

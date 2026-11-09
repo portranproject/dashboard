@@ -10,7 +10,10 @@
 | M4 실시간 관제 대시보드 | 완료 (PR #5 병합) | 2026-10-19 |
 | M5 evaluator + 성능 검증 대시보드 | 완료 (PR #6 병합) | 2026-10-19 |
 | M6 replay | 완료 (PR #7 병합) | 2026-10-19 |
-| M7 AWS 배포 · CI/CD | 진행 중 (CI 완료 / EC2 수동 배포 완료: mock·replay 표시 / CD 작성, 콘솔 설정·첫 실행 전) | |
+| M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
+| M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
+| M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 진행 중 (브랜치 `feat/dashboard-M9`, 코드·문서·보안 그룹 끝, 배포·연동 시험 남음) | |
+| M10 대시보드 재구성 · 옛 메시지 삭제 | 예정 | |
 
 ---
 
@@ -22,31 +25,24 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 확인 대상 | 관련 |
 |---|---|---|---|
-| Q1 | 스키마에 없는 필드는 **거부**한다 (필드를 추가하려면 스키마부터 수정) | 전 파트 | M1 결정 D1 |
-| Q2 | metric `labels`는 `cell`, `ue`만 허용 | eBPF | D2 |
-| Q3 | 시각은 2001년 이후 ns 정수만 허용, `1.0` 같은 실수 표기 거부 | 전 파트 (특히 탐지 엔진 C++) | D3, D4 |
-| Q4 | `attack_type`을 3종 열거형으로 고정 (목록 밖 값은 거부) | 탐지 엔진, 공격 도구 | D5 |
-| Q5 | `attack_run`을 공격 **시작 시점**에 보낼지 **종료 시점**에 보낼지. mock은 시작 시점(예정 종료 시각 포함)으로 냄 | 공격 도구 | SCHEMA.md 4절, M2 D15 |
-| Q6 | 탐지 엔진이 공격이 계속되는 동안 탐지 이벤트를 **반복해서** 내는지, 한 번만 내는지. mock은 full 룰셋이 10초마다 반복 | 탐지 엔진 | M2 D18 |
-| Q7 | 지표가 어느 노드에서 나오는지. mock은 eKPM·KPM 모두 `cu` (TeleRAN은 CU에서 F1AP·RRC·NAS를 봄). 표준 KPM을 FlexRIC(E2SM-KPM)로 받을지 eBPF 에이전트가 만들지도 확인 | eBPF, FlexRIC(KPM) | M2 보완 D51 |
-| Q9 | eKPM `labels.ue`에 무엇을 넣을지. mock은 그 RRC 연결의 C-RNTI 16진수(`"0x4601"`). 연결이 바뀌면 같은 단말도 라벨이 바뀜 | eBPF | M2 보완 D45 |
-| Q10 | Table I 값의 숫자 코드표(RRC/NAS 상태, 보안 상태, 알고리즘, 메시지 ID). NAS 메시지 ID만 TS 24.501 값이고 나머지는 가안. 탐지 엔진도 같은 코드를 써야 함 | eBPF, 탐지 엔진 | M2 보완 D42, SCHEMA.md 6.3 |
-| Q11 | `ue` 태그 개수(cardinality). 폭주 공격 땐 가짜 UE 수만큼 라벨이 생긴다. mock은 C-RNTI를 재사용해서 최대 512개. 실제 에이전트가 다른 키를 쓰면 InfluxDB 시리즈가 크게 늘 수 있음 | eBPF | M2 보완 D45 |
+| Q1 | 옛 메시지는 스키마에 없는 필드를 **거부**한다. 탐지 엔진 레코드(M8)는 27_ §2.4에 따라 **받는다** | mock 전용이라 확인 불필요 (M10에서 옛 메시지와 함께 정리) | M1 결정 D1, M8 D114 |
+| Q2 | metric `labels`는 `cell`, `ue`만 허용 — **옛 메시지 전용** | 없음 (M10에서 옛 메시지와 함께 정리) | D2 |
+| Q3 | 옛 메시지 시각은 2001년 이후 ns 정수. 탐지 엔진 레코드는 27_대로 **ms 정수**(2001~2286년 범위). 둘 다 `1.0` 같은 실수 표기 거부 | 탐지 엔진 (ms는 27_ 그대로라 사실상 확인됨) | D3, D4, M8 D118 |
+| Q4 | `attack_type`을 3종 열거형으로 고정 (목록 밖 값은 거부) — **옛 메시지 전용**. 실제 탐지 엔진은 `alert.rule`(룰 13개, 27_ §5.3)을 쓴다 | 없음 (M10에서 옛 메시지와 함께 정리) | D5 |
 | Q8 | 노드 간 시계 동기화(NTP/PTP). eBPF 에이전트·탐지 엔진·공격 도구가 다른 호스트면 시각이 어긋나 탐지 지연·매칭이 틀어진다. collector는 `ts_first_evidence > ts_detected`를 경고로만 남김 | 전 파트 (테스트베드 담당) | M3 D29 |
-| Q13 | 통신 방식을 **UDP로 통일할 예정**(팀 방침, 2026-10-21 전달받음). collector는 이미 UDP를 지원하므로(데이터그램 하나에 JSON 한 줄) 코드 변경은 없다. 파일 입력은 mock·테스트용으로 남긴다. 확정되면 CLAUDE.md 5절·SCHEMA.md 1절의 "UDP 또는 파일" 문구를 고친다 | 전 파트 | 아래 "열린 항목 추가 — UDP 통일" |
-| Q14 | UDP 손실 때 `attack_run`(정답) 유실 대책. 잃으면 그 run이 평가에서 사라지고, 그 run에 대한 탐지가 모두 오탐으로 세어진다. 후보: 파일로도 함께 남기기, 두 번 보내기(collector·evaluator의 중복 처리를 먼저 확인해야 함) | 공격 도구 | Q5 |
-| Q15 | 다른 호스트에서 보낼 때의 네트워크 구성. collector는 기본으로 `127.0.0.1`에서만 받으므로 `--in udp://0.0.0.0:9999`처럼 열고 방화벽을 열어야 한다. collector를 Windows의 WSL2에서 돌리면 외부 UDP가 WSL2까지 들어오는지 따로 확인해야 한다(테스트베드 Ubuntu에서 돌리면 해당 없음). 메시지는 1,400B 아래로 유지(넘으면 IP 단편화로 손실 위험이 커짐) | 테스트베드 담당, 전 파트 | Q8 |
-| Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드 LAN(RIC 자리)에 둔다. 탐지 엔진을 AWS에 두면 탐지 지연에 인터넷 구간 지연과 호스트 간 시계 오차가 섞이고, 평문 텔레메트리와 인증 없는 UDP가 인터넷을 지난다(그래도 두려면 VPN·NTP가 필요) | 탐지 엔진, 테스트베드 담당 | M7 D85 |
+| Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
+| Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl` — 3초 묶음 `kpm2`·`hello`가 든 실제 전송 본문)가 받은 폴더(`탐지엔진-대시보드샘플/일반데이터/`)에 없다. 지금 `kpm2` 묶음은 27_ §4.1 예시 1줄로만 시험했다 | 탐지 엔진 (다시 받기) | M8 |
+| Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ② 단계 비교 재생 `X-Env`에 출처 붙이기(`p4-kpm-only`·`lab-kpm-only`). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
+| Q22 | `L3-20`(Blind DoS) 피해자 연결(`ues[].peers`)의 근거가 오지 않는다(샘플 3개 모두 공격 연결 UE 근거만). 27_ §6.3의 '피해자 타임라인 함께 그리기'를 하려면 피해자 근거가 필요 | 탐지 엔진 | `docs/dashboard-design.md` 7절 |
+| Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청')를 그대로 반영함 ② `/ingest`로 `ue_evt`·100 ms 원본 `kpm2`가 단독 줄로 오면 거부(전송기 `send_ue_evt`를 켜면 거부 로그만 쌓임) ③ `Content-Length` 없는 요청은 `411`(27_ §3 표대로면 전송기가 멈춤) | 탐지 엔진 | M8 D116·D121 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
 | # | 내용 | 현재 처리 |
 |---|---|---|
-| T1 | 실제 eKPM / KPM 지표 이름 | TeleRAN 논문 기준으로 정함 (KPM은 3GPP 이름 그대로, eKPM은 Table I 항목을 snake_case로 쓴 가안). 스키마는 형식만 검사 |
-| T2 | UE ID 형식 (예시는 `0x4601`) | 비어 있지 않은 문자열만 검사 |
-| T4 | 탐지 룰의 `rule_id` 체계, 임계값, severity | mock은 `scenarios.yaml`의 가안 값 (`R-RRC-001`, `R-KPM-RRC-001` 등) |
 | T5 | 절차 타이밍, UE 수, 공격 강도 | mock은 그럴듯한 가안 값. 테스트베드에서 실측하면 `scenarios.yaml`을 맞춘다 |
+| T6 | 분석 엔진 실측 녹화에서 확인할 것(27_ §8): `session` 실제 형식, `ue_evt` 필드(분석 엔진 팀 답 대기), Table II 나머지(재수립·재개 4종은 `null` 예상), 실제 양(셀·UE 수) | `evidence.raw`는 해석하지 않고 그대로 저장. `session`은 비어 있지 않은 문자열만 검사 |
 
 ### 해결됨
 
@@ -54,6 +50,13 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 |---|---|---|
 | T3 | `ts_first_evidence <= ts_detected`, `ts_start <= ts_end` 검사 위치 | M3: collector가 검사하고 **경고만** 남긴 뒤 저장 (D29). SCHEMA.md에도 반영 |
 | Q12 | mock의 신호 폭주를 5G-Spector의 BTS Resource Depletion 방식으로 바꿀지 | 사용자 결정으로 바꿈 (D53~D55, 브랜치 `fix/mock-bts-depletion`) |
+| T1 | 실제 eKPM / KPM 지표 이름 | 11/04에 TeleRAN Table I·II의 24개로 고정했다가(D110·D111, 커밋 전), 탐지 쪽 27_ 확정(11/05)으로 바뀜: KPM2 = `kpm2`의 `cc`·`si` 키(Table II 이름 그대로), KPM1 = `ue_evt`(메시지 이름 문자열). SCHEMA.md 4절 (M8) |
+| T2 | UE ID 형식 | 27_ §2.3·§5.6: UE 키는 (`cell`, `du_ue_id`, `uid`), S-TMSI `"0x"`+16진 12자리, C-RNTI 10진 정수 (M8) |
+| T4 | 탐지 룰 체계·임계값·severity | 27_ §5.3: 룰 13개(`L3-xx`·`AN-xx`), 단계 1~4, severity `medium`·`high`, 임계값은 `alert.params`로 옴 (M8) |
+| Q5·Q6·Q14 | `attack_run` 발행 시점, 탐지 반복 여부, UDP 유실 대책 | 정답 기록을 대시보드로 받지 않기로 함(11/04 사용자 결정). 탐지는 `alert` 생애(`raise`·`update`·`clear`·`end`)로 옴. 평가는 전체 파이프라인 뒤 탐지 쪽과 정함(27_ §9) (M8) |
+| Q7·Q9·Q10·Q11 | 지표가 나오는 노드, eKPM `labels.ue`, Table I 숫자 코드표, `ue` 태그 수 | 27_로 해결: KPM2는 분석 엔진(eBPF)이 셀마다 100 ms로 세고 전송기가 3초로 묶음. KPM1은 `ue_evt`로 메시지 이름·알고리즘 이름을 문자열로 보냄(코드표 불필요). UE 값은 tag가 아니라 필드(`du_ue_id`·`uid`)로 저장 (M8) |
+| Q13·Q15 | UDP 통일, 다른 호스트에서 UDP로 보낼 때의 네트워크 | 탐지 엔진은 HTTPS `POST /ingest`로 보냄(11/02 합의). UDP는 mock·시험용으로만 남음 (M8) |
+| Q18 | 지표 이름 24개 고정의 팀 공유 | T1과 같은 이유로 공유할 필요가 없어짐 (M8) |
 
 ---
 
@@ -628,7 +631,12 @@ mock으로 만든 파이프라인(수집 → 저장 → 대시보드 → 평가 
 
 ## M7 — AWS 배포 · CI/CD (2026-10-26~, 브랜치 `feat/dashboard-M7` → `feat/dashboard-M7-aws`)
 
-CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD. 이 기록은 CI(PR #11 병합)와 EC2 배포 준비(이미지·compose override·절차 문서)까지다.
+CLAUDE.md 13절의 M1~M6 밖에서 새로 정한 마일스톤이다. 순서: CI → EC2 수동 배포 → CD.
+
+**완료 조건 확인 (2026-10-28)**
+- CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과 → PR #11부터 체크 3개(`pytest` 2 + `AWS 배포 구성`)
+- AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시 → 수동 배포 후 mock(10/26), replay(10/28) 확인
+- CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 → PR #17(`dev` → `main`) 병합으로 Deploy 첫 실행 성공
 CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에서 만든 `feat/dashboard-M7-aws`에서 했다.
 
 ### 한 일
@@ -709,6 +717,8 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 | **replay** (2026-10-28) | collector가 쓰던 `raw-20261026-074049.jsonl`(2MB)을 `mock-seed42.jsonl`로 복사해 `--speed 1 --retime now`로 재생 | 실시간 관제 "데이터 출처"가 **mock 재생 (성능 결과 아님)**, 지금 시각에 공격 구간·탐지선이 새로 그려짐. 성능 검증은 evaluator를 다시 돌리기 전까지 이전 결과("Mock data") 그대로 — 정상 |
 | CD 파일 검사 (로컬) | shellcheck 0.11.0 `deploy/server-deploy.sh`, actionlint 1.7.12(shellcheck 포함) 두 워크플로, JSON 파싱, SSM 문서 `allowedPattern`에 값 넣어 보기 | 모두 통과(ci.yml의 쓰지 않는 반복 변수 경고는 고침). 40자리 소문자 SHA만 허용, `abc; rm -rf /`·짧은 SHA·대문자 거부 |
 | OIDC 형식·버전 조사 | GitHub 문서·changelog, 공개 API | 조직 `portranproject` ID `337596278`, 생성 2026-10-04 → ID 포함 `sub` 형식 대상. `configure-aws-credentials` v6.3.0(2026-09-15) `e125382` |
+| CD PR | PR #16 (`f4c7602`) | CI 체크 3개 통과 → `dev` 병합(`20bb0f3`) |
+| **CD 첫 실행** | PR #17(`dev` → `main`, merge commit) 병합 → Actions → Deploy (run `40641895501`, 커밋 `6ac2cf0`) | **Success**, 24초. AWS 역할 받기(신뢰 정책의 ID 포함 `sub` 일치) → SSM 문서 실행 → 이미지 다시 빌드, collector만 Recreate → Healthy, InfluxDB·Grafana는 계속 실행(데이터 유지) → 헬스 체크 3개 통과. 서버는 이제 `6ac2cf0`에 detached HEAD |
 
 미확인:
 - 이 PC의 WSL에서 `docker`를 쓸 수 없어서(아래 환경 메모) 서비스 테스트 4개는 로컬에서도 돌리지 못했다.
@@ -730,7 +740,6 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 
 - [x] 커밋 `5855215` → `feat/dashboard-M7` push → PR #11에서 CI 첫 실행 통과 (2026-10-26)
 - [x] PR #11 병합 (`296dd8c`)
-- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호에서 CI 통과를 필수로 설정. status check 이름은 `pytest (Python 3.10)`, `pytest (Python 3.14)`, `AWS 배포 구성`. M1부터 남아 있던 `main` 보호 규칙도 함께
 - [x] collector Dockerfile, `docker-compose.aws.yml` (D86), 절차 문서 `docs/deploy.md`
 - [x] PR #12 CI 통과 (체크 3개, 2026-10-26)
 - [x] PR #12 병합 (`d96732e`)
@@ -740,11 +749,218 @@ CI는 `feat/dashboard-M7`(PR #11), 배포 준비는 병합 후 최신 `dev`에�
 - [x] 7절 evaluator를 mock이 끝난 구간으로 실행 → 성능 검증 대시보드 확인
 - [x] 서버에서 replay → 실시간 관제 "mock 재생" 표시 (2026-10-28). **M7 완료 조건 중 AWS 항목 충족**
 - [x] 병합된 브랜치 정리 (원격·로컬 5개)
-- [ ] 저장소 관리자: Settings → General → Pull Requests → "Automatically delete head branches" 켜기 (병합 후 브랜치 자동 삭제)
-- [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
 - [x] CD 워크플로·서버 스크립트·AWS 설정 JSON 작성 (D105~D109)
 - [x] 저장소 ID(`1421775186`, 저장소 페이지 소스의 `octolytics-dimension-repository_id`)로 신뢰 정책 채움 (D106)
 - [x] 콘솔 설정 (사용자, 2026-10-28, `docs/deploy.md` 9-1~9-4): OIDC 공급자 → SSM 문서 `portran-deploy` → IAM 역할 `portran-github-deploy`(인라인 정책 `portran-deploy-ssm`) → 저장소 변수 3개
-- [ ] 이 브랜치 PR → CI 통과 → 병합
-- [ ] `dev` → `main` PR 병합 → **Actions → Deploy 첫 실행**, 헬스 체크 통과 확인 (M7 완료 조건 중 CD 항목)
-- [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/` 추가 (사용자 확인 받음)
+- [x] CD PR #16 → CI 통과 → 병합
+- [x] `dev` → `main` PR #17 병합 → Deploy 첫 실행 성공 (M7 완료)
+- [x] CLAUDE.md 13절 마일스톤 표에 M7, 4절 디렉터리에 `.github/`·`deploy/` 추가 (사용자 확인 받음)
+
+M7 이후로 넘기는 것:
+- [ ] 저장소 관리자: `dev`·`main` 브랜치 보호(PR 필수, CI 체크 `pytest (Python 3.10)`·`pytest (Python 3.14)`·`AWS 배포 구성` 통과 필수, M1부터 남은 일). **CD가 `main` push로 서버에 배포하므로 `main` 보호가 특히 중요하다** (D105로 서버 권한은 좁혔지만, `main`에 들어간 코드는 그대로 배포된다)
+- [ ] 저장소 관리자: "Automatically delete head branches" 켜기 (남은 원격 브랜치 `docs/m7-deploy-record`, `feat/dashboard-M7-cd`, `docs/m7-complete`는 2026-10-28에 지움)
+- [ ] 발표 녹화 파일을 서버로 옮기는 방법 (replay용. 후보: S3 버킷 + 인스턴스 역할에 읽기 권한)
+- [ ] 팀 확인: Q16(탐지 엔진 위치), Q17(조직 Deploy keys 정책)
+
+---
+
+## CLAUDE.md 보완 — 배포 규칙 (2026-10-28, 브랜치 `docs/claude-md-deploy-rules`)
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `CLAUDE.md` 2절 | "포함하는 것"에 7번 AWS 배포 · CI/CD 추가 |
+| `CLAUDE.md` 12절 9항 | `main` 병합 = 곧바로 EC2 배포, `dev` → `main` PR은 "Create a merge commit"으로 병합(squash·rebase 금지)과 그 이유 |
+
+### 결정 사항
+
+| 결정 | 이유 | 팀 확인 |
+|---|---|---|
+| `dev` → `main`은 merge commit만 쓴다 | squash·rebase는 `main`에 `dev`와 다른 커밋을 만들어 다음 PR에서 같은 변경이 다시 차이로 보이고 충돌하기 쉬움. M7 첫 배포(PR #17)를 merge commit으로 했고, PR #18(`main` → `dev`)로 이력도 맞춤 | 불필요 (이 저장소 규칙) |
+
+### 확인 결과
+
+- `pytest`: 172 passed, 4 skipped (CLAUDE.md의 JSON 예시를 읽는 스키마 테스트 포함, 서비스 테스트 4개는 로컬 Docker 없음)
+
+---
+
+## 지표 이름 고정 — TeleRAN Table I·II (2026-11-04, 브랜치 `docs/schema-teleran-tables`)
+
+> **커밋하지 않고 M8에 합쳤다(2026-11-09, 사용자 결정 D113).** 다음 날 탐지 쪽 27_ 명세가 확정되면서 `metric` 형식 자체를 실제로 보내는 쪽이 없어졌다. 이 절은 기록으로 남긴다. Table I·II 대응은 SCHEMA.md 4절이 대신한다.
+
+사용자 요청: CLAUDE.md 5절 메시지 스키마를 TeleRAN 논문 4쪽 Table I·II로 고정, SCHEMA.md도 함께.
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `CLAUDE.md` 5.1절 | 지표 이름을 Table I(eKPM 10개)·Table II(표준 KPM 14개)로 고정. 두 표를 논문 열(Category·Handler / Type·Handler·Source)과 함께 넣음. 예시를 `rrc_msg_id`로 |
+| `CLAUDE.md` 5.2절 | 근거 예시를 `count(rrc_msg_id=RRCSetupRequest)`, `RRC.ConnEstabAtt`로. 근거 `metric` 규칙 한 줄 추가 |
+| `CLAUDE.md` 7절, 12절 6항 | 중복 목록을 5.1절 참조로 바꿈. "모르는 것" 예에서 지표 이름을 뺌 |
+| `schema/SCHEMA.md` | v0.2. 2·3절 예시와 필드 설명(`name`·`value`·`unit`·`labels`), 6절 "가안" 해제와 확정·가안 구분표, 6.2절을 지표별 14행 + TS 28.552 절 번호로, 6.4절, 변경 이력 |
+| `tests/test_collector.py` | SCHEMA.md 예시를 읽는 InfluxDB 변환 테스트 3곳의 기대값을 새 예시에 맞춤 (검사 로직은 그대로) |
+
+`messages.schema.json`, mock, collector, 대시보드 코드는 바꾸지 않았다. mock은 원래 이 24개 이름만 쓴다.
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D110 | 문서 예시(CLAUDE.md·SCHEMA.md)의 지표를 `rrc_setup_req_rate`·`RRU.PrbUsedDl`(목록 밖)에서 `rrc_msg_id`, `count(rrc_msg_id=RRCSetupRequest)`, `RRC.ConnEstabAtt`로 바꿈. 값은 `scenarios.yaml`의 `RRC_SIGNALING_STORM` 근거 범위와 맞춤 | 이름을 고정해 놓고 예시가 목록 밖 이름을 쓰면 보내는 쪽이 예시를 따라 할 수 있음 | 불필요 |
+| D111 | eKPM 이름은 기존 snake_case 식별자(`ue_c_rnti` … `nas_msg_id`)를 그대로 확정 | Table I에는 설명 이름("UE Cipher Algorithm")만 있고 식별자가 없음. 논문 그림의 예(Fig. 1 `RRC.CipheringAlgorithm`, Fig. 2b `s_tmsi`)는 표기가 서로 달라 기준으로 삼기 어려움. 이미 mock·대시보드·테스트가 이 이름을 씀 | 필요 (eBPF, Q18) |
+
+### 확인 결과
+
+- 문서 표의 이름 = `mock/scenarios.yaml`의 `ekpm`(10)·`kpm`(14): CLAUDE.md 5.1절, SCHEMA.md 6.1·6.2절 모두 순서까지 일치 (스크립트로 대조)
+- SCHEMA.md 2절의 인라인 표준 KPM 예시: 스키마 검증 통과
+- `pytest`: 176 passed (CLAUDE.md·SCHEMA.md JSON 예시 검증 테스트, 서비스 테스트 포함)
+
+### 남은 일·TODO
+
+- [ ] JSON Schema에서 목록 밖 이름을 거부할지 결정 (지금은 형식만 검사). 거부하면 `kind`별 이름 목록을 스키마에 넣고, eBPF 팀에 먼저 알린다
+- [ ] 팀 공유: Q18 (eBPF, 탐지 엔진)
+
+---
+
+## M8 — 탐지 엔진 연동 1: 스키마 v0.3 · collector `/ingest` (2026-11-09, 브랜치 `feat/dashboard-M8`)
+
+배경: 탐지 쪽이 11/05에 `27_탐지엔진_1-4단계-대시보드-지표_명세서.md`(확정)와 샘플을 보냈다. 대시보드 2차 답변서(11/04, `docs/정리.md`)에 대한 답이고, 10/31의 `17_` 명세를 대신한다. 실제로 오는 레코드가 우리 스키마(`metric`·`detection`·`attack_run`)와 형식부터 달라서(아래 비교), 11/04의 지표 이름 고정(v0.2, 커밋 전)을 따로 커밋하지 않고 이 작업에 합쳤다(사용자 결정).
+
+| 항목 | 이전 (v0.2) | 27_ |
+|---|---|---|
+| 레코드 | `metric`·`detection`·`attack_run`·`overhead` | 경보 경로 `alert`·`evidence`·`gap` + 상시 경로 `kpm2`(3초 묶음)·`hello`·`f1_evt` |
+| KPM2 (Table II) | `metric` 한 줄 = 지표 하나 | `kpm2` 한 줄 = 셀 하나 × 3초, `cc`·`si`·`ext` 안에 원인별 하위 키 |
+| KPM1 (Table I) | `metric` `kind: ekpm` 숫자 코드 | `ue_evt` 메시지 하나 = 한 줄, 이름 문자열. 상시로는 안 오고 `evidence.raw`로만 |
+| 탐지 | `detection` (룰셋 `full`·`kpm_only`) | `alert` 생애 `raise`→`update`→`clear`/`end`, 룰 13개, 단계 1~4 |
+| 정답 | `attack_run` | 없음 (평가는 전체 파이프라인 뒤) |
+| 시각 · 모르는 필드 · `null` | ns · 거부 · 없음 | **ms** · 받음 · "모름" |
+| 전송 · 중복 | UDP·파일 · 없음 | HTTPS `POST /ingest` + `X-Env` · 환경 + 레코드별 키 |
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `schema/messages.schema.json` | 탐지 엔진 레코드 6종 추가(모르는 필드 허용, `fmt`·`ver` 1, ms 시각, `kpm2`는 `agg_ms` 필수). `evidence.raw`가 KPM1 `ue_evt`면 `$defs.ue_evt`로 타임라인 필드 7개 검사. 옛 3종은 설명에 "mock 전용, 교체 예정". `$defs.evidence`(탐지 근거 항목)를 `$defs.detection_evidence`로 이름만 바꿈 |
+| `schema/SCHEMA.md` | v0.3으로 다시 씀: 두 갈래, `/ingest` 요청·응답·중복 키(2절), 레코드별 검사(3절), KPM1 `ue_evt` 형식·메시지별 `f` 표(3.7절), Table I·II ↔ `kpm2` 키·`ue_evt` 필드 대응(4절, v0.2의 24개 이름 고정을 대신함), InfluxDB 저장(5절), 옛 메시지는 6절에 모음 |
+| `collector/ingest.py` (새 파일) | `POST /ingest` HTTP 서버(표준 라이브러리), `X-Env` 검사, 중복 키(16바이트 해시), 크기 제한 LRU, `GET /healthz` |
+| `collector/collector.py` | `--in http://host:port` 입력, `handle_request()`(저장 후 응답, 503이면 아무것도 반영 안 함), 중복 제거, 환경별 녹화 `raw-<시각>-<환경>.jsonl`, 경보 세션(첫 `evidence`의 `raw.session`) 채우기, `--env`, 로그에 중복 수 |
+| `collector/influx_writer.py` | 새 measurement 6종 변환(5절 표), `kpm2` 지표 펴기, 룰별 대표 값 |
+| `.env.example` | `COLLECTOR_HTTP_MAX_BYTES`(1 MiB), `COLLECTOR_HTTP_TIMEOUT_MS`(30초), `COLLECTOR_DEDUP_MAX_KEYS`(20만) |
+| `tests/test_ingest.py` (새 파일) | 변환·중복 키·`X-Env`·요청 처리(재전송, 틀린 줄, 400, 503 뒤 재시도, InfluxDB 데이터 거부)·세션 채우기·UDP 입력·HTTP 서버(200/400/404/411/413/503, `/healthz`) 47개 |
+| `tests/test_schema.py` | SCHEMA.md 예시가 10종 모두 덮는지, 탐지 쪽 샘플 32개 전 줄 통과, 새 레코드 거부 사례 48개(그중 `ue_evt` 10개), 모르는 필드·`null`·목록 밖 메시지 이름 허용 |
+| `tests/test_influx_integration.py` | 실제 InfluxDB에 샘플 전체를 `/ingest` 요청처럼 넣어 타입 충돌·덮어쓰기가 없는지(점 수 = 줄 수), 모든 경보에 세션이 붙는지 |
+| `tests/data/detection/` · `reference/detection/` | 탐지 쪽 샘플 32개(경보 경로)와 27_ 명세·샘플 분석표를 저장소로 복사. 받은 폴더 `탐지엔진-대시보드샘플/`은 그대로 둠 |
+| `CLAUDE.md` | 맨 위에 "답변은 항상 한국어"(사용자 요청). 2절 그림, 4절 구조, 5·6절(두 갈래, 레코드 표, InfluxDB 매핑), 7절 mock 지표 참조, 8절 `/ingest` 약속, 13절에 M8~M10 |
+| `README.md` | 그림, collector `--in http://`·`--env`, 녹화 파일, 문제 해결(Grafana 401) |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D112 | 옛 메시지 `metric`·`detection`·`attack_run`은 **단계적으로 지운다** — 이번엔 새 6종만 더하고 M10(대시보드 재구성)에서 지움. `overhead`는 R5 협의 전까지 유지 | 사용자 결정(11/09). 한 번에 지우면 mock·evaluator·replay·대시보드가 함께 깨져 단계마다 테스트를 통과시킬 수 없음 | 불필요 |
+| D113 | v0.2(지표 이름 24개 고정)는 커밋하지 않고 v0.3에 합침. 24개는 `metric.name` 대신 `kpm2` 키·`ue_evt` 필드 대응표(SCHEMA.md 4절)로 | 사용자 결정(11/09). `metric` 형식을 보내는 쪽이 없어짐 | 불필요 |
+| D114 | 새 레코드는 **모르는 필드를 받는다**. `alert.fmt`, `kpm2`·`hello`·`f1_evt`의 `ver`가 1이 아니면 거부 | 27_ §2.4(필드는 형식 판을 올리지 않고 더함), 답변서 D8·27_ §9 동의 | 불필요(합의됨) |
+| D115 | 열거로 묶은 값: `event`·`unit`·`kind`·`stage`(1~4)·`phase`. `rule`·`severity`·`mode`는 비어 있지 않은 문자열이면 받음 | 생애·단계는 화면 로직이 기대는 값. 새 룰·심각도는 저장하고 화면이 처리(27_ §7 '모르는 값이 오면 그대로 표시') | 불필요 |
+| D116 | `/ingest`의 `kpm2`는 `agg_ms` 필수(묶은 줄만). `ue_evt`·100 ms 원본 `kpm2` 단독 줄은 거부(거부 로그에 남음) | 27_ §4.1 '`/ingest`로 오는 `kpm2`는 모두 묶은 줄', §4.2 `ue_evt`는 상시로 안 보냄 | 알림 (Q20) |
+| D117 | `evidence.raw`는 `type`만 검사하고 해석하지 않음 | 27_ §8: `ue_evt` 형식은 분석 엔진 답에 따라 바뀔 수 있음 | 불필요 |
+| D118 | ms 시각 범위 10¹²(2001-09-09) ~ 9,999,999,999,999(2286년) | 초·마이크로초·나노초로 잘못 보낸 값을 잡음(옛 ns 하한과 같은 생각) | 불필요 |
+| D119 | `/ingest`는 표준 라이브러리 `ThreadingHTTPServer`. 처리 스레드는 요청을 큐에 넣고 기다리고, collector 메인 루프 한 스레드가 처리 | 의존성 추가 없음. 중복 키·녹화·세션 표를 잠금 없이 한 스레드가 만짐 | 불필요 |
+| D120 | 요청 처리 순서: 검증·중복 검사 → InfluxDB에 바로 씀 → 성공하면 녹화·중복 키·세션 표 반영 → 응답. 일시 장애면 아무것도 반영하지 않고 `503` | 답변서 D1 "2xx는 저장 뒤". 반영 전에 실패해야 재전송이 처음처럼 저장됨(중복으로 걸러지지 않음) | 불필요 |
+| D121 | `Content-Length` 필수(없으면 `411`, chunked 미지원). 상한 검사는 본문을 읽기 전에 | 상한을 넘는 본문을 메모리에 올리지 않으려고. 전송기(파이썬)는 늘 길이를 보냄 | 알림 (Q20) |
+| D122 | `X-Env`는 영숫자로 시작, 영숫자·`._-` 64자 이하. 틀리면 `400` | 녹화 파일 이름에 들어감(`../` 같은 경로 방지) | 불필요 |
+| D123 | 중복 키는 메모리 LRU(`COLLECTOR_DEDUP_MAX_KEYS` 20만, 약 30 MB). 재시작하면 비지만 InfluxDB에서 같은 점에 덮어써져 결과는 같음(녹화엔 한 번 더 남을 수 있음) | 재전송은 끊긴 직후에 오므로 최근 키로 충분. 디스크 상태를 두지 않아 단순 | 불필요 |
+| D124 | InfluxDB에서 `alert_id`를 **tag**로 둠(CLAUDE.md 6절 원칙의 예외). `evidence`·`f1_evt` 시각은 ms × 10⁶ + `seq` mod 10⁶ | 샘플에서 같은 원본 줄이 두 경보의 근거로 옴(S24 판정 보류 9줄), 같은 ms 줄이 많음 → 이렇게 안 하면 서로 덮어씀. 경보 수만큼 series가 늘지만 경보는 공격마다 하나 | 사용자 확인(11/09) |
+| D125 | `kpm2`·근거 `kpm2` 지표는 모두 실수, `null`은 뺌. 룰마다 다른 묶음은 `<이름>_json` 문자열 | 27_ §7.1 타입 충돌 경고. `null`은 그래프에서 '데이터 없음' | 불필요 |
+| D126 | `alert`·`gap`의 `session` 필드: 같은 요청의 `evidence`에서 먼저 알아내고, 모르면 나중에 같은 점에 `session`만 덧씀. 표는 메모리(경보 1만 개) | 27_ §7 '첫 `evidence`의 `raw.session`이 경보의 세션'. `raise`가 묶음 끝에 오면 증거는 다음 요청에 옴 | 불필요 |
+| D127 | `hello`의 시각 = collector가 받은 시각 | `hello`에 시각 필드가 없음(27_ §4.3) | 불필요 |
+| D128 | `alert_id`는 field로 두지 않음 | 같은 이름의 tag·field가 있으면 Flux pivot 때 열이 겹침 | 불필요 |
+| D129 | 대표 값 `rep_key`·`rep_value`(실수) — 27_ §5.3 '대표 값(제안)', 판정 보류 경보는 `held_w` | 경보 목록·그래프에서 값 하나로 보이기. 룰마다 이름이 달라도 한 필드라 타입 충돌 없음 | 불필요 |
+| D130 | 탐지 엔진 레코드 녹화는 환경별 파일 `raw-<시각>-<환경>.jsonl`. 옛 메시지는 기존 `raw-<시각>.jsonl` | 줄에 환경이 없어서, 나중에 replay가 `X-Env`를 붙여 다시 보내려면 파일로 갈라야 함 | 불필요 |
+| D131 | UDP·파일 입력도 새 레코드를 받음(환경은 `--env`, 기본 `unknown`) | 샘플을 넣어 보거나 전송기 없이 시험할 때 | 불필요 |
+| D132 | HTTP 입력은 기본으로 켜지 않음(`--in http://…`). AWS 구성(compose·Caddy)은 M9 | 기본 동작·배포 구성을 이번에 바꾸지 않으려고 | 불필요 |
+| D133 | 마일스톤 M8(수신·저장) · M9(AWS 앞단·연동 시험) · M10(대시보드 재구성·옛 메시지 삭제)을 CLAUDE.md 13절에 추가 | 11/09 합의한 순서 | 불필요 |
+| D134 | `evidence.raw`가 KPM1 `ue_evt`면 타임라인에 쓰는 7개(`type`·`t_ms`·`cell_id`·`du_ue_id`(정수 또는 `null`)·`dir` `UL`/`DL`·`proto` `RRC`/`NAS`/`F1AP`·`msg`)만 검사하고, 나머지·모르는 필드·목록 밖 메시지 이름은 받음. 단독 `ue_evt`는 계속 거부(D116) | 사용자 선택(11/09, 문서 + 최소 검사). 27_ §8은 `ue_evt` 형식이 초안이라 해석하지 말라고 했지만, 화면이 기대는 값이 틀리면 저장 단계에서 잡는 편이 낫다. 샘플 655줄 모두 통과. 분석 엔진이 이 7개를 바꾸면 그 근거 줄만 거부 로그로 감(경보는 저장) | 알림 (분석 엔진 답이 오면 3.7절과 대조) |
+
+### 확인 결과
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | **304 passed, 2 failed.** 실패 2개는 `test_dashboards.py`의 Grafana 쿼리 — `HTTP 401 Invalid username or password`. 실행 중인 Grafana의 관리자 비밀번호가 `.env`와 달라서다(코드와 무관, README 문제 해결에 적음). 세션을 시작할 때는 Grafana·InfluxDB에 접속이 안 돼 172 passed, 4 skipped였다 |
+| 샘플 스키마 | 탐지 쪽 샘플 32개 1,758줄 모두 통과(그중 KPM1 `ue_evt` 근거 655줄 — 28개 파일, 메시지 24종 — 도 `ue_evt` 최소 검사 통과). 27_ 본문의 예시 중 묶은 `kpm2`·`hello`·`f1_evt`·`alert`·`evidence`·`gap` 통과, 원본 `ue_evt`·100 ms `kpm2`는 의도대로 거부 |
+| 실제 InfluxDB (`test_detection_samples_to_influx`) | 샘플 32개 + 예시 3줄 = 1,761줄을 요청 33개로 넣어 모두 `accepted`. measurement별 점 수가 줄 수와 같음(덮어쓴 것 없음), 경보 58개 모두 `session` 필드 있음 |
+| CLI | `python -m collector.collector --dry-run --in http://127.0.0.1:8088` + `curl`로 `T10_긴공격` 전송 → `{"accepted": 667, "rejected": 0, "duplicates": 0}`, 다시 보내면 `duplicates: 667`, `X-Env: a b` → `400`, `raw-…-lab.jsonl` 667줄, SIGTERM에 정상 종료 |
+
+확인하지 못한 것: TLS 앞단·AWS(M9), 실제 전송기와의 연동, 3초 묶음 `kpm2`가 든 실제 전송 본문(Q19 — 27_ 예시 1줄로만 시험), Python 3.14(CI에서 확인; 로컬은 3.12).
+
+### 환경 메모
+
+- 이 세션에서는 WSL에 `docker` 명령이 없었다(Docker Desktop WSL integration 꺼짐). 그래도 Docker Desktop의 InfluxDB·Grafana는 `localhost`로 접속돼 통합 테스트가 돌았다. `docker` 명령이 필요하면 README 문제 해결의 integration 항목대로 켠다.
+- 백그라운드(`&`)로 띄운 collector는 SIGINT(Ctrl+C)를 무시한다(비대화형 셸의 백그라운드 프로세스 성질). 끌 때는 `kill -TERM <pid>`(collector가 SIGTERM을 받아 flush 후 종료).
+
+### 남은 일·TODO
+
+- [x] 커밋 (`feat/dashboard-M8`, 2026-11-09)
+- [x] push·PR (`feat/dashboard-M8` → `dev`, PR #21 병합, 2026-11-09)
+- [ ] Q19 상시 경로 샘플 2개 다시 받기 → `tests/data/detection/`에 넣고 통합 테스트에 포함
+- [ ] Q20 탐지 쪽에 알리기 (중복 키·`X-Env` 반영, `ue_evt` 단독 거부, `411`)
+- [ ] M9: Caddy(443, TLS 1.2+, 자체 서명 인증서 IP SAN) → collector `127.0.0.1:8088`, 보안 그룹에 p4 CU 박스 `43.202.191.147`, `docker-compose.aws.yml`에 `--in http://…`와 헬스 체크, `.pem` 전달, 탐지 쪽 전송기와 연동 시험
+- [ ] M10: 대시보드 — 설계 초안 `docs/dashboard-design.md`(관제·성능, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
+- [ ] T6 첫 실측 녹화 뒤 확인 (`session` 형식, `ue_evt` 필드, Table II 나머지)
+- [ ] `docs/정리.md`(11/04 답변서, 이미 보냄)와 받은 폴더 `탐지엔진-대시보드샘플/`을 저장소에 남길지 정리
+
+---
+
+## M9 — 탐지 엔진 연동 2: AWS 앞단 TLS · 연동 시험 (2026-11-09~, 브랜치 `feat/dashboard-M9`)
+
+목표: 탐지 쪽 전송기(p4 CU 박스)가 `https://<대시보드 탄력적 IP>/ingest`로 보낸 레코드가 InfluxDB에 저장되게 한다(CLAUDE.md 13절). `feat/dashboard-M8`에서 브랜치를 만들었다가 M8 병합(PR #21) 뒤 `dev` 위로 옮겼다(rebase).
+
+### 한 일 (진행 중)
+
+| 파일 | 변경 |
+|---|---|
+| `deploy/nginx/ingest.conf.template` (새 파일) | 443 TLS(1.2·1.3) → `collector:${COLLECTOR_HTTP_PORT}`로 `/ingest`·`/healthz`만 넘김, 그 밖 404, 본문 `${COLLECTOR_HTTP_MAX_BYTES}` 넘으면 413, 502·504 → 503, `X-Real-IP` |
+| `deploy/ingest-cert.sh` (새 파일) | 자체 서명 인증서(SAN = 공인 IP) 생성. 같은 IP면 그대로, 다르면 옛 것을 `old-<시각>/`으로 옮기고 새로. 새로 만들면 PEM 출력 |
+| `docker-compose.aws.yml` | `ingest` 서비스(`nginx:1.30.5-alpine`, 443, 인증서·템플릿 마운트). collector에 `--in udp://…`·`--in http://0.0.0.0:8088`, 헬스 체크에 `/healthz` |
+| `deploy/server-deploy.sh` | 배포 전에 인증서 확인·생성(공인 IP = `.env` `INGEST_PUBLIC_IP` 또는 EC2 메타데이터), 헬스 체크에 HTTPS `/ingest` 경로 |
+| `.env.example` · `.gitignore` | `COLLECTOR_HTTP_PORT`, `INGEST_HTTPS_PORT`·`INGEST_PUBLIC_IP`·`INGEST_CERT_DAYS` · `certs/` 제외 |
+| `collector/ingest.py` | 거부 로그 `source`에 앞단이 붙인 `X-Real-IP`(전송기 주소) 기록 |
+| `.github/workflows/ci.yml` | `aws-compose` 작업: 인증서(127.0.0.1) 만들고 띄운 뒤 HTTPS 경로 검사 — collector 포트 비공개, `/healthz`, 404, 413, 엄격한 TLS 검증으로 샘플 두 번(667 저장 → 667 중복), InfluxDB `env=ci` 건수, collector를 멈추면 503 |
+| `tests/test_deploy.py` (새 파일) | 인증서가 파이썬 엄격 검증 통과·다른 IP 거부·재사용·교체·잘못된 IP 거부, compose·nginx 설정 검사 (11개) |
+| `tests/test_ingest.py` | `X-Real-IP` 기록 |
+| `docs/deploy.md` | 구성 그림·열린 포트, 10절(보안 그룹, 인증서, 확인, 문제 해결) |
+| `CLAUDE.md` · `README.md` | 디렉터리 구조, AWS 배포 설명 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D135 | 앞단은 Caddy(답변서 D2③에서 제안) 대신 **nginx** | 도메인 없이 IP로 접속하면 SNI가 없는데, nginx는 서버 블록의 인증서 하나를 그대로 쓴다(Caddy는 이름으로 인증서를 고르는 방식이라 따로 설정이 필요). 413·503을 앞단에서 정확히 낼 수 있고 `nginx -t`로 설정을 검사할 수 있다. 전송기 쪽에서 보이는 차이는 없다 | 불필요 |
+| D136 | nginx가 낸 502·504는 503으로 바꿔 답함 | 전송기는 503·연결 실패·시간 초과만 다시 보내고 그 밖의 코드는 설정 문제로 보고 멈춘다(27_ §3). 배포로 collector가 잠깐 내려가도 전송이 멈추지 않게 | 불필요 |
+| D137 | nginx가 collector 주소를 요청마다 Docker DNS(`127.0.0.11`)로 찾음 | 배포 때 collector 컨테이너가 다시 만들어지면 IP가 바뀔 수 있는데, nginx는 처음 찾은 주소를 계속 쓴다 | 불필요 |
+| D138 | 인증서: EC P-256 자체 서명, SAN = 공인 IP, `basicConstraints=critical,CA:TRUE`·`keyUsage=keyCertSign`, 730일(`INGEST_CERT_DAYS`) | 자체 서명 인증서가 곧 전송기의 신뢰 기준(`ca_file`). 파이썬 3.13+의 엄격한 검증(`VERIFY_X509_STRICT`)도 통과하게 함(테스트로 확인) | 불필요 |
+| D139 | 배포 스크립트가 인증서를 자동으로 만든다(없거나 IP가 바뀌었을 때만). 공인 IP는 `INGEST_PUBLIC_IP`, 비면 EC2 메타데이터(IMDSv2). 새로 만들면 PEM을 배포 로그에 출력 | 서버에 따로 들어가 만들 필요가 없음. PEM은 공개 정보라 로그에 나와도 됨. 개인 키는 서버 `certs/`에만(600) | 불필요 |
+| D140 | collector HTTP 포트(8088)는 호스트에 열지 않고, nginx 컨테이너에는 `.env` 전체가 아니라 필요한 값 2개만 넘김 | 바깥에서 TLS를 건너뛰고 collector로 바로 가는 길을 없앰. nginx에 InfluxDB 토큰 등이 들어가지 않게 | 불필요 |
+| D141 | 서버 헬스 체크는 공인 IP 주소로 인증서를 검증하되 `curl --connect-to`로 서버 안(127.0.0.1)에 연결 | 보안 그룹이 443을 p4 CU 박스만 열어 두므로 서버 자신은 공인 IP로 못 들어옴 | 불필요 |
+| D142 | `nginx:1.30.5-alpine` | nginx 안정판 1.30 계열(짝수), 2026-09 빌드 — 고정 버전 태그(CLAUDE.md 3절) | 불필요 |
+
+### 확인 결과 (지금까지)
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 316 passed, 2 failed (M8과 같은 Grafana 401 — 로컬 환경) |
+| 인증서 (`tests/test_deploy.py`) | 파이썬 엄격 검증으로 TLS 연결 성공, 다른 IP의 인증서는 검증 실패, 같은 IP면 그대로·다른 IP면 교체(옛 것 보관), 잘못된 IP 거부 |
+| nginx 설정 | 우분투 nginx 1.24 패키지로 템플릿을 채워 `nginx -t` 통과 |
+| 로컬 종단 시험 | 그 nginx(127.0.0.1:18443)를 collector(`--dry-run --in http://127.0.0.1:18088`) 앞에 두고 CI와 같은 검사: `/healthz` ok, 그 밖 경로 404, 1.1 MB → 413, 엄격 TLS로 `T10` 샘플 두 번 → `accepted 667` / `duplicates 667`, collector를 멈추면 `/healthz`·`/ingest` 모두 503 |
+
+확인하지 못한 것: Docker로 띄운 `nginx:1.30.5-alpine` 컨테이너와 compose 전체(push 뒤 CI `aws-compose`에서 확인), 실제 EC2 배포·메타데이터 IP·보안 그룹, 탐지 쪽 전송기와의 연동.
+
+### 남은 일
+
+- [ ] 커밋·push → CI `aws-compose` 통과 확인
+- [ ] M9 PR (`feat/dashboard-M9` → `dev`) — M8 병합(PR #21) 뒤 `dev` 위로 옮김
+- [x] (사용자, AWS 콘솔) 보안 그룹 인바운드 HTTPS 443, 소스 `43.202.191.147/32`(설명 `jesick`) — 2026-11-09 화면 확인
+- [x] (사용자) 대시보드 탄력적 IP = `3.39.170.31` 확인 (탐지 쪽 전송기 기본값과 같음, 2026-11-09)
+- [ ] 보안 그룹 점검: 같은 그룹에 소스 `49.1.157.235/32`의 **모든 트래픽** 규칙이 있다(설명 `nagyun-ho`). 문서(1-2절)는 3000만 여는 구성이라, 필요한 포트(3000, 시험용 443)로 줄이는 것을 권함 — 사용자 판단
+- [ ] `dev` → `main` 병합 = EC2 배포 (확인 후). 배포 로그에서 PEM 확인
+- [ ] 탐지 쪽에 PEM·주소 전달(+ Q20 알릴 것) → 전송기 `--once` 연동 시험 → InfluxDB·녹화 확인 → M9 완료 기록

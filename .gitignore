@@ -14,3 +14,5 @@ venv/
 
 # evaluator 리포트 (발표용으로 남길 것은 따로 옮겨 커밋)
 reports/
+# /ingest TLS 인증서·개인 키 (서버에서 deploy/ingest-cert.sh가 만든다, M9)
+certs/

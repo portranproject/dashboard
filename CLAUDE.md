@@ -2,13 +2,15 @@
 
 이 문서는 Claude Code가 이 저장소에서 작업할 때 따르는 기준이다. 작업 전에 끝까지 읽는다.
 
+**답변은 항상 한국어로 한다.** 대화 답변, 질문 창(질문·선택지·설명 모두), 진행 보고, 문서가 모두 해당한다. 코드 식별자·명령·파일 경로·필드 이름은 원문 그대로 쓴다.
+
 ## 0. 작업 시작 전 필수: 참고 논문 읽기
 
 **세션을 시작하면(첫 컨텍스트에서) 코드를 보거나 고치기 전에 `reference/`의 두 논문을 먼저 끝까지 읽는다.** 이 저장소의 지표 정의, 공격 유형, 탐지 규칙, 평가 방식의 근거가 이 논문들이다.
 
 | 파일 | 논문 | 이 저장소에서 쓰는 곳 |
 |---|---|---|
-| `reference/TeleRAN.pdf` | TeleRAN: eBPF 기반 OpenRAN 텔레메트리 (FutureG 2026) | Table I → eKPM, Table II → 표준 KPM. mock 지표, `schema/SCHEMA.md` 6절, 대시보드 |
+| `reference/TeleRAN.pdf` | TeleRAN: eBPF 기반 OpenRAN 텔레메트리 (FutureG 2026) | Table I → KPM1(eKPM), Table II → KPM2(표준 KPM). `schema/SCHEMA.md` 4절(탐지 엔진 레코드와의 대응)·6.5절(mock 지표), 대시보드 |
 | `reference/5GSpector.pdf` | 5G-Spector: O-RAN L3 공격 탐지 (NDSS 2024) | MobiFlow 텔레메트리, L3 공격 유형과 탐지 규칙, 탐지 지연·오버헤드 평가 방식 |
 
 - 요약과 이 저장소와의 대응 관계는 `reference/README.md`에 있다. 요약만 읽고 넘어가지 말고 원문을 읽는다.
@@ -23,17 +25,49 @@
 - 테스트베드: OAI nrUE ↔ USRP B210 ↔ OCUDU(CU/DU 분리) ↔ Open5GS, FlexRIC(E2SM-KPM)
 - 프로젝트 핵심 주장: **표준 KPM만으로는 못 잡는 위협을 eKPM + 룰로 탐지한다.** 대시보드와 검증은 이 주장을 숫자와 화면으로 보여주는 역할이다.
 
+### 1.1 테스트베드 환경 두 곳 = 대시보드의 데이터 출처
+
+원본 그림: [`docs/images/아키텍쳐.png`](docs/images/아키텍쳐.png). 아래는 그 내용을 글로 옮긴 것이다.
+
+```
+┌ AWS · 서울 리전(ap-northeast-2) ─────────────────────────────────────────┐
+│ 골든 AMI(공통 설치 이미지) ──복제──> 사람마다 CU·DU 세트 하나              │
+│                                                                           │
+│ ┌ 보안 그룹 — 내 CU·DU만 묶고 다른 세트와 격리 ─────────────────────────┐ │
+│ │ SSH(22)는 내 IP만 허용, 세트 안(CU ↔ DU)은 자유 통신                   │ │
+│ │                                                                        │ │
+│ │  CU 인스턴스 (c6i.xlarge)   ◀── F1 / E2 ──▶   DU 인스턴스 (c6i.2xlarge)  │ │
+│ │  CU · RIC · 5G Core                            DU · UE(단말)            │ │
+│ └────────────────────────────────────────────────────────────────────────┘ │
+│ 사설 IP는 고정(F1·E2에 사용), 공인 IP는 껐다 켜면 바뀜                       │
+└───────────────────────────────────────────────────────────┬───────────────┘
+                                                            ├──> 대시보드
+┌ On-Premise · 연구실 ─────────────────────────────────────┐ │
+│ 실물 테스트베드 (노트북 여러 대 + 무선 장비)                ├─┘
+└───────────────────────────────────────────────────────────┘
+```
+
+| 출처 | 무엇 | `X-Env` | 대시보드 선택지 | 지금 |
+|---|---|---|---|---|
+| **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `p4` | AWS | **받는다** |
+| **On-Premise** | 연구실 실물 테스트베드(실험 노트북) | `lab` | On-Premise | 나중 (2026-11-09 사용자 결정 — 우선 AWS만) |
+
+- 분석 엔진(eBPF)·탐지 엔진·전송기는 CU 인스턴스에서 돈다(27_ §9 R5 "p4 CU 박스"). 전송기가 HTTPS `POST /ingest`로 **대시보드 EC2**(테스트베드 세트와 별개, t3.small, `docs/deploy.md`)에 보낸다.
+- 두 출처는 같은 대시보드에서 데이터 출처 선택(`env` 태그)으로 고른다. 설계는 `docs/dashboard-design.md` 1절.
+
 ## 2. 이 저장소의 범위 (내 담당)
 
-다른 팀원 담당(공격 도구, eBPF 에이전트, 탐지 엔진)은 아직 완성되지 않았다. 그래서 **mock 생성기로 먼저 개발하고, 나중에 실제 파트로 교체**한다.
+처음에는 다른 팀원 담당(공격 도구, eBPF 에이전트, 탐지 엔진)이 없어서 **mock 생성기로 먼저 개발했다.** 탐지 엔진 출력 형식이 확정됐으므로(2026-11-05, 5절) 실제 경로로 바꾸는 중이다(M8~M10).
 
 ```
-[지금]  mock 생성기 ──────────────────────┐
-                                          ├─ UDP/파일(JSON Lines) ─> collector ─> InfluxDB ─> Grafana
-[나중]  eBPF 에이전트 / 탐지 엔진 / 공격 도구 ┘                         │
-                                                                     └─> raw 녹화(.jsonl) ─> replay
-                                                  evaluator ─> eval_result (InfluxDB) + 리포트
+[실제]  분석 엔진(eBPF) ─> 탐지 엔진 ─> 전송기 ─HTTPS POST /ingest─┐
+                                                                   ├─> collector ─> InfluxDB ─> Grafana
+[mock]  mock 생성기 ─────────── UDP/파일(JSON Lines) ──────────────┘      │
+                                                                         └─> raw 녹화(.jsonl) ─> replay
+                                                  evaluator ─> eval_result (InfluxDB) + 리포트  (mock 전용, M10에서 재검토)
 ```
+
+eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 탐지 엔진이 받은 줄 가운데 상시 KPM2(`kpm2` 3초 묶음)·`hello`·`f1_evt`를 경보(`alert`·`evidence`·`gap`)와 같은 전송기로 보낸다. 공격 정답 기록은 받지 않는다(5.1절).
 
 포함하는 것:
 1. 메시지 스키마 정의 (팀 공용 기준 문서)
@@ -42,6 +76,7 @@
 4. Grafana 대시보드 2개 (실시간 관제, 성능 검증)
 5. evaluator (탐지율·오탐·지연 계산)
 6. replay (녹화 데이터 재생, 발표 시연 백업용)
+7. AWS 배포 · CI/CD (M7). AWS에는 대시보드 스택만 올린다. 절차는 `docs/deploy.md`
 
 포함하지 않는 것: 탐지 로직, eBPF 코드, 공격 코드, 기지국 제어(대응)
 
@@ -67,15 +102,18 @@
 ├── reference/                    # 참고 논문 (0절). 작업 전에 읽는다
 │   ├── README.md                 # 논문 요약, 이 저장소와의 대응 관계
 │   ├── TeleRAN.pdf
-│   └── 5GSpector.pdf
+│   ├── 5GSpector.pdf
+│   └── detection/                # 탐지 엔진 담당 명세 27_(레코드 형식 기준, 5절)와 샘플 분석표
 ├── docs/
 │   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
-│   └── deploy.md                 # AWS(EC2) 배포 절차 (M7)
+│   ├── deploy.md                 # AWS(EC2) 배포 절차 (M7)
+│   └── dashboard-design.md       # 관제·성능 대시보드 설계도 (M10, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
 │       └── deploy.yml            # CD: main push 시 EC2 배포 (M7)
-├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7)
+├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7),
+│                                 #   /ingest 앞단 nginx 설정(nginx/)과 인증서 스크립트(ingest-cert.sh) (M9)
 ├── docker-compose.yml
 ├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
 ├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)
@@ -93,6 +131,7 @@
 │   └── scenarios.yaml            # 시나리오·지표 범위 설정
 ├── collector/
 │   ├── collector.py
+│   ├── ingest.py                 # POST /ingest HTTP 수신, 중복 키 (M8)
 │   └── influx_writer.py
 ├── evaluator/
 │   └── evaluate.py
@@ -104,67 +143,70 @@
 │   └── dashboards/{realtime.json, evaluation.json}
 ├── recordings/                   # raw 녹화 (.gitignore)
 └── tests/
+    └── data/detection/           # 탐지 쪽 경보 경로 샘플 32개 (11/05, 지금 탐지 엔진 코드 출력)
 ```
 
 ## 5. 메시지 스키마
 
+스키마의 단일 기준은 `schema/messages.schema.json`이다. mock, collector, 테스트 모두 이 파일로 검증한다. 사람이 읽는 설명은 `schema/SCHEMA.md`(v0.3).
+
+메시지는 두 갈래다.
+
+| 갈래 | `type` | 보내는 곳 | 기준 |
+|---|---|---|---|
+| **탐지 엔진 레코드** | `alert` · `evidence` · `gap` · `kpm2` · `hello` · `f1_evt` | 탐지 엔진 전송기 → HTTPS `POST /ingest` | 탐지 엔진 담당 명세 `reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`(2026-11-05 확정, 이하 27_). **형식은 27_ 그대로 받는다** |
+| **옛 메시지** | `metric` · `detection` · `attack_run` | mock 생성기만 | **교체 예정** — 대시보드 재구성(M10) 때 지운다 |
+| | `overhead` | 미정 | 측정 주체·형식을 탐지 쪽과 협의 중(R5). 그때까지 옛 형식 |
+
 공통 규칙:
 - 전송 단위: **JSON 한 줄 = 메시지 하나** (JSON Lines, UTF-8)
-- 전송 방식: UDP(기본 `127.0.0.1:9999`) 또는 파일. collector는 둘 다 지원한다.
-- 모든 시각은 **Unix epoch 나노초 정수**
-- `type` 필드로 메시지 종류를 구분한다: `metric` | `detection` | `attack_run` | `overhead`
-- 스키마의 단일 기준은 `schema/messages.schema.json`이다. mock, collector, 테스트 모두 이 파일로 검증한다.
+- 탐지 엔진 레코드: 시각은 **Unix epoch 밀리초 정수**(분석 엔진이 붙인 데이터 시각). 모르는 필드는 받고(녹화에 남기고 화면에서 무시), `alert.fmt`·`kpm2`·`hello`·`f1_evt`의 `ver`가 1이 아니면 거부한다. `null`은 "모름"이다.
+- 옛 메시지: 시각은 **Unix epoch 나노초 정수**, 모르는 필드는 거부. UDP(기본 `127.0.0.1:9999`) 또는 파일로 받는다.
 
-### 5.1 metric (eKPM / 표준 KPM)
-```json
-{"type":"metric","ts":1763280000123456789,"src":"ebpf","node":"cu",
- "kind":"ekpm","name":"rrc_setup_req_rate","value":120.0,"unit":"req/s",
- "labels":{"cell":"1","ue":"0x4601"}}
-```
-- `src`: `ebpf` | `kpm` / `node`: `cu` | `du` | `core` / `kind`: `ekpm` | `kpm`
-- `labels`는 선택. 지표 이름은 아직 **가안**이며 eBPF 팀과 확정 예정이다(7절).
+### 5.1 탐지 엔진 레코드 (27_)
 
-### 5.2 detection (탐지 이벤트)
-```json
-{"type":"detection",
- "event_id":"det-000123",
- "ts_detected":1763280000523456789,
- "ts_first_evidence":1763280000123456789,
- "attack_type":"RRC_SIGNALING_STORM",
- "severity":"high",
- "ruleset":"full",
- "rule_id":"R-RRC-001","rule_version":"1.0",
- "target":{"node":"cu","cell":"1","ue":["0x4601","0x4602"]},
- "evidence":[
-   {"source":"ebpf","metric":"rrc_setup_req_rate","op":">","value":120,"threshold":50,"window_ms":1000},
-   {"source":"kpm","metric":"RRU.PrbUsedDl","op":">","value":85,"threshold":80,"window_ms":1000}
- ]}
-```
-- `severity`: `low` | `medium` | `high` | `critical`
-- `ruleset`: `full`(eKPM + KPM 룰) | `kpm_only`(표준 KPM 룰만). 같은 공격을 두 룰셋으로 돌려 비교하기 위한 필드다.
-- 탐지 지연 = `ts_detected - ts_first_evidence`
+| `type` | 뜻 | 언제 오나 | 27_ |
+|---|---|---|---|
+| `alert` | 경보 생애 `raise` → `update` → `clear`/`end`. 룰 13개, 단계 1~4, `kind` `attack`·`anomaly` | 늘 | §5 |
+| `evidence` | 경보 근거. `raw`에 분석 엔진의 원본 줄(1단계 100 ms `kpm2`, 2~4단계 `ue_evt`)을 그대로 담음 | 늘 | §6 |
+| `gap` | 경보 중 그 셀의 `kpm2`가 끊긴 구간 | 늘 | §6.4 |
+| `kpm2` | 상시 KPM2 — 셀마다 3초(`agg_ms`)로 묶은 Table II 카운터 | 전송기 설정으로 켤 때 (실험 때 켬) | §4.1 |
+| `hello` | 분석 엔진 접속 = 새 `session` 시작 | 위와 같음 | §4.3 |
+| `f1_evt` | DU·CU 재시작 | 위와 같음 | §4.3 |
 
-### 5.3 attack_run (정답 기록, 공격 도구가 출력)
 ```json
-{"type":"attack_run","run_id":"run-007","scenario":"RRC_SIGNALING_STORM",
- "ts_start":1763280000000000000,"ts_end":1763280060000000000,
- "params":{"rate":200,"fake_ue_count":50}}
-```
-- `scenario` 값은 detection의 `attack_type`과 같은 이름 체계를 쓴다.
-
-### 5.4 overhead (수집 오버헤드)
-```json
-{"type":"overhead","ts":1763280000000000000,"node":"cu","ebpf_on":true,"cpu_pct":23.4,"mem_mb":512}
+{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0},"params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
 ```
 
-### 5.5 공격 유형 (가안)
-| attack_type | 설명 |
-|---|---|
-| `RRC_SIGNALING_STORM` | 대량 RRC 연결 요청으로 CU 시그널링 자원 고갈 |
-| `ABNORMAL_UE_ATTACH` | 비정상 패턴의 단말 접속 시도 반복 |
-| `F1AP_MSG_TAMPER` | CU-DU 간 F1AP 메시지 위·변조 |
+- **KPM2 = TeleRAN Table II**(셀 카운터): `kpm2`의 `cc`·`si` 키가 Table II 14개 이름 그대로다(+ 탐지 쪽 확장 `ext` 3개). **KPM1 = Table I**(UE별, 팀 용어 eKPM): `ue_evt` 한 줄 = UE 메시지 하나. **상시로는 오지 않고** 경보 근거(`evidence.raw`)로만 온다. 탐지 엔진이 이것으로 2~4단계를 판정하고, 대시보드는 판정 결과(`alert`)와 근거(`evidence`)를 보여 준다. `ue_evt` 형식은 `schema/SCHEMA.md` 3.7절(타임라인 필드 7개만 검사), Table I·II 대응표는 4절.
+- 받는 방법(`/ingest`·`X-Env`·응답 코드·중복 키)은 8절과 `schema/SCHEMA.md` 2절.
+- `alert`에는 `session`이 없다. 같은 `alert_id`의 첫 `evidence`의 `raw.session`이 그 경보의 세션이다(27_ §7).
+- 평가 결과(R1 `eval`·R2 `eval_run`)·경보별 지연(R3)·오버헤드(R5)는 전체 파이프라인(분석 엔진 → 탐지 엔진 → 대시보드, 실제 공격)이 완성된 뒤 탐지 쪽과 함께 정한다(27_ §9).
+
+### 5.2 옛 메시지 (mock 전용, 교체 예정)
+
+`metric`(eKPM·표준 KPM 지표 한 개), `detection`(탐지 이벤트, 룰셋 `full`·`kpm_only`), `attack_run`(정답 기록), `overhead`(수집 오버헤드). 필드·예시는 `schema/SCHEMA.md` 6절. 지금 mock·대시보드·evaluator·replay가 이 형식을 쓴다.
 
 ## 6. InfluxDB 매핑
+
+탐지 엔진 레코드 (ms 시각을 ns로 바꿔 씀):
+
+| measurement | time | tags | fields |
+|---|---|---|---|
+| `alert` | `t` | env, alert_id, rule, stage, kind, event, cell | severity, mode, unit, fmt, branch, reason, ues_total, duration_ms, evidence_sent, evidence_dropped, session, rep_key, rep_value, `<cond·candidates·conditions·values·params·refs·ues>_json` |
+| `evidence` | `raw.t_ms`(또는 `raw.t_start_ms`) + `seq` | env, alert_id, phase, raw_type, cell, session | seq, du_ue_id, uid, raw_json, (KPM1) msg·dir·proto, (KPM2) `cc.*`·`si.*`·`ext.*` |
+| `gap` | `t_from` | env, alert_id, cell | t_to, seq_from, seq_to, session |
+| `kpm2` | `t_start_ms` | env, session, cell, agg_ms | t_end_ms, n, seq_from, seq_to, partial_json, `cc.<이름>[.<하위 키>]`·`si.<이름>`·`ext.<이름>` |
+| `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
+| `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
+
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`) / On-Premise(`lab`)이고 **지금은 AWS만 받는다**. 단계 비교는 `p4` vs `replay-kpm-only`(27_ §7, `docs/dashboard-design.md`).
+- **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
+- `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
+- `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
+- 대표 값 `rep_value`는 27_ §5.3의 룰별 '대표 값', 판정 보류 경보는 `held_w`.
+
+옛 메시지:
 
 | measurement | time | tags | fields |
 |---|---|---|---|
@@ -201,16 +243,20 @@ python -m mock.generator --speed 10   # 10배속 (빠른 데이터 축적용)
 6. 지표 이름·기본값·공격 시 변화량·탐지율 같은 숫자는 전부 `scenarios.yaml`에 두고 코드에 하드코딩하지 않는다.
 7. 내보내는 모든 메시지는 JSON Schema 검증을 통과해야 한다.
 
-지표 (TeleRAN 논문 기준, `scenarios.yaml`에 정의, 이름·코드는 가안이라 eBPF 팀과 확정 예정):
-- eKPM = 논문 Table I (UE별 보안 텔레메트리, `labels.ue`별, 값은 숫자 코드 또는 식별자): `ue_c_rnti`, `ue_s_tmsi`, `ue_cipher_alg`, `ue_integrity_alg`, `ue_rrc_state`, `ue_nas_state`, `ue_rrc_sec_state`, `ue_nas_sec_state`, `rrc_msg_id`, `nas_msg_id`
-- 표준 KPM = 논문 Table II (3GPP TS 28.552, 셀 단위): `RRC.ConnEstabAtt`, `RRC.ConnEstabSucc`, `RRC.ConnEstabFailCause`, `RRC.RelWithoutSuspendConfig`, `UECNTX.ConnEstabAtt`, `UECNTX.ConnEstabSucc`, `RRC.ReEstabAtt`, `RRC.ReEstabSuccWithUeContext`, `RRC.ResumeAtt`, `RRC.ResumeSucc`, `RRC.ConnMean`, `RRC.ConnMax`, `RRC.InactiveConnMean`, `RRC.InactiveConnMax`
-- 상태·알고리즘·메시지 ID의 숫자 코드표는 `scenarios.yaml`의 `codes`와 `schema/SCHEMA.md` 6절에 있다.
+지표:
+- mock은 옛 메시지(5.2절)를 낸다. 지표는 TeleRAN Table I → eKPM 10개, Table II → 표준 KPM 14개(`schema/SCHEMA.md` 6.5절, `scenarios.yaml`의 `ekpm`·`kpm`)만 쓴다.
+- 상태·알고리즘·메시지 ID의 숫자 코드표(mock 전용 가안)는 `scenarios.yaml`의 `codes`에 있다.
+- 탐지 엔진 레코드로 바꾸는 것은 M10(대시보드 재구성) 때 한다. 그 전까지 탐지 엔진 레코드로 화면을 볼 때는 탐지 쪽 샘플(`tests/data/detection/`)을 쓴다.
 
 ## 8. collector 요구사항
 
-- UDP와 파일(tail -f 방식) 입력을 둘 다 지원한다.
+- UDP, 파일(tail -f 방식), HTTP `POST /ingest` 입력을 지원한다. HTTP는 탐지 엔진 전송기용이고 TLS는 앞단이 맡는다(collector는 서버 안에서 평문으로 받음).
 - 메시지마다 JSON Schema로 검증하고, 실패한 메시지는 버리지 말고 `recordings/rejected.jsonl`에 사유와 함께 남긴다.
-- 정상 메시지는 원본 그대로 `recordings/raw-<날짜시각>.jsonl`에 녹화한다(replay용).
+- 정상 메시지는 원본 그대로 녹화한다(replay용). 옛 메시지는 `recordings/raw-<날짜시각>.jsonl`, 탐지 엔진 레코드는 환경별로 `recordings/raw-<날짜시각>-<환경>.jsonl`.
+- `/ingest` 약속(27_ §3, 대시보드 2차 답변서 D1~D3, `schema/SCHEMA.md` 2절):
+  - 헤더 `X-Env`를 환경으로 저장한다(없으면 `unknown`). 토큰은 쓰지 않는다(HTTPS + 보안 그룹 IP 제한).
+  - **원본 녹화와 InfluxDB 저장이 끝난 뒤에** 답한다. `200 {"accepted","rejected","duplicates"}`(틀린 줄은 거부 로그로 보내고 나머지는 저장), 본문을 못 읽으면 `400`, 상한(1 MiB)을 넘으면 `413`, InfluxDB 일시 장애면 `503`(그 요청은 아무것도 반영하지 않음 — 전송기가 다시 보냄).
+  - 다시 보낸 줄은 환경 + 레코드별 중복 키로 걸러 한 번만 저장한다.
 - InfluxDB에는 배치로 쓴다(예: 500건 또는 1초마다).
 - 종료(Ctrl+C) 시 남은 배치를 flush한다.
 - 1초마다 수신·저장·거부 건수를 로그로 출력한다.
@@ -270,7 +316,7 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
 3. 숫자(임계값, 확률, 범위, 포트)는 설정 파일이나 `.env`로 뺀다.
 4. 핵심 로직(스키마 검증, InfluxDB 변환, evaluator 매칭·계산)은 pytest로 테스트한다. 특히 evaluator는 TP/FN/FP 경계 사례(grace 경계, 다른 attack_type, run 하나에 여러 detection)를 테스트로 고정한다.
 5. 실행 방법이 바뀌면 README.md를 같이 고친다.
-6. 모르는 것(예: 실제 지표 이름, UE ID 형식)은 추측해서 확정하지 말고 TODO로 표시한다.
+6. 모르는 것(예: UE ID 형식, 상태 코드표)은 추측해서 확정하지 말고 TODO로 표시한다.
 7. **mock 데이터로 나온 숫자는 성능 결과가 아니다.** 리포트에 데이터 출처(mock / 실제 / replay)를 표시한다.
 8. **진행 기록은 `docs/progress.md`에 남긴다.** 대화로만 보고하면 세션이 끝날 때 사라지므로, 사용자가 나중에 문서로 확인할 수 있게 한다. 마일스톤마다 아래 항목을 쓴다.
    - **한 일**: 만들거나 바꾼 파일과 그 역할
@@ -282,6 +328,8 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
    문서 맨 위의 "열린 항목"(팀 확인 대기, 미정 사항)은 마일스톤과 상관없이 항상 최신으로 유지한다. 해결된 항목은 지우지 말고 해결 내용과 함께 해결됨으로 옮긴다.
 9. **브랜치 규칙.**
    - `main`: 배포·발표용. 직접 커밋하지 않고 `dev` → `main` PR로만 반영한다.
+     - **`main`에 병합되면 CD(`.github/workflows/deploy.yml`)가 곧바로 EC2에 배포한다.** 배포할 준비가 된 것만 `main`에 올린다.
+     - `dev` → `main` PR은 **"Create a merge commit"**으로 병합한다. squash·rebase로 합치면 `main`과 `dev`의 이력이 갈라져, 다음 `dev` → `main` PR에서 이미 들어간 변경이 다시 차이로 보이고 충돌하기 쉽다.
    - `dev`: 개발 통합 브랜치 (GitHub default 브랜치).
    - `feat/dashboard-M<n>`: 마일스톤 작업 브랜치. 항상 최신 `dev`에서 만들고, 끝나면 `dev`로 PR을 연다. 마일스톤이 아닌 작은 수정은 `fix/<내용>`, `docs/<내용>`.
    - push, PR 생성·병합은 사용자 확인을 받고 한다.
@@ -297,3 +345,6 @@ python -m replay.replay recordings/raw-xxxx.jsonl --speed 1 --out udp://127.0.0.
 | M5 | evaluator + 성능 검증 대시보드 | 경계 사례 테스트 통과, `eval_result` 저장, 9.2 패널 표시 |
 | M6 | replay | 녹화 파일 재생 시 실시간 대시보드에 표시 |
 | M7 | AWS 배포 · CI/CD. AWS에는 대시보드 스택(InfluxDB + Grafana + collector)만 올리고, 테스트베드 실시간 경로(eBPF → 탐지 엔진)는 로컬에 둔다 | CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과. AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시. CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 |
+| M8 | 탐지 엔진 연동 1 — 스키마 v0.3(27_ 레코드 6종), collector `POST /ingest`·`X-Env`·중복 제거·InfluxDB 저장 | 탐지 쪽 샘플 32개 전 줄 스키마 통과, `/ingest`로 넣어 InfluxDB 저장(타입 충돌·덮어쓰기 없음), 재전송 중복 제거·503 재시도 테스트 통과 |
+| M9 | 탐지 엔진 연동 2 — AWS 앞단 TLS(자체 서명 인증서, IP SAN), 443·보안 그룹, 탐지 쪽 전송기와 연동 시험 | 탐지 쪽 전송기가 EC2 `https://<IP>/ingest`로 보낸 레코드가 InfluxDB에 저장됨 |
+| M10 | 대시보드 재구성 — 실시간 관제·경보 목록·경보 상세(근거 KPM2 그래프·KPM1 타임라인)를 탐지 엔진 레코드로. mock·replay를 새 형식으로 바꾸고 옛 메시지(`metric`·`detection`·`attack_run`)를 지운다. 평가는 27_ §9에 따라 탐지 쪽과 정한 뒤 | 27_ §7 '화면과 레코드'의 화면이 샘플·replay 데이터로 표시됨 |

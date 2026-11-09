@@ -155,7 +155,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": "X-Env는 영숫자로 시작하고 영숫자·._-만 쓴 64자 이하여야 합니다"})
             return
 
-        request = IngestRequest(body, env, origin=f"http {self.client_address[0]} X-Env={env}")
+        # 앞단(nginx)을 거치면 연결 상대는 nginx다. 전송기 주소는 nginx가 붙인 X-Real-IP로 알 수 있다(기록용, 인증에는 안 씀)
+        real_ip = self.headers.get("X-Real-IP")
+        peer = self.client_address[0] + (f" (X-Real-IP {real_ip})" if real_ip else "")
+        request = IngestRequest(body, env, origin=f"http {peer} X-Env={env}")
         if self.server.stopping.is_set():
             self._reply(503, {"error": "collector가 종료 중입니다"})
             return

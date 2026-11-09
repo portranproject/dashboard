@@ -434,6 +434,15 @@ def test_http_error_responses(server):
     assert w.points == []
 
 
+def test_http_origin_records_proxy_real_ip(server):
+    port, c, _ = server
+    bad = body_of("not json")
+    assert request(port, "POST", "/ingest", bad, {**NDJSON, "X-Env": "p4", "X-Real-IP": "43.202.191.147"})[0] == 200
+    c._flush_files()
+    [record] = read_jsonl(c.rejected_path)
+    assert record["source"] == "http 127.0.0.1 (X-Real-IP 43.202.191.147) X-Env=p4"
+
+
 def test_http_without_content_length_is_411(server):
     port, _, _ = server
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)

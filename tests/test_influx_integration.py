@@ -77,3 +77,55 @@ def test_mock_file_to_influx(temp_bucket, tmp_path):
     assert record.get_time().timestamp() * NS == pytest.approx(det["ts_detected"], abs=1000)
     assert record.get_value() == pytest.approx((det["ts_detected"] - det["ts_first_evidence"]) / 1e6)
     assert record.values["attack_type"] == det["attack_type"]
+
+
+def test_detection_samples_to_influx(temp_bucket, tmp_path):
+    """탐지 쪽 샘플 32개 + SCHEMA.md의 kpm2·hello·f1_evt 예시를 /ingest 요청처럼 넣는다.
+    InfluxDB가 필드 타입 충돌로 거부하거나(27_ §7.1), 다른 레코드끼리 같은 점에 덮어쓰면 실패한다."""
+    import json
+    import re
+    from pathlib import Path
+
+    client, settings = temp_bucket
+    repo = Path(__file__).resolve().parent.parent
+    examples = [json.loads(b) for b in re.findall(r"```json\n(.*?)```", (repo / "schema" / "SCHEMA.md").read_text(encoding="utf-8"), re.S)]
+    extra = [m for m in examples if m["type"] in ("kpm2", "hello", "f1_evt")]
+
+    writer = InfluxWriter(settings, timeout_ms=5000)
+    collector = Collector(writer, tmp_path / "rec", batch_size=500, max_pending=100_000)
+    expected = Counter()
+    for path in sorted((repo / "tests" / "data" / "detection").glob("*.jsonl")):
+        body = path.read_bytes()
+        status, payload = collector.handle_request(body, "itest", "test")
+        n = len(body.splitlines())
+        assert (status, payload) == (200, {"accepted": n, "rejected": 0, "duplicates": 0}), path.name
+        for line in body.decode("utf-8").splitlines():
+            msg = json.loads(line)
+            expected[msg["type"]] += 1
+    body = "".join(json.dumps(m) + "\n" for m in extra).encode("utf-8")
+    assert collector.handle_request(body, "itest", "test")[1]["accepted"] == 3
+    expected.update(m["type"] for m in extra)
+    collector.close()
+    writer.close()
+
+    one_field = {"alert": "severity", "evidence": "seq", "gap": "t_to", "kpm2": "n", "hello": "seq", "f1_evt": "msg"}
+    flux = f"""
+    from(bucket: "{settings.bucket}")
+      |> range(start: 2001-01-01T00:00:00Z, stop: now())
+      |> filter(fn: (r) => {" or ".join(f'(r._measurement == "{m}" and r._field == "{f}")' for m, f in one_field.items())})
+      |> group(columns: ["_measurement"])
+      |> count()
+    """
+    counts = {r.values["_measurement"]: r.get_value() for t in client.query_api().query(flux, org=settings.org) for r in t.records}
+    assert counts == dict(expected)  # 점 수 = 줄 수 → 덮어쓴 것 없음
+
+    # 모든 경보 레코드에 세션이 붙었는지 (같은 요청 안의 evidence에서 알아냄)
+    flux = f"""
+    from(bucket: "{settings.bucket}")
+      |> range(start: 2001-01-01T00:00:00Z, stop: now())
+      |> filter(fn: (r) => r._measurement == "alert" and r._field == "session")
+      |> group()
+      |> count()
+    """
+    [record] = [r for t in client.query_api().query(flux, org=settings.org) for r in t.records]
+    assert record.get_value() == expected["alert"]

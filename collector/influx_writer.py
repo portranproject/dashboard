@@ -1,7 +1,13 @@
-"""메시지 → InfluxDB Point 변환과 쓰기. 매핑 기준은 CLAUDE.md 6절."""
+"""메시지 → InfluxDB Point 변환과 쓰기. 매핑 기준은 CLAUDE.md 6절.
+
+탐지 엔진 레코드(alert·evidence·gap·kpm2·hello·f1_evt)는 시각이 ms라서 ns로 바꿔 쓴다(쓰기 precision은 ns 하나).
+같은 series·같은 시각의 점은 InfluxDB가 덮어쓰므로, 서로 다른 레코드가 겹치지 않도록 series 키와 시각을 정한다.
+그래서 같은 줄을 다시 써도(전송기 재전송, collector 재시작 뒤) 결과가 그대로다.
+"""
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from influxdb_client import InfluxDBClient, Point, WritePrecision
@@ -10,15 +16,207 @@ from influxdb_client.rest import ApiException
 
 from common.config import InfluxSettings
 
+MS = 1_000_000  # 1 ms = 1,000,000 ns
+
+# 화면에 값 하나만 보일 때의 룰별 대표 값 (27_ §5.3 '대표 값(제안)'). values의 키, ues_total만 맨 위 필드.
+REPRESENTATIVE_KEY = {
+    "L3-01-V": "ratio", "L3-01-O": "stalls_w", "L3-20": "victims", "L3-21": "fails_w",
+    "L3-24": "ues_total", "L3-14": "ues_total", "L3-06": "ues_total",
+    "AN-01": "sync_w", "AN-02": "idreq_w", "AN-04": "short_ues", "AN-06a": "reauth_ues",
+    "AN-07": "fail_ues", "AN-08": "reg_w",
+}
+HELD_REPRESENTATIVE_KEY = "held_w"  # 판정 보류 경보 (27_ §5.5)
+
+ALERT_JSON_FIELDS = ("cond", "candidates", "conditions", "values", "params", "refs", "ues")
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def to_point(msg: dict) -> Point:
-    """스키마 검증을 통과한 메시지를 Point로. 숫자 필드는 타입을 고정한다
-    (InfluxDB는 같은 필드에 정수·실수가 섞이면 쓰기를 거부하므로)."""
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _seq_offset(seq: Any) -> int:
+    """같은 ms에 여러 줄이 올 수 있어(27_ §4.2 '같은 ms 안의 순서는 seq 순') ms 안의 ns 자리에 seq를 넣어 가른다."""
+    return seq % MS if _is_int(seq) else 0
+
+
+def is_held_alert(msg: dict) -> bool:
+    """판정 보류 경보: rule이 AN-으로 시작하지 않고 cond가 ["held_count"] (27_ §5.5)."""
+    return not msg["rule"].startswith("AN-") and msg.get("cond") == ["held_count"]
+
+
+def representative(msg: dict) -> tuple[str, float] | None:
+    """alert의 대표 값 (키 이름, 값). 그 이벤트에 값이 없으면 None."""
+    key = HELD_REPRESENTATIVE_KEY if is_held_alert(msg) else REPRESENTATIVE_KEY.get(msg["rule"])
+    if key is None:
+        return None
+    value = msg.get(key) if key == "ues_total" else (msg.get("values") or {}).get(key)
+    return (key, float(value)) if _is_number(value) else None
+
+
+def kpm_fields(record: dict) -> dict[str, float]:
+    """kpm2의 cc·si·ext를 '<묶음>.<이름>[.<하위 키>]' 필드로 편다. 모르는 값(null)은 넣지 않는다(그래프에서 '데이터 없음').
+    정수·실수가 섞이면 InfluxDB가 쓰기를 거부하므로 모두 실수로 쓴다(27_ §7.1 6번)."""
+    fields: dict[str, float] = {}
+    for section in ("cc", "si", "ext"):
+        values = record.get(section)
+        if not isinstance(values, dict):
+            continue
+        for name, value in values.items():
+            if _is_number(value):
+                fields[f"{section}.{name}"] = float(value)
+            elif isinstance(value, dict):
+                for sub, sub_value in value.items():
+                    if _is_number(sub_value):
+                        fields[f"{section}.{name}.{sub}"] = float(sub_value)
+    return fields
+
+
+def _alert_point(msg: dict, env: str) -> Point:
+    """alert의 series 키와 시각. 같은 경보의 레코드는 event로 갈린다.
+    alert_id는 경보마다 하나라 tag로 둔다 — 경보 상세에서 변수로 고르고, 같은 시각·같은 룰의 다른 경보와 겹치지 않게."""
+    return (Point("alert").time(msg["t"] * MS, WritePrecision.NS)
+            .tag("env", env).tag("alert_id", msg["alert_id"]).tag("rule", msg["rule"])
+            .tag("stage", str(msg["stage"])).tag("kind", msg["kind"]).tag("event", msg["event"])
+            .tag("cell", str(msg["cell"])))
+
+
+def _gap_point(msg: dict, env: str) -> Point:
+    return (Point("gap").time(msg["t_from"] * MS, WritePrecision.NS)
+            .tag("env", env).tag("alert_id", msg["alert_id"]).tag("cell", str(msg["cell"])))
+
+
+def session_point(msg: dict, env: str, session: str) -> Point:
+    """먼저 세션 없이 쓴 alert·gap 점에 session 필드만 더하는 점(같은 series·같은 시각이면 필드가 합쳐진다)."""
+    base = _alert_point(msg, env) if msg["type"] == "alert" else _gap_point(msg, env)
+    return base.field("session", session)
+
+
+def evidence_time_ns(msg: dict, received_ns: int | None = None) -> int:
+    raw = msg["raw"]
+    for key in ("t_ms", "t_start_ms"):
+        if _is_int(raw.get(key)):
+            return raw[key] * MS + _seq_offset(msg["seq"])
+    # 원본 줄에 시각이 없으면(모르는 raw 형식) 받은 시각으로 쓴다
+    received_ns = time.time_ns() if received_ns is None else received_ns
+    return (received_ns // MS) * MS + _seq_offset(msg["seq"])
+
+
+def _new_record_point(msg: dict, env: str, session: str | None, received_ns: int | None) -> Point:
     t = msg["type"]
+    if t == "alert":
+        p = _alert_point(msg, env)
+        p.field("severity", msg["severity"]).field("mode", msg["mode"])
+        p.field("unit", msg["unit"]).field("fmt", msg["fmt"])
+        for key in ("branch", "reason"):
+            if isinstance(msg.get(key), str):
+                p.field(key, msg[key])
+        for key in ("ues_total", "duration_ms", "evidence_sent", "evidence_dropped"):
+            if _is_int(msg.get(key)):
+                p.field(key, msg[key])
+        for key in ALERT_JSON_FIELDS:
+            if key in msg:
+                p.field(f"{key}_json", _json(msg[key]))
+        rep = representative(msg)
+        if rep is not None:
+            p.field("rep_key", rep[0]).field("rep_value", rep[1])
+        if session:
+            p.field("session", session)
+        return p
+
+    if t == "evidence":
+        raw = msg["raw"]
+        p = (Point("evidence").time(evidence_time_ns(msg, received_ns), WritePrecision.NS)
+             .tag("env", env).tag("alert_id", msg["alert_id"]).tag("phase", msg["phase"])
+             .tag("raw_type", raw["type"]))
+        cell = raw.get("cell_id") if _is_int(raw.get("cell_id")) else (msg["ue"][0] if "ue" in msg else None)
+        if cell is not None:
+            p.tag("cell", str(cell))
+        if isinstance(raw.get("session"), str) and raw["session"]:
+            p.tag("session", raw["session"])
+        p.field("seq", msg["seq"]).field("raw_json", _json(raw))
+        if "ue" in msg:
+            p.field("du_ue_id", msg["ue"][1]).field("uid", msg["ue"][2])
+        if raw["type"] == "kpm2":
+            for name, value in kpm_fields(raw).items():
+                p.field(name, value)
+        else:
+            for key in ("msg", "dir", "proto"):
+                if isinstance(raw.get(key), str):
+                    p.field(key, raw[key])
+        return p
+
+    if t == "gap":
+        p = _gap_point(msg, env).field("t_to", msg["t_to"])
+        for key in ("seq_from", "seq_to"):
+            if _is_int(msg.get(key)):
+                p.field(key, msg[key])
+        if session:
+            p.field("session", session)
+        return p
+
+    if t == "kpm2":
+        # agg_ms를 tag로 둔다 — 주기를 바꾼 직후 옛 주기와 새 주기의 칸이 겹쳐도 둘 다 남도록(27_ §4.1)
+        p = (Point("kpm2").time(msg["t_start_ms"] * MS, WritePrecision.NS)
+             .tag("env", env).tag("session", msg["session"]).tag("cell", str(msg["cell_id"]))
+             .tag("agg_ms", str(msg["agg_ms"]))
+             .field("t_end_ms", msg["t_end_ms"]).field("n", msg["n"])
+             .field("partial_json", _json(msg.get("partial", []))))
+        for key in ("seq_from", "seq_to"):
+            if _is_int(msg.get(key)):
+                p.field(key, msg[key])
+        for name, value in kpm_fields(msg).items():
+            p.field(name, value)
+        return p
+
+    if t == "hello":
+        # hello에는 시각이 없다(27_ §4.3). 받은 시각을 쓴다.
+        p = (Point("hello").time(time.time_ns() if received_ns is None else received_ns, WritePrecision.NS)
+             .tag("env", env).tag("session", msg["session"]).field("seq", msg["seq"]))
+        for key in ("producer", "node_id", "clock"):
+            if isinstance(msg.get(key), str):
+                p.field(key, msg[key])
+        for key in ("period_ms", "noreply_timeout_ms", "si_sample_ms"):
+            if _is_int(msg.get(key)):
+                p.field(key, msg[key])
+        if isinstance(msg.get("ue_evt"), bool):
+            p.field("ue_evt", msg["ue_evt"])
+        if "cells" in msg:
+            p.field("cells_json", _json(msg["cells"]))
+        return p
+
+    if t == "f1_evt":
+        p = (Point("f1_evt").time(msg["t_ms"] * MS + _seq_offset(msg["seq"]), WritePrecision.NS)
+             .tag("env", env).tag("session", msg["session"])
+             .field("seq", msg["seq"]).field("msg", msg["msg"]))
+        for key in ("cells", "du_ue_ids"):
+            if key in msg:
+                p.field(f"{key}_json", _json(msg[key]))
+        return p
+
+    raise ValueError(f"알 수 없는 메시지 type: {t!r}")
+
+
+NEW_RECORD_TYPES = frozenset({"alert", "evidence", "gap", "kpm2", "hello", "f1_evt"})
+
+
+def to_point(msg: dict, env: str = "unknown", session: str | None = None, received_ns: int | None = None) -> Point:
+    """스키마 검증을 통과한 메시지를 Point로. 숫자 필드는 타입을 고정한다
+    (InfluxDB는 같은 필드에 정수·실수가 섞이면 쓰기를 거부하므로).
+
+    env·session·received_ns는 탐지 엔진 레코드에만 쓴다: env = X-Env, session = 그 경보의 세션(alert·gap),
+    received_ns = 받은 시각(시각 필드가 없는 hello, 시각을 모르는 evidence)."""
+    t = msg["type"]
+    if t in NEW_RECORD_TYPES:
+        return _new_record_point(msg, env, session, received_ns)
+
     if t == "metric":
         labels = msg.get("labels", {})
         p = (Point("metric").time(msg["ts"], WritePrecision.NS)

@@ -3,9 +3,9 @@
 O-RAN 기반 5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드 · 검증 파이프라인**.
 
 ```
-mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
-        │  JSON Lines (UDP 127.0.0.1:9999 또는 파일)
-        ▼
+탐지 엔진 전송기                         mock 생성기
+        │  HTTPS POST /ingest (X-Env)          │  JSON Lines (UDP 127.0.0.1:9999 또는 파일)
+        ▼                                      ▼
     collector ──> InfluxDB ──> Grafana (실시간 관제 / 성능 검증)
         │
         └─> recordings/raw-*.jsonl ──> replay
@@ -13,7 +13,8 @@ mock 생성기 / eBPF 에이전트 / 탐지 엔진 / 공격 도구
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M6(스키마, mock 생성기, collector, 실시간 관제·성능 검증 대시보드, evaluator, replay) 완료. 남은 것은 실제 파트(eBPF 에이전트·탐지 엔진·공격 도구)와의 연동이다.
+- 탐지 엔진 레코드 형식의 기준: [`reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (탐지 엔진 담당, 11/05 확정)
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, mock 생성기, collector, 대시보드, evaluator, replay, AWS 배포) 완료. 지금은 탐지 엔진 연동 중이다(M8 수신·저장 → M9 AWS 앞단 → M10 대시보드 재구성).
 
 ## 준비물
 
@@ -79,8 +80,14 @@ python -m mock.generator --duration 600 --seed 42
 # 파일을 끝까지 읽어서 넣고 종료 (mock 파일을 한 번에 넣을 때)
 python -m collector.collector --in file://recordings/mock.jsonl --once
 
-# 여러 입력을 동시에 (예: 탐지 엔진은 UDP, eBPF 에이전트는 파일)
-python -m collector.collector --in udp://0.0.0.0:9999 --in file:///var/log/ebpf-agent.jsonl
+# 탐지 엔진 전송기 받기 (POST /ingest, 서버 안에서만 열고 TLS는 앞단이 맡는다)
+python -m collector.collector --in http://127.0.0.1:8088
+
+# 탐지 쪽 샘플을 환경 이름을 붙여 한 번에 넣기
+python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env sample
+
+# 여러 입력을 동시에 (mock은 UDP, 탐지 엔진은 HTTP)
+python -m collector.collector --in udp://127.0.0.1:9999 --in http://127.0.0.1:8088
 
 # InfluxDB 없이 검증·녹화만 (다른 파트에서 메시지 형식을 확인할 때)
 python -m collector.collector --dry-run
@@ -88,18 +95,22 @@ python -m collector.collector --dry-run
 
 | 옵션 | 설명 |
 |---|---|
-| `--in` | `udp://host:port` 또는 `file://path`. 여러 번 줄 수 있음. 기본은 `.env`의 `COLLECTOR_UDP_HOST:PORT` |
+| `--in` | `udp://host:port`, `file://path`, `http://host:port`(탐지 엔진 전송기 `POST /ingest`). 여러 번 줄 수 있음. 기본은 `.env`의 `COLLECTOR_UDP_HOST:PORT` |
 | `--once` | 파일 입력을 끝까지 읽고 종료 (없으면 `tail -f`처럼 계속 기다림) |
+| `--env` | UDP·파일로 받은 탐지 엔진 레코드의 환경 이름 (HTTP는 `X-Env` 헤더, 기본 `unknown`) |
 | `--from-end` | 파일의 기존 내용은 건너뛰고 새로 추가되는 줄만 읽음 (기본은 처음부터) |
 | `--dry-run` | InfluxDB에 쓰지 않음 |
 | `--recordings` | 녹화 폴더 (기본 `.env`의 `RECORDINGS_DIR`) |
 
 결과물 (`recordings/`, git 제외):
-- `raw-<날짜시각>.jsonl`: 검증을 통과한 메시지를 받은 그대로. replay 입력으로 쓴다
+- `raw-<날짜시각>.jsonl`: 검증을 통과한 옛 메시지(mock)를 받은 그대로. replay 입력으로 쓴다
+- `raw-<날짜시각>-<환경>.jsonl`: 탐지 엔진 레코드를 환경(`X-Env`·`--env`)별로 받은 그대로. 다시 보낸 줄(중복)은 한 번만 남는다
 - `rejected.jsonl`: 거부된 메시지와 사유 (`received_at`, `source`, `reasons`, `raw`). 실행할 때마다 이어 붙는다
 
 1초마다 `수신 / 저장 / 거부` 건수가 로그로 나온다. InfluxDB가 잠시 죽어도 메시지를 메모리에 들고 있다가(최대 `COLLECTOR_MAX_PENDING`건) 복구되면 쓴다.
 UDP는 손실이 날 수 있으므로, 많은 양을 한 번에 넣을 때는 파일 + `--once`를 쓴다.
+
+`/ingest` 응답 코드·중복 키·직접 보내 보는 법(`curl`)은 [`schema/SCHEMA.md`](schema/SCHEMA.md) 2절에 있다. 요청 상한·대기 시간·중복 키 수는 `.env`의 `COLLECTOR_HTTP_*`·`COLLECTOR_DEDUP_MAX_KEYS`.
 
 > **collector가 준비된 뒤에 보낸다.** 시작해서 UDP 포트를 열기까지 몇 초(WSL의 `/mnt/c`에서는 4~5초) 걸린다. 로그에 `녹화 recordings/raw-…`가 나오기 전에 보낸 UDP 메시지는 사라진다.
 
@@ -245,6 +256,10 @@ venv 생성이 중간에 깨진 경우다. `rm -rf .venv` 후 다시 만든다.
 Docker Desktop이 컨테이너를 자동으로 다시 띄울 때 Windows 디스크(`/mnt/c/...`)의 설정 폴더 마운트가 비어 있는 채로 붙는 경우가 있다.
 `docker compose exec grafana ls /etc/grafana/dashboards`가 비어 있으면 `docker compose up -d --force-recreate grafana`로 다시 만든다(데이터는 볼륨에 있어 유지된다).
 
+**`tests/test_dashboards.py`가 Grafana `HTTP 401: Invalid username or password`로 실패한다**
+Grafana 관리자 비밀번호도 InfluxDB 값처럼 **최초 기동 때만** 적용된다. 그 뒤에 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 바꾸면 테스트(와 브라우저 로그인)는 새 비밀번호를 쓰지만 Grafana에는 옛 비밀번호가 남아 있다.
+`docker compose exec grafana grafana cli admin reset-admin-password "<.env의 비밀번호>"`로 맞춘다(대시보드·데이터는 그대로).
+
 ## 브랜치 규칙
 
 | 브랜치 | 용도 |
@@ -301,17 +316,17 @@ validation_errors({"type": "metric", ...})   # [] 이면 통과, 아니면 사�
 
 | 경로 | 내용 |
 |---|---|
-| `reference/` | 참고 논문(TeleRAN, 5G-Spector)과 요약 `README.md` |
+| `reference/` | 참고 논문(TeleRAN, 5G-Spector)과 요약 `README.md`, 탐지 엔진 담당 명세(`detection/`) |
 | `docs/progress.md` | 마일스톤별 진행 기록, 팀 확인 대기 항목 |
 | `docs/deploy.md` | AWS(EC2) 배포 절차 |
 | `Dockerfile`, `docker-compose.aws.yml` | AWS 배포용 이미지(collector·mock·replay·evaluator)와 compose override |
 | `schema/` | 메시지 스키마 (사람용 `SCHEMA.md`, 기계용 `messages.schema.json`) |
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증·메시지 시각(`schema.py`), UDP·파일 송수신·배속 전송(`transport.py`) |
 | `mock/` | mock 생성기(`generator.py`)와 설정(`scenarios.yaml`) |
-| `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
+| `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), `POST /ingest` HTTP 수신·중복 키(`ingest.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
 | `evaluator/` | 탐지율·오탐·지연 계산, 리포트(`reports/`)·`eval_result` 저장 (`evaluate.py`) |
 | `replay/` | 녹화 데이터 재생 (`replay.py`) |
 | `grafana/` | datasource·대시보드 provisioning, 대시보드 JSON |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
-| `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈) |
+| `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈), 탐지 쪽 샘플 `data/detection/` |
 | `.github/workflows/` | CI (`ci.yml`) |

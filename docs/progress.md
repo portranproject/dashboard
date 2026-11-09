@@ -33,6 +33,8 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
 | Q19 | 탐지 쪽 상시 경로 샘플 2개(`T10_긴공격_ingest.jsonl`, `SAN08_AN-08_지속공격_CLEAR_ingest.jsonl` — 3초 묶음 `kpm2`·`hello`가 든 실제 전송 본문)가 받은 폴더(`탐지엔진-대시보드샘플/일반데이터/`)에 없다. 지금 `kpm2` 묶음은 27_ §4.1 예시 1줄로만 시험했다 | 탐지 엔진 (다시 받기) | M8 |
+| Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ② 단계 비교 재생 `X-Env`에 출처 붙이기(`p4-kpm-only`·`lab-kpm-only`). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
+| Q22 | `L3-20`(Blind DoS) 피해자 연결(`ues[].peers`)의 근거가 오지 않는다(샘플 3개 모두 공격 연결 UE 근거만). 27_ §6.3의 '피해자 타임라인 함께 그리기'를 하려면 피해자 근거가 필요 | 탐지 엔진 | `docs/dashboard-design.md` 7절 |
 | Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청')를 그대로 반영함 ② `/ingest`로 `ue_evt`·100 ms 원본 `kpm2`가 단독 줄로 오면 거부(전송기 `send_ue_evt`를 켜면 거부 로그만 쌓임) ③ `Content-Length` 없는 요청은 `411`(27_ §3 표대로면 전송기가 멈춤) | 탐지 엔진 | M8 D116·D121 |
 
 ### 미정 (확정 전까지 TODO로 둠)
@@ -903,6 +905,6 @@ M7 이후로 넘기는 것:
 - [ ] Q19 상시 경로 샘플 2개 다시 받기 → `tests/data/detection/`에 넣고 통합 테스트에 포함
 - [ ] Q20 탐지 쪽에 알리기 (중복 키·`X-Env` 반영, `ue_evt` 단독 거부, `411`)
 - [ ] M9: Caddy(443, TLS 1.2+, 자체 서명 인증서 IP SAN) → collector `127.0.0.1:8088`, 보안 그룹에 p4 CU 박스 `43.202.191.147`, `docker-compose.aws.yml`에 `--in http://…`와 헬스 체크, `.pem` 전달, 탐지 쪽 전송기와 연동 시험
-- [ ] M10: 대시보드(27_ §7 '화면과 레코드'), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
+- [ ] M10: 대시보드 — 설계 초안 `docs/dashboard-design.md`(관제·성능, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만), mock·replay를 새 형식으로(replay는 녹화 파일의 환경을 `X-Env`로 붙여 `/ingest`로), 옛 메시지 삭제, evaluator 재검토(평가 방식은 탐지 쪽과 정한 뒤)
 - [ ] T6 첫 실측 녹화 뒤 확인 (`session` 형식, `ue_evt` 필드, Table II 나머지)
 - [ ] `docs/정리.md`(11/04 답변서, 이미 보냄)와 받은 폴더 `탐지엔진-대시보드샘플/`을 저장소에 남길지 정리

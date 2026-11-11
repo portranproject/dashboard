@@ -149,6 +149,21 @@ def test_panel_layout(path):
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_ranges_are_never_empty(path):
+    """range의 stop이 화면 시간 범위 끝이면 start도 화면 시간 범위 기준이어야 한다. start가 지금 기준(-5m)이면 지난
+    시간 범위를 골랐을 때 start > stop이 되어 'cannot query an empty range'로 패널이 깨진다(AWS 요약 줄, 11/11)."""
+    found = 0
+    for item, q, _ in queries(load(path)):
+        for start, stop in re.findall(r"range\(start: (.+?), stop: (.+?)\)$", q, flags=re.M):
+            found += 1
+            if stop == "v.timeRangeStop":
+                assert "v.timeRangeStart" in start, (item, start)
+            else:
+                assert stop == "now()" and "v.timeRange" not in start, (item, start, stop)
+    assert found
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_referenced_variables_are_defined(path):
     d = load(path)
     defined = {v["name"] for v in d["templating"]["list"]}

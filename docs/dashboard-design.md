@@ -63,7 +63,7 @@ M10에서 처음 대시보드 2개(`realtime.json`·`evaluation.json`, mock 메�
 | 요약 | 지금 세션 | 분석 엔진이 언제 다시 떴나 | 마지막 `hello`의 `session`·시각, 시간 범위 안 `f1_evt` 수 |
 | 상시 KPM2 | 연결 시도·성공·무응답 | 셀에 무슨 일이 일어나고 있나 (1단계 공격은 시도·무응답이 함께 솟고 성공은 그대로) | `kpm2` 필드 `cc.RRC.ConnEstabAtt.total`·`cc.RRC.ConnEstabSucc.total`·`cc.RRC.ConnEstabFailCause.NoReply`, 3초 막대 |
 | 상시 KPM2 | UE 컨텍스트 수 | 셀 자원이 고갈되고 있나 | `ext.UeCtxMax` 선 + 셀 한도 96 기준선(27_ §5.3 `high` 조건 = 90%) · `si.RRC.ConnMax`·`si.RRC.ConnMean` |
-| 상시 KPM2 | (겹쳐 표시) | 경보가 언제 울렸나 | 주석: `alert` `raise`~`clear`/`end` 구간(영역), `hello`(세션 시작)·`f1_evt`(재시작) 세로선, `gap` 구간 '데이터 없음' |
+| 상시 KPM2 | (겹쳐 표시) | 경보가 언제 울렸나 | 주석: `alert` `raise`~`clear`/`end` 구간(영역), `hello`(세션 시작, 파랑)·`f1_evt`(DU·CU 재시작, 보라) 세로선 — 색과 토글을 나눈다(D157), `gap` 구간 '데이터 없음' |
 | 경보 목록 | 경보 표 | 어떤 경보가 있었나 | `alert`를 `alert_id`로 묶어 한 행: 시작 = `raise`의 시각, 심각도 = 최대, UE 수 = 마지막 `ues_total`, 대표 값 = 마지막 `rep_value`(`rep_key`), 상태 = 열림 / 해제(`clear`) / 강제 종료(`end`·`reason`) / 상태 불명(4절). 공격 이름은 6절 대응표 |
 | 경보 목록 | 룰·단계별 경보 수 | 어떤 공격이 많았나 | `alert` `event == "raise"`를 `rule`·`stage`로 셈 |
 | 경보 상세 | 판정 정보 | 왜 이 경보가 났나 | `alert_id == ${alert_id}`의 `cond_json`·`candidates_json`(→ 이름)·`conditions_json`·`mode`·`branch`·`params_json`. `values_json`은 **마지막 것**(`update`가 덮어씀, 27_ §7) |

@@ -63,14 +63,16 @@ CLASS_EXPR = ('if r.kind == "attack" then "공격" else if strings.hasPrefix(v: 
 ENV = 'r.env == "${source}"'
 
 
-def alert_summary(alert_start: str, evidence_start: str) -> str:
+def alert_summary(alert_start: str, evidence_start: str, stop: str = "v.timeRangeStop") -> str:
     """경보 하나 = 한 행으로 합친 Flux(끝은 ungroup). 열: alert_id, rule, stage, kind, cell, start(raise), last(마지막 경보 레코드),
     active(경보·근거 중 마지막), event(마지막 이벤트), sev(0·1·2 최대), ues·rep·key·reason(마지막 값, 문자열), status(열림·해제·
     강제 종료 (사유)·상태 불명), class(공격·이상 유형·판정 보류).
     pivot은 경보마다 필드 구성이 달라 표 모양이 갈리므로 쓰지 않고, 값을 문자열 한 열로 모아 reduce로 합친다.
-    상태 불명 판단에 쓸 마지막 근거 시각도 같은 모양으로 붙여(union) 함께 합친다(join.left는 reduce 결과에서 실패함)."""
+    상태 불명 판단에 쓸 마지막 근거 시각도 같은 모양으로 붙여(union) 함께 합친다(join.left는 reduce 결과에서 실패함).
+    start가 지금 기준(-5m 등)이면 stop도 now()로 준다 — stop이 화면 시간 범위 끝이면, 지난 범위를 골랐을 때
+    start > stop이 되어 "cannot query an empty range"로 패널이 깨진다."""
     return f"""alerts = from(bucket: v.defaultBucket)
-  |> range(start: {alert_start}, stop: v.timeRangeStop)
+  |> range(start: {alert_start}, stop: {stop})
   |> filter(fn: (r) => r._measurement == "alert" and {ENV})
   |> filter(fn: (r) => r._field == "severity" or r._field == "ues_total" or r._field == "rep_value"
       or r._field == "rep_key" or r._field == "reason")
@@ -78,7 +80,7 @@ def alert_summary(alert_start: str, evidence_start: str) -> str:
       t: r._time, f: r._field, s: string(v: r._value), a: true}}))
   |> group()
 evidence = from(bucket: v.defaultBucket)
-  |> range(start: {evidence_start}, stop: v.timeRangeStop)
+  |> range(start: {evidence_start}, stop: {stop})
   |> filter(fn: (r) => r._measurement == "evidence" and r._field == "seq" and {ENV})
   |> group(columns: ["alert_id"])
   |> max(column: "_time")
@@ -206,12 +208,13 @@ def monitoring() -> dict:
 
     # ---- 요약
     b.row("요약 — 지금")
-    # 상태 불명 판단에는 최근 근거만 있으면 된다(근거가 5분 넘게 없으면 이미 상태 불명이다)
+    # 상태 불명 판단에는 최근 근거만 있으면 된다(근거가 5분 넘게 없으면 이미 상태 불명이다).
+    # 요약 줄은 화면 시간 범위와 상관없이 지금 상태다(상태 불명도 now() 기준) — 그래서 stop도 now()
     open_alerts = f'''
 import "array"
 import "date"
 import "strings"
-{alert_summary("-7d", "-5m")}
+{alert_summary("-7d", "-5m", stop="now()")}
 // map 결과에 그대로 옮긴 열(alert_id)이 하나도 없으면 InfluxDB 2.7의 Flux가 조건식 값을 null로 만든다 — 그래서 alert_id를 함께 둔다
 counted = summary
   |> filter(fn: (r) => r.status == "열림" or r.status == "상태 불명")
@@ -238,7 +241,7 @@ union(tables: [counted, zeros])
 import "array"
 import "date"
 import "strings"
-{alert_summary("-7d", "-5m")}
+{alert_summary("-7d", "-5m", stop="now()")}
 union(tables: [summary |> filter(fn: (r) => r.status == "열림") |> keep(columns: ["sev"]), array.from(rows: [{{sev: 0}}])])
   |> max(column: "sev")
   |> map(fn: (r) => ({{_value: string(v: r.sev)}}))

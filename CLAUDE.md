@@ -249,7 +249,7 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 변수: `source`, `cell`, `alert_id`. 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(27_ §7).
 
-Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석).
+Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석). `range`의 start와 stop은 같은 기준으로 준다 — 화면 시간 범위(`v.timeRangeStart`~`v.timeRangeStop`)끼리, 또는 지금 기준(`-5m`~`now()`)끼리. 섞으면 지난 범위를 골랐을 때 start > stop이 되어 `cannot query an empty range`로 패널이 깨진다(`tests/test_dashboards.py`가 검사).
 
 ### 9.2 성능 (`performance.json`) — M10에서 추가 예정
 `docs/dashboard-design.md` 3절: 룰·단계·종류별 경보 수, 1~4단계 대 1단계만(`replay-kpm-only`) 비교, 경보 길이, 근거 손실·상태 불명, 입력 품질. 탐지율·오탐·탐지 지연·오버헤드는 파이프라인 완성 뒤(27_ §9).

@@ -2,7 +2,7 @@
 
 2026-11-09 · 상태: **초안** · 기준: 탐지 엔진 명세 27_ §7 '화면과 레코드'(`reference/detection/`), 저장 구조 `schema/SCHEMA.md` 5절(M8)
 
-M10에서 지금의 대시보드 2개(`realtime.json`·`evaluation.json`, 옛 메시지 기준)를 이 설계대로 다시 만든다. 패널마다 "무슨 질문에 답하나 → 어떤 레코드로"를 먼저 정해, 저장 구조를 다시 고칠 일이 없게 한다.
+M10에서 처음 대시보드 2개(`realtime.json`·`evaluation.json`, mock 메시지 기준)를 지우고 이 설계대로 다시 만든다(관제 `monitoring.json` 완료, 성능 `performance.json` 예정). 패널마다 "무슨 질문에 답하나 → 어떤 레코드로"를 먼저 정해, 저장 구조를 다시 고칠 일이 없게 한다.
 
 ## 0. 요약
 
@@ -93,7 +93,7 @@ M10에서 지금의 대시보드 2개(`realtime.json`·`evaluation.json`, 옛 �
 | 탐지 지연 | 경보별 지연 — R3 | 위와 같음 |
 | 수집 오버헤드 | 측정 주체·형식 — R5 | 탐지 쪽 협의 중. 옛 `overhead` 메시지는 그대로 받음 |
 
-옛 evaluator(`eval_result`, 옛 메시지 기준)는 M10에서 이 표에 맞춰 재검토한다.
+처음 evaluator(`eval_result`, mock 메시지 기준)는 M10에서 지웠다. 평가 방식이 정해지면 새로 만든다.
 
 ## 4. 데이터가 없거나 불완전할 때
 
@@ -133,5 +133,5 @@ M10에서 지금의 대시보드 2개(`realtime.json`·`evaluation.json`, 옛 �
 |---|---|---|
 | 1 | (On-Premise를 더할 때) 연구실 공인 IP와 고정 여부, 단계 비교 재생 `X-Env`에 출처 붙이기 — 1절 | 탐지 쪽 — 지금은 묻지 않음 |
 | 2 | `L3-20`(Blind DoS)의 피해자 연결(`ues[].peers`) 근거가 오지 않는다. 샘플 3개 모두 근거는 공격 연결 UE뿐이다. 27_ §6.3은 피해자 타임라인을 함께 그리자고 제안하지만 데이터가 없다 → 피해자 근거를 보내 줄지, 피해자 쪽은 `peers` 표시만 할지 | 탐지 쪽 |
-| 3 | 대시보드 이름·파일 — 지금 `realtime.json`·`evaluation.json`을 그대로 바꿀지, 새 파일(`monitoring.json`·`performance.json`)로 만들고 옛 것은 M10 끝에 지울지 | 대시보드 담당 |
+| 3 | ~~대시보드 이름·파일~~ — 새 파일(`monitoring.json`·`performance.json`)로 만들고 옛 것은 지우기로 함(11/09 사용자 결정, M10에서 삭제) | 해결 |
 | 4 | 상시 경로 샘플 2개(3초 `kpm2` 묶음)를 다시 받아야 상시 KPM2 패널을 실제 모양으로 만든다 (progress Q19) | 탐지 쪽 |

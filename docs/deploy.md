@@ -3,10 +3,10 @@
 대시보드 스택(InfluxDB + Grafana + collector)을 EC2 한 대에 올리는 절차다. 처음 보는 팀원이 그대로 따라 할 수 있게 쓴다.
 범위와 이유는 `docs/progress.md` M7의 결정 D85~D87에 있다.
 
-- **AWS에 올리는 것**: 원격에서 대시보드를 보고, mock·replay 데이터로 시연하고, 평가 리포트를 만드는 용도
+- **AWS에 올리는 것**: 원격에서 대시보드를 보고, 탐지 엔진 데이터를 받고(`/ingest`), 녹화를 replay로 시연하는 용도
 - **올리지 않는 것**: 테스트베드 실시간 경로(CU/DU, eBPF 에이전트, 탐지 엔진). 이것들은 테스트베드(AWS의 CU·DU 세트, 연구실)에 둔다(CLAUDE.md 1.1절)
 - **탐지 엔진 데이터**는 테스트베드 CU의 전송기가 HTTPS `POST /ingest`로 보낸다(M9, 10절). 지금은 AWS 테스트베드 `p4`만 받는다
-- **mock·replay 데이터는 성능 결과로 쓰지 않는다**(CLAUDE.md 12절 7항)
+- **샘플·재생 데이터는 성능 결과로 쓰지 않는다**(CLAUDE.md 12절 7항)
 
 ## 구성
 
@@ -18,7 +18,7 @@ p4 CU 박스 전송기 ──(TCP 443, p4 IP만, HTTPS)──>  └─ docker co
                                                      │    └─> collector:8088 (POST /ingest, compose 네트워크 안에서만)
                                                      ├─ influxdb   127.0.0.1:8086 ← 서버 안에서만
                                                      ├─ collector  127.0.0.1:9999/udp ← 서버 안에서만
-                                                     └─ tools      (필요할 때 실행: mock, replay, evaluator)
+                                                     └─ tools      (필요할 때 실행: replay)
 서버 접속: SSH 대신 SSM Session Manager (22번 포트를 열지 않는다)
 코드 받기: GitHub 배포 키(읽기 전용)
 ```
@@ -177,11 +177,10 @@ grep GRAFANA_ADMIN_PASSWORD .env
 
 Grafana 비밀번호는 팀 비밀번호 관리 도구 같은 안전한 곳에 둔다. 채팅방·이슈·커밋에 붙이지 않는다.
 
-컨테이너는 uid 1000으로 돈다. 호스트에 마운트하는 녹화·리포트 폴더의 주인을 맞춘다.
+컨테이너는 uid 1000으로 돈다. 호스트에 마운트하는 녹화 폴더의 주인을 맞춘다.
 
 ```bash
-mkdir -p reports
-chown 1000:1000 recordings reports
+chown 1000:1000 recordings
 ```
 
 ## 6. 기동과 확인
@@ -202,43 +201,26 @@ docker compose logs --tail 5 collector
 - InfluxDB: `"status":"pass"`
 - Grafana: `"database":"ok"`
 - datasource: `"status":"OK"`
-- collector: `InfluxDB http://influxdb:8086 bucket=portran`, `입력 udp://0.0.0.0:9999`, 1초마다 `수신 … 저장 … 거부 …`
+- collector: `InfluxDB http://influxdb:8086 bucket=portran`, `입력 udp://0.0.0.0:9999`, `입력 http://0.0.0.0:8088/ingest`, 1초마다 `수신 … 저장 … 거부 …`
 
-내 PC 브라우저에서 `http://<탄력적 IP>:3000`에 접속해 `admin` / 위 비밀번호로 로그인한다. **Dashboards → PortRAN** 폴더에 대시보드 2개가 있어야 한다.
+내 PC 브라우저에서 `http://<탄력적 IP>:3000`에 접속해 `admin` / 위 비밀번호로 로그인한다. **Dashboards → PortRAN** 폴더에 관제 대시보드(**PortRAN 관제**)가 있어야 한다.
 
-## 7. 데이터 넣기 (mock · replay · evaluator)
+## 7. 데이터 넣기 (replay)
 
-모두 `tools` 컨테이너로 실행한다. 출력 기본값이 collector 컨테이너(`udp://collector:9999`)로 잡혀 있다. `tools`는 collector를 다시 띄우지 않으므로, 먼저 6절대로 collector가 `(healthy)`인지 확인한다.
+`tools` 컨테이너로 실행한다. replay의 기본 출력이 collector 컨테이너(`http://collector:8088/ingest`)로 잡혀 있다. `tools`는 collector를 다시 띄우지 않으므로, 먼저 6절대로 collector가 `(healthy)`인지 확인한다.
 
-아래는 따로따로 쓰는 명령이다. 한 번에 붙여 넣지 말고 필요한 것만 실행한다.
-
-**mock** (10분, 1배속 실시간, 백그라운드)
-
-```bash
-docker compose run -d --rm tools python -m mock.generator --duration 600 --seed 42
-docker compose logs -f --tail 3 collector     # 수신 N 저장 N 거부 0 이면 정상 (Ctrl+C로 나오기)
-```
-
-**replay**: 시각은 지금으로 옮겨 재생한다. collector가 **지금 쓰고 있는** 녹화 파일(가장 최근 `raw-*.jsonl`)을 그대로 재생하면 재생한 메시지가 같은 파일 끝에 다시 녹화되므로, 복사본을 만들어 재생한다. 아래 파일 이름은 예시라 `ls`로 확인한 실제 이름으로 바꾼다.
+녹화(`recordings/raw-<시각>-<환경>.jsonl`)를 지금 시각으로 옮겨 1배속으로 재생한다(백그라운드). collector가 **지금 쓰고 있는** 녹화 파일을 그대로 재생하면 재생한 줄이 다른 환경 파일(`…-replay.jsonl`)에 녹화되지만, 헷갈리지 않게 복사본을 만들어 재생한다. 아래 파일 이름은 예시라 `ls`로 확인한 실제 이름으로 바꾼다.
 
 ```bash
 ls -l recordings/
-cp recordings/raw-20261026-074049.jsonl recordings/mock-seed42.jsonl
-docker compose run -d --rm tools python -m replay.replay recordings/mock-seed42.jsonl --speed 1 --retime now
+cp recordings/raw-20261109-072830-sample.jsonl recordings/demo.jsonl
+docker compose run -d --rm tools python -m replay.replay recordings/demo.jsonl --env replay
+docker compose logs -f --tail 3 collector     # 수신 N 저장 N 거부 0 이면 정상 (Ctrl+C로 나오기)
 ```
 
-실시간 관제의 "데이터 출처"가 **mock 재생**(실제 녹화면 **녹화 재생**)으로 바뀐다.
+관제 대시보드의 데이터 출처를 **재생**으로 고르면 보인다. 재생마다 `session`·`alert_id`에 재생 표시가 붙어 같은 녹화를 여러 번 재생해도 따로 저장된다(README "개발·시연 데이터").
 
-**evaluator**: mock·replay가 **끝난 뒤** 그 구간을 평가한다. 서버와 컨테이너는 UTC라서 `date`로 시간대가 붙은 시각을 만든다(예: 최근 15분).
-
-```bash
-docker compose run --rm tools python -m evaluator.evaluate --from "$(date -d '15 min ago' --iso-8601=seconds)"
-ls reports/
-```
-
-직접 시각을 쓸 때는 `--from 2026-10-26T16:40:00+09:00`처럼 `+09:00`을 붙인다. `--to`를 빼면 지금까지 평가한다.
-
-collector가 받은 메시지는 `recordings/raw-*.jsonl`로 녹화된다(로컬과 같다).
+평가(탐지율·오탐·지연)는 지금 없다. 처음 evaluator는 M10에서 지웠고, 평가 방식은 전체 파이프라인 완성 뒤 탐지 쪽과 정한다(CLAUDE.md 10절).
 
 ## 8. 운영
 
@@ -426,7 +408,7 @@ sudo bash deploy/server-deploy.sh      # 새 인증서를 만들고 PEM을 출�
 compose가 2.24.4보다 오래됐다. 3-2절대로 Docker 공식 저장소의 `docker-compose-plugin`을 설치한다.
 
 **collector가 `PermissionError: … recordings/…`로 계속 재시작한다**
-`chown 1000:1000 recordings reports`를 하지 않았다. 하고 나서 `docker compose restart collector`.
+`chown 1000:1000 recordings`를 하지 않았다. 하고 나서 `docker compose restart collector`.
 
 **대시보드 그래프가 No data인데 "수집 상태"는 몇 초 전에 받았다고 나온다**
 노드 목록 같은 변수를 데이터가 들어오기 전에 읽어서 비어 있는 경우다. 대시보드는 새로고침마다 변수를 다시 읽도록 되어 있으니(D103) 몇 초 기다리거나 브라우저를 새로고침(F5)한다.

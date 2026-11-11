@@ -1,16 +1,16 @@
 """collector: 수신 → 스키마 검증 → raw 녹화 → InfluxDB 배치 쓰기.
 
-    python -m collector.collector                                          # UDP (.env의 COLLECTOR_UDP_HOST:PORT)
     python -m collector.collector --in http://127.0.0.1:8088               # 탐지 엔진 전송기 수집 (POST /ingest)
-    python -m collector.collector --in file://recordings/mock.jsonl --once # 파일을 끝까지 읽고 종료
-    python -m collector.collector --in udp://0.0.0.0:9999 --in file://agent.jsonl   # 여러 입력 동시에
+    python -m collector.collector                                          # UDP (.env의 COLLECTOR_UDP_HOST:PORT)
+    python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env sample
+    python -m collector.collector --in udp://127.0.0.1:9999 --in http://127.0.0.1:8088   # 여러 입력 동시에
     python -m collector.collector --dry-run                                # InfluxDB 없이 검증·녹화만
 
 검증에 실패한 메시지는 버리지 않고 recordings/rejected.jsonl에 사유와 함께 남긴다.
 검증을 통과한 메시지는 받은 그대로 녹화한다(replay용).
-  - 옛 메시지(metric·detection·attack_run·overhead): recordings/raw-<날짜시각>.jsonl
   - 탐지 엔진 레코드(alert·evidence·gap·kpm2·hello·f1_evt): recordings/raw-<날짜시각>-<환경>.jsonl
     환경은 /ingest의 X-Env 헤더, UDP·파일 입력은 --env. 다시 보낸 줄(같은 중복 키)은 한 번만 저장한다.
+  - overhead(형식 미정, R5): recordings/raw-<날짜시각>.jsonl
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from common.config import env_int, influx_settings, load_env
 from common.schema import validation_errors
 from common.transport import UdpSource, open_source, parse_address
 
-from .influx_writer import NEW_RECORD_TYPES, InfluxWriter, WriteError, session_point, to_point
+from .influx_writer import NEW_RECORD_TYPES, InfluxWriter, WriteError, alert_ue_points, session_point, to_point
 from .ingest import DEFAULT_ENV, BoundedDict, IngestRequest, IngestSource, dedup_key, parse_env
 
 log = logging.getLogger("collector")
@@ -118,7 +118,7 @@ class Collector:
     def env_raw_path(self, env: str) -> Path:
         return self.recordings_dir / f"raw-{self.started_at:%Y%m%d-%H%M%S}-{env}.jsonl"
 
-    # ------------------------------------------------------------------ 메시지 처리 (UDP·파일)
+    # ------------------------------------------------------------------ UDP·파일 입력
 
     def _parse(self, data: bytes) -> tuple[str, dict | None, list[str]]:
         try:
@@ -133,6 +133,7 @@ class Collector:
         return line, (None if errors else msg), errors
 
     def handle(self, data: bytes, origin: str, env: str | None = None) -> None:
+        """UDP·파일 입력의 한 줄. InfluxDB에는 배치로 나중에 쓴다(flush)."""
         self.stats.received += 1
         line, msg, errors = self._parse(data)
         if msg is None:
@@ -277,7 +278,7 @@ class Collector:
             session = self.alert_sessions.get(key)
             if session is None:
                 staged.awaiting.append((key, msg))
-            return [to_point(msg, env, session=session)]
+            return [to_point(msg, env, session=session), *alert_ue_points(msg, env)]
         return [to_point(msg, env, received_ns=received_ns)]
 
     def _apply(self, staged: _Staged) -> None:
@@ -294,11 +295,7 @@ class Collector:
     def _check_times(self, msg: dict, origin: str) -> None:
         """스키마로 표현할 수 없는 시각 순서 검사. 노드 간 시계가 어긋나도 데이터를 잃지 않도록 거부하지 않고 경고만 한다."""
         t = msg["type"]
-        if t == "detection" and msg["ts_first_evidence"] > msg["ts_detected"]:
-            problem = f"ts_first_evidence가 ts_detected보다 {(msg['ts_first_evidence'] - msg['ts_detected']) / 1e6:.1f}ms 늦음"
-        elif t == "attack_run" and msg["ts_start"] > msg["ts_end"]:
-            problem = "ts_start가 ts_end보다 늦음"
-        elif t == "gap" and msg["t_from"] > msg["t_to"]:
+        if t == "gap" and msg["t_from"] > msg["t_to"]:
             problem = "t_from이 t_to보다 늦음"
         elif t == "kpm2" and msg["t_start_ms"] >= msg["t_end_ms"]:
             problem = "t_start_ms가 t_end_ms보다 늦거나 같음"
@@ -306,7 +303,7 @@ class Collector:
             return
         self.stats.warnings += 1
         if self.stats.warnings <= MAX_WARNING_DETAILS:
-            ident = msg.get("event_id") or msg.get("run_id") or msg.get("alert_id") or msg.get("session")
+            ident = msg.get("alert_id") or msg.get("session")
             log.warning("시각 순서 경고 (%s, %s): %s — 저장은 함", origin, ident, problem)
 
     def _write_raw(self, line: str, msg: dict, env: str) -> None:

@@ -141,6 +141,22 @@ def test_nginx_template_keeps_the_sender_contract():
     assert "resolver 127.0.0.11" in conf                                 # collector 재생성 뒤 IP 변경 따라감
 
 
+def test_grafana_provisioning_deletes_removed_dashboards():
+    """JSON을 지우면 대시보드도 지운다(true면 M10에서처럼 옛 대시보드가 남는다). UI 수정은 막는다."""
+    provider = yaml.safe_load((REPO_ROOT / "grafana" / "provisioning" / "dashboards" / "dashboards.yml")
+                              .read_text(encoding="utf-8"))["providers"][0]
+    assert provider["disableDeletion"] is False and provider["allowUiUpdates"] is False
+
+
+def test_deploy_recreates_grafana_when_mounted_files_differ():
+    script = (REPO_ROOT / "deploy" / "server-deploy.sh").read_text(encoding="utf-8")
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    for mount in ("grafana/dashboards:/etc/grafana/dashboards", "grafana/provisioning:/etc/grafana/provisioning"):
+        assert f'"{mount}"' in script                 # 배포 스크립트가 확인하는 마운트가
+        assert f"./{mount}:ro" in compose              # compose의 실제 마운트와 같다
+    assert "docker compose up -d --force-recreate --wait grafana" in script
+
+
 def test_deploy_scripts_parse():
     if shutil.which("bash") is None:
         pytest.skip("bash 없음")

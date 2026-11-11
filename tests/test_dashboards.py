@@ -222,6 +222,7 @@ VARIABLE_VALUES = {
     "${cell:json}": '["1"]',
     "${cell}": "1",
     "${alert_id}": "alert-not-exist",
+    "${kpm_only}": "replay-kpm-only",
 }
 
 
@@ -257,6 +258,11 @@ def test_all_queries_run_without_error(grafana_up, path):
     for name, q, _ in queries(load(path)):
         for k, v in VARIABLE_VALUES.items():
             q = q.replace(k, v)
+        # 바꾸지 않은 변수가 남으면 Flux가 문자열 보간("${x}")으로 읽어 엉뚱한 오류가 난다 — 먼저 잡는다
+        left = set(re.findall(r"\$\{[^}]+\}", q))
+        if left:
+            errors.append(f"{name}: VARIABLE_VALUES에 없는 변수 {sorted(left)}")
+            continue
         result = grafana_query(q)
         if "error" in result:
             errors.append(f"{name}: {result['error']}")

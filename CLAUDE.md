@@ -134,7 +134,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   ├── provisioning/dashboards/dashboards.yml
 │   ├── build.py                  # 대시보드 JSON 생성기 (JSON은 이것으로만 고친다, M10)
 │   ├── rule-names.json           # 룰 ID → 공격 이름 (27_ §5.3)
-│   └── dashboards/{monitoring.json, performance.json}   # 관제·성능 (performance는 M10에서 추가 예정)
+│   └── dashboards/{monitoring.json, performance.json}   # 관제·성능 (grafana/build.py가 만든다)
 ├── recordings/                   # raw 녹화 (.gitignore)
 └── tests/
     └── data/detection/           # 탐지 쪽 경보 경로 샘플 32개 (11/05, 지금 탐지 엔진 코드 출력)
@@ -251,8 +251,8 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석). `range`의 start와 stop은 같은 기준으로 준다 — 화면 시간 범위(`v.timeRangeStart`~`v.timeRangeStop`)끼리, 또는 지금 기준(`-5m`~`now()`)끼리. 섞으면 지난 범위를 골랐을 때 start > stop이 되어 `cannot query an empty range`로 패널이 깨진다(`tests/test_dashboards.py`가 검사).
 
-### 9.2 성능 (`performance.json`) — M10에서 추가 예정
-`docs/dashboard-design.md` 3절: 룰·단계·종류별 경보 수, 1~4단계 대 1단계만(`replay-kpm-only`) 비교, 경보 길이, 근거 손실·상태 불명, 입력 품질. 탐지율·오탐·탐지 지연·오버헤드는 파이프라인 완성 뒤(27_ §9).
+### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
+`docs/dashboard-design.md` 3절. 고른 시간 범위(실험 구간)에 시작한 경보로: 종류별 경보 수, 단계 비교(1~4단계 = `${source}` 대 1단계만 = 변수 `kpm_only`, 기본 `replay-kpm-only` — 룰별 막대와 '1단계만으로는 못 잡은 경보' 수, 재생 결과가 없으면 '재생 없음'), 경보 길이 분포, 룰 × 단계 × 종류 표, 경보가 어떻게 끝났나(해제·강제 종료 사유·끝이 안 옴), 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움·일부만 측정된 지표. 탐지율·오탐·탐지 지연·수집 오버헤드는 파이프라인 완성 뒤(27_ §9) — 자리만 둔다.
 
 ## 10. 평가 (보류)
 

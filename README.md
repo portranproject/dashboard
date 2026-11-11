@@ -10,7 +10,7 @@ O-RAN 기반 5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
 - 탐지 엔진 레코드 형식의 기준: [`reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (탐지 엔진 담당, 11/05 확정)
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, collector, 대시보드, replay, AWS 배포 — mock 생성기로 먼저 개발), M8·M9(탐지 엔진 레코드 수신·저장, AWS `/ingest` HTTPS 경로 — 탐지 쪽 전송기 연동 시험 통과) 완료. 지금은 M10 대시보드 재구성 중이다(관제 대시보드 완료, mock·evaluator·처음 메시지 형식 삭제, 성능 대시보드 남음).
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, collector, 대시보드, replay, AWS 배포 — mock 생성기로 먼저 개발), M8·M9(탐지 엔진 레코드 수신·저장, AWS `/ingest` HTTPS 경로 — 탐지 쪽 전송기 연동 시험 통과) 완료. 지금은 M10 대시보드 재구성 중이다(관제 대시보드·성능 대시보드 탐지 성과 완료, mock·evaluator·처음 메시지 형식 삭제, 수집 오버헤드는 측정 형식이 정해진 뒤).
 
 ## 준비물
 
@@ -116,7 +116,15 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 - 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(탐지 엔진이 죽었거나 다시 떴을 수 있음).
 - **대시보드 JSON은 [`grafana/build.py`](grafana/build.py)로 만든다.** UI에서 고쳐도 저장되지 않고, JSON을 손으로 고치면 다음 생성 때 사라진다. `build.py`를 고치고 `python grafana/build.py`로 다시 쓴 뒤 커밋한다(테스트가 어긋남을 잡는다). 룰 ID → 공격 이름은 [`grafana/rule-names.json`](grafana/rule-names.json). 설계는 [`docs/dashboard-design.md`](docs/dashboard-design.md).
 
-**성능** — M10에서 추가 예정(룰·단계별 경보 수, 1~4단계 대 1단계만 비교, 입력 품질). 탐지율·오탐·지연은 전체 파이프라인 완성 뒤 탐지 쪽과 평가 방식을 정한 다음에 만든다.
+**성능** — http://localhost:3000/d/portran-performance (새로고침 1분, 기본 최근 24시간 — 시간 범위를 실험 구간으로 고른다)
+
+| 행 | 패널 |
+|---|---|
+| 탐지 결과 | 종류별 경보 수, **단계 비교**(1~4단계 대 1단계만 — 요약과 룰별 막대), 경보 길이 분포, 룰 × 단계 × 종류 표 |
+| 경보·입력 품질 | 경보가 어떻게 끝났나(해제·강제 종료 사유·끝이 안 옴), 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움, 일부만 측정된 지표 |
+| 파이프라인 완성 뒤 | 탐지율·오탐·탐지 지연·수집 오버헤드 — 자리만(탐지 쪽과 정한 뒤) |
+
+- 위쪽 변수: 데이터 출처, 셀, **단계 비교 대상**(기본 `replay-kpm-only` — 탐지 쪽이 같은 기록을 1단계만으로 다시 재생해 보낸 결과, 27_ §3). 재생 결과가 없으면 단계 비교에 '재생 없음'이 나온다.
 
 ## 개발·시연 데이터 (replay)
 

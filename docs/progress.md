@@ -1023,6 +1023,7 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 | D153 | `overhead`만 처음 형식으로 남기고 UDP 입력 유지 | 측정 주체·형식이 R5 협의 중 | 탐지 쪽 (R5) |
 | D154 | Grafana provisioning `disableDeletion: false` | `true`면 JSON을 지워도 대시보드가 남는다. M10 배포 뒤 옛 대시보드 2개가 남았음. UI 수정 금지(`allowUiUpdates: false`)는 그대로 | 불필요 |
 | D155 | 배포 스크립트가 `grafana/dashboards`·`grafana/provisioning`의 서버 파일과 컨테이너 안 파일(해시)을 비교해 다르면 Grafana를 다시 만든다 | M10 배포(#28)에서 checkout이 `grafana/dashboards`의 파일을 모두 바꿔 git이 폴더를 지웠다 다시 만들었고, Grafana 컨테이너는 지워진 옛 폴더(빈 폴더)를 계속 봐서 새 관제 대시보드가 안 보였다(사용자가 서버에서 확인: 서버엔 `monitoring.json`, 컨테이너 안은 비어 있음). compose는 설정이 같으면 Grafana를 다시 만들지 않음 | 불필요 |
+| D156 | 상시 KPM2 선 그래프는 점 사이가 6초(3초 묶음 2칸)보다 길게 비면 선을 끊는다(`insertNulls`, `grafana/build.py`의 `KPM2_LINE_BREAK_MS`). 선 밑 채우기는 그대로 | AWS 관제 화면(p4)에서 1분 40초 동안 데이터가 없는데 1→0 사이가 비스듬히 이어져 0~1 사이 값이 있었던 것처럼 보였다(사용자 확인) | 불필요 |
 
 ### 확인 결과 (지금까지)
 
@@ -1039,6 +1040,6 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 
 - [ ] 성능 대시보드 `performance.json` (`docs/dashboard-design.md` 3절)
 - [ ] 로컬 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 실제 값으로 맞춰 대시보드 쿼리 테스트 실행
-- [x] PR(`feat/dashboard-M10` → `dev`, #27) → `main` 배포(#28, 2026-11-11). 배포는 Success였지만 Grafana에 새 관제 대시보드가 안 보이고 옛 대시보드가 남음 → 원인 D154·D155. 서버에서 `docker compose up -d --force-recreate grafana`로 풀고, 같은 일이 없게 `fix/grafana-redeploy`로 고침(`docs/m9-complete`는 #27에 함께 병합)
+- [x] PR(`feat/dashboard-M10` → `dev`, #27) → `main` 배포(#28, 2026-11-11). 배포는 Success였지만 Grafana에 새 관제 대시보드가 안 보이고 옛 대시보드가 남음 → 원인 D154·D155. 서버에서 `docker compose up -d --force-recreate grafana`로 풀고, 같은 일이 없게 `fix/grafana-redeploy`로 고침(`docs/m9-complete`는 #27에 함께 병합). 고친 것은 #29 → `main` #30으로 배포
 - [ ] (사용자) AWS·로컬 Grafana에서 옛 대시보드 2개(실시간 관제·성능 검증)를 UI에서 지우기 — `disableDeletion: true`일 때 파일이 없어지면서 provisioning 연결이 이미 끊겨, `false`로 바꿔도 저절로 지워지지 않는다(앞으로 지우는 파일부터 적용)
 - [ ] AWS에서 관제 화면 확인 (서버 녹화를 `--env replay`로 재생)

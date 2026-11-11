@@ -107,6 +107,17 @@ def test_monitoring_layout():
     assert {k: v["text"] for k, v in options.items()} == {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]}
 
 
+def test_kpm2_lines_break_where_data_is_missing():
+    """받지 않은 구간을 선으로 이으면 그 사이 값이 있었던 것처럼 보인다(M10 AWS 화면). 3초 묶음 2칸 넘게 비면 끊는다."""
+    d = load(DASHBOARD_DIR / "monitoring.json")
+    lines = [p for p in d["panels"] if p["type"] == "timeseries"
+             and p["fieldConfig"]["defaults"]["custom"].get("drawStyle") == "line"]
+    assert lines
+    for panel in lines:
+        custom = panel["fieldConfig"]["defaults"]["custom"]
+        assert custom["spanNulls"] is False and custom["insertNulls"] == 6000, panel["title"]
+
+
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_all_queries_use_provisioned_datasource_and_default_bucket(path):
     d = load(path)

@@ -25,6 +25,9 @@ SOURCES = [("AWS", "p4"), ("재생", "replay"), ("샘플", "sample")]
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
 CELL_LIMIT = 96  # 셀 UE 컨텍스트 한도 (27_ §5.3, ext.UeCtxMax ≥ 90%면 high)
+# 상시 KPM2 선은 점 사이가 이보다 길게 비면 끊는다(3초 묶음 2칸). 이으면 받지 않은 구간에
+# 값이 서서히 변한 것처럼 보인다.
+KPM2_LINE_BREAK_MS = 2 * 3000
 
 
 # --------------------------------------------------------------------------- 공통 조각
@@ -341,7 +344,7 @@ from(bucket: v.defaultBucket)
                   field_config={"defaults": {"unit": "none", "min": 0,
                                              "displayName": "${__field.name} · 셀 ${__field.labels.cell}",
                                              "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10,
-                                                        "spanNulls": False,
+                                                        "spanNulls": False, "insertNulls": KPM2_LINE_BREAK_MS,
                                                         "thresholdsStyle": {"mode": "line+area"}},
                                              "thresholds": {"mode": "absolute", "steps": [
                                                  {"color": "transparent", "value": None},

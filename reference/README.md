@@ -17,7 +17,7 @@
 - **Table II — 3GPP KPM** (TS 28.552): `RRC.ConnEstabAtt/Succ/FailCause`, `RRC.RelWithoutSuspendConfig`, `UECNTX.ConnEstabAtt/Succ`, `RRC.ReEstabAtt/SuccWithUeContext`, `RRC.ResumeAtt/Succ`, `RRC.ConnMean/Max`, `RRC.InactiveConnMean/Max`
 - **보안 활용 예**: RRC/NAS 메시지 ID 순서로 위조 RRC 연결 요청 기반 시그널링 폭주 탐지, 암호·무결성 알고리즘 감시로 다운그레이드(bidding-down) 탐지, KPM의 연결 실패·재수립 급변으로 이상 징후 탐지.
 
-**이 저장소와의 관계**: Table I → eKPM, Table II → 표준 KPM. 이름·코드표는 [`schema/SCHEMA.md`](../schema/SCHEMA.md) 6절, mock 설정은 [`mock/scenarios.yaml`](../mock/scenarios.yaml).
+**이 저장소와의 관계**: Table I → KPM1(팀 용어 eKPM, `ue_evt`), Table II → KPM2(표준 KPM, `kpm2`). 대응표는 [`schema/SCHEMA.md`](../schema/SCHEMA.md) 4절.
 
 ## 5G-Spector
 
@@ -32,13 +32,18 @@
 
 **이 저장소와의 관계**:
 
-| 이 저장소 | 5G-Spector |
-|---|---|
-| eKPM (TeleRAN Table I) | MobiFlow UE 중심 레코드와 거의 같은 항목 |
-| `RRC_SIGNALING_STORM` | BTS Resource Depletion (위조 RRC 연결 대량 생성) |
-| `F1AP_MSG_TAMPER`의 알고리즘 다운그레이드 | Null Cipher/Integrity (탐지 신호가 같음: 보안 수립 후 NEA0/NIA0) |
-| `ABNORMAL_UE_ATTACH` | Downlink/Uplink DoS 계열 (등록 거절, 인증 실패 패턴) |
-| `severity`, 룰셋 | 공격/경고 단계, 규칙 세트 3종 |
-| 성능 검증 대시보드 (CLAUDE.md 9.2) | 탐지율, 오탐, 탐지 지연, CPU·메모리 오버헤드 평가 방식 |
+탐지 엔진 룰(탐지 쪽 명세 `detection/27_` §5.3, 이름표 `grafana/rule-names.json`)과의 대응:
 
-**mock의 `RRC_SIGNALING_STORM`은 이 논문의 BTS Resource Depletion을 따른다**: 공격자가 위조 RRC 연결을 잇달아 만들고, 각 연결은 `AuthenticationRequest`까지 진행한 뒤 공격자가 응답하지 않아 코어의 인증 타이머(논문은 LTE T3460, 5G는 T3560)가 끝날 때까지 몇 초간 남았다가 해제된다(transient UE). 그래서 KPM의 연결 시도·성공·연결 UE 수도 크게 오르지만, 어느 UE가 가짜인지는 UE별 텔레메트리(eKPM)로만 알 수 있다. 설정은 `mock/scenarios.yaml`의 `bts_fake_connection`.
+| 5G-Spector 공격 | 탐지 엔진 룰 (27_) |
+|---|---|
+| BTS Resource Depletion (위조 RRC 연결이 인증 요청에서 멈춤, transient UE) | `L3-01-O`(#1 인증 단계 고착, Kim'19 원형, 2단계) · `L3-01-V`(#1 UE 컨텍스트 고갈 변형, 1단계 — 셀 카운터만으로) |
+| Blind DoS (S-TMSI 재사용) | `L3-20`(#20, 2단계) |
+| Uplink DoS (위조 자격증명 등록) | `L3-21`(#21, 2단계) |
+| Downlink IMSI Extractor (요청 없는 IdentityResponse) | `L3-24`(#24, 3단계) |
+| Uplink IMSI Extractor | 4단계 이상 유형 `AN-02`의 후보 `L3-25-OV`(#25) |
+| Null Cipher/Integrity | 탐지하지 않음(#3 — 테스트베드가 평문 운용, 27_ §4.2) |
+| Downlink DoS | 탐지하지 않음(#9 — 전파 끊김과 가를 수 없음) |
+| 공격/경고 두 단계 | 경보 `kind` `attack` / `anomaly`(4단계 이상 유형·판정 보류) |
+| 탐지율·오탐·탐지 지연·오버헤드 평가 | 전체 파이프라인 완성 뒤 탐지 쪽과 정함(27_ §9) |
+
+처음 mock 생성기(M2~M9)의 신호 폭주 공격은 이 논문의 BTS Resource Depletion을 흉내 냈다: 위조 RRC 연결이 `AuthenticationRequest`까지 진행한 뒤 응답 없이 인증 타이머(LTE T3460, 5G T3560)가 끝날 때까지 몇 초 남았다가 해제된다(transient UE). mock은 M10에서 지웠다.

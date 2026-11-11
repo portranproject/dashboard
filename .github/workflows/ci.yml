@@ -1,7 +1,7 @@
 # CI: dev·main으로 가는 PR과 dev push마다 돈다.
 #   test       : 전체 테스트. InfluxDB·Grafana는 저장소의 docker-compose.yml로 띄운다(.env는 .env.example을 복사).
 #                서비스가 필요한 테스트가 건너뛰어지면 실패로 센다(tests/conftest.py, PORTRAN_REQUIRE_SERVICES).
-#   aws-compose: AWS 배포 구성(docker-compose.aws.yml)을 서버와 같은 방식으로 띄워 mock → collector → InfluxDB,
+#   aws-compose: AWS 배포 구성(docker-compose.aws.yml)을 서버와 같은 방식으로 띄워 replay·UDP → collector → InfluxDB,
 #                탐지 엔진 전송기 경로(HTTPS /ingest → nginx → collector → InfluxDB, M9)까지 확인.
 name: CI
 
@@ -75,9 +75,8 @@ jobs:
         run: |
           cp .env.example .env
           echo "COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml" >> .env
-          mkdir -p reports
-          # 컨테이너는 uid 1000으로 돈다. 녹화·리포트 폴더는 호스트에 마운트되므로 주인을 맞춘다
-          sudo chown 1000:1000 recordings reports
+          # 컨테이너는 uid 1000으로 돈다. 녹화 폴더는 호스트에 마운트되므로 주인을 맞춘다
+          sudo chown 1000:1000 recordings
           # /ingest 인증서. 서버는 공인 IP로 만들고(deploy/server-deploy.sh), CI는 127.0.0.1로 만든다
           bash deploy/ingest-cert.sh 127.0.0.1 certs
           docker compose up -d --build --wait --wait-timeout 180
@@ -87,22 +86,32 @@ jobs:
           docker compose port influxdb 8086 | grep '^127\.0\.0\.1:'
           docker compose port --protocol udp collector 9999 | grep '^127\.0\.0\.1:'
 
-      - name: mock → collector → InfluxDB
+      - name: replay(tools) → collector → InfluxDB, UDP overhead → collector
         run: |
-          docker compose run --rm tools python -m mock.generator --scenario normal --duration 20 --seed 1 --speed 0
-          sleep 3  # collector는 1초마다 배치를 쓴다
+          # 이미지에는 tests/가 없으므로 샘플을 마운트해 재생한다(지금 시각으로, 기다리지 않고)
+          docker compose run --rm -v "$PWD/tests/data:/app/tests/data:ro" tools \
+            python -m replay.replay "tests/data/detection/S20_L3-20_반복_UPDATE_evidence.jsonl" --env ci-replay --speed 0
+          docker compose run --rm -T tools python - <<'EOF'
+          import json, socket, time
+          msg = {"type": "overhead", "ts": time.time_ns(), "node": "cu", "ebpf_on": True, "cpu_pct": 1.5, "mem_mb": 100}
+          socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(json.dumps(msg).encode(), ("collector", 9999))
+          EOF
+          sleep 3  # collector는 UDP 입력을 1초마다 배치로 쓴다
           docker compose run --rm -T tools python - <<'EOF'
           from influxdb_client import InfluxDBClient
           from common.config import influx_settings
           s = influx_settings()
           with InfluxDBClient(url=s.url, token=s.token, org=s.org) as client:
-              tables = client.query_api().query(
-                  f'from(bucket: "{s.bucket}") |> range(start: -1h, stop: 1h) '
-                  '|> filter(fn: (r) => r._measurement == "metric" and r._field == "value") '
-                  '|> group() |> count()')
-              n = sum(r.get_value() for t in tables for r in t.records)
-          print(f"InfluxDB에 저장된 metric {n}건")
-          assert n > 0
+              def count(flux_filter):
+                  tables = client.query_api().query(
+                      f'from(bucket: "{s.bucket}") |> range(start: -1h, stop: 1h) |> filter(fn: (r) => {flux_filter}) '
+                      '|> group() |> count()')
+                  return sum(r.get_value() for t in tables for r in t.records)
+              alerts = count('r._measurement == "alert" and r._field == "severity" and r.env == "ci-replay"')
+              ues = count('r._measurement == "alert_ue" and r._field == "uid" and r.env == "ci-replay"')
+              overhead = count('r._measurement == "overhead" and r._field == "cpu_pct"')
+          print(f"InfluxDB: 재생 경보 {alerts}건, 걸린 UE {ues}건, overhead {overhead}건")
+          assert (alerts, ues, overhead) == (3, 3, 1)
           EOF
           docker compose logs --no-color collector | tail -5
 

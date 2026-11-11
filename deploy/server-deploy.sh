@@ -11,8 +11,7 @@ if ! grep -qx 'COMPOSE_FILE=docker-compose.yml:docker-compose.aws.yml' .env; the
   exit 1
 fi
 
-mkdir -p reports
-chown 1000:1000 recordings reports
+chown 1000:1000 recordings
 
 set -a
 # shellcheck disable=SC1091

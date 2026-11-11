@@ -207,45 +207,55 @@ def _new_record_point(msg: dict, env: str, session: str | None, received_ns: int
 NEW_RECORD_TYPES = frozenset({"alert", "evidence", "gap", "kpm2", "hello", "f1_evt"})
 
 
+def _joined(value: Any, sep: str = ",") -> str | None:
+    if isinstance(value, list) and all(isinstance(v, (str, int)) and not isinstance(v, bool) for v in value):
+        return sep.join(str(v) for v in value)
+    return None
+
+
+def alert_ue_points(msg: dict, env: str) -> list[Point]:
+    """alert의 ues[] 한 칸 = 점 하나(measurement alert_ue). 경보 상세의 '걸린 UE' 표를 행으로 그리려고 따로 둔다
+    (ues_json 배열은 Flux·Grafana에서 행으로 펴기 어렵다). update에는 새로 걸린 UE만 오므로 모으면 그 경보의 전체 UE다."""
+    if msg["type"] != "alert" or not isinstance(msg.get("ues"), list):
+        return []
+    points = []
+    for ue in msg["ues"]:
+        key = f'{ue["cell"]}-{ue["du_ue_id"]}-{ue["uid"]}'
+        t_hit = ue["t_hit"] if _is_int(ue.get("t_hit")) else msg["t"]
+        p = (Point("alert_ue").time(t_hit * MS, WritePrecision.NS)
+             .tag("env", env).tag("alert_id", msg["alert_id"]).tag("ue", key)
+             .field("cell", ue["cell"]).field("du_ue_id", ue["du_ue_id"]).field("uid", ue["uid"])
+             .field("event", msg["event"]))
+        for k in ("cu_ue_id", "crnti"):
+            if _is_int(ue.get(k)):
+                p.field(k, ue[k])
+        if isinstance(ue.get("s_tmsi"), str):
+            p.field("s_tmsi", ue["s_tmsi"])
+        for k in ("cond", "uncertain", "conditions"):
+            joined = _joined(ue.get(k))
+            if joined is not None:
+                p.field(k, joined)
+        if isinstance(ue.get("peers"), list):
+            p.field("peers", "; ".join("-".join(str(x) for x in peer) for peer in ue["peers"] if isinstance(peer, list)))
+        if isinstance(ue.get("seq_range"), list) and len(ue["seq_range"]) == 2:
+            p.field("seq_from", ue["seq_range"][0]).field("seq_to", ue["seq_range"][1])
+        if isinstance(ue.get("evidence"), bool):
+            p.field("evidence", ue["evidence"])
+        if isinstance(ue.get("values"), dict):
+            p.field("values_json", _json(ue["values"]))
+        points.append(p)
+    return points
+
+
 def to_point(msg: dict, env: str = "unknown", session: str | None = None, received_ns: int | None = None) -> Point:
     """스키마 검증을 통과한 메시지를 Point로. 숫자 필드는 타입을 고정한다
     (InfluxDB는 같은 필드에 정수·실수가 섞이면 쓰기를 거부하므로).
 
-    env·session·received_ns는 탐지 엔진 레코드에만 쓴다: env = X-Env, session = 그 경보의 세션(alert·gap),
+    overhead 말고는 모두 탐지 엔진 레코드다. env·session·received_ns는 탐지 엔진 레코드에만 쓴다: env = X-Env, session = 그 경보의 세션(alert·gap),
     received_ns = 받은 시각(시각 필드가 없는 hello, 시각을 모르는 evidence)."""
     t = msg["type"]
     if t in NEW_RECORD_TYPES:
         return _new_record_point(msg, env, session, received_ns)
-
-    if t == "metric":
-        labels = msg.get("labels", {})
-        p = (Point("metric").time(msg["ts"], WritePrecision.NS)
-             .tag("src", msg["src"]).tag("node", msg["node"]).tag("kind", msg["kind"]).tag("name", msg["name"])
-             .field("value", float(msg["value"])).field("unit", msg["unit"]))
-        for key in ("cell", "ue"):
-            if key in labels:
-                p.tag(key, labels[key])
-        return p
-
-    if t == "detection":
-        target = msg["target"]
-        p = (Point("detection").time(msg["ts_detected"], WritePrecision.NS)
-             .tag("attack_type", msg["attack_type"]).tag("severity", msg["severity"])
-             .tag("ruleset", msg["ruleset"]).tag("rule_id", msg["rule_id"]).tag("node", target["node"])
-             .field("event_id", msg["event_id"]).field("rule_version", msg["rule_version"])
-             .field("ts_first_evidence", int(msg["ts_first_evidence"]))
-             .field("latency_ms", (msg["ts_detected"] - msg["ts_first_evidence"]) / 1e6)
-             .field("ue_list", _json(target.get("ue", [])))
-             .field("evidence_json", _json(msg["evidence"])))
-        if "cell" in target:
-            p.field("cell", target["cell"])
-        return p
-
-    if t == "attack_run":
-        return (Point("attack_run").time(msg["ts_start"], WritePrecision.NS)
-                .tag("scenario", msg["scenario"])
-                .field("run_id", msg["run_id"]).field("ts_end", int(msg["ts_end"]))
-                .field("params_json", _json(msg["params"])))
 
     if t == "overhead":
         return (Point("overhead").time(msg["ts"], WritePrecision.NS)

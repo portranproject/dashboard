@@ -86,7 +86,7 @@ def test_new_dashboards_filter_by_source(name):
     d = load(DASHBOARD_DIR / name)
     source = next(v for v in d["templating"]["list"] if v["name"] == "source")
     assert source["type"] == "custom" and source["current"]["value"] == "p4"
-    assert "AWS : p4" in source["query"]
+    assert source["query"] == "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample"
     for item, q, _ in queries(d):
         if item != "variable source":
             assert 'r.env == "${source}"' in q, item
@@ -99,7 +99,10 @@ def test_monitoring_layout():
     assert rows == ["요약", "상시 KPM2", "경보 목록", "경보 상세"]
     assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell", "alert_id"]
     names = {a["name"] for a in d["annotations"]["list"]}
-    assert {"경보 구간", "데이터 없음 (gap)", "칸 일부 없음", "세션 시작 · 재시작"} <= names
+    assert {"경보 구간", "데이터 없음 (gap)", "칸 일부 없음", "세션 시작", "DU·CU 재시작"} <= names
+    # 세션 시작(hello)과 DU·CU 재시작(f1_evt)은 색이 달라야 구분된다
+    colors = {a["name"]: a["iconColor"] for a in d["annotations"]["list"]}
+    assert colors["세션 시작"] != colors["DU·CU 재시작"]
     # 공격 이름 값 매핑이 rule-names.json 그대로
     table = next(p for p in d["panels"] if p["title"] == "경보")
     mapping = next(o for o in table["fieldConfig"]["overrides"] if o["matcher"]["options"] == "공격")

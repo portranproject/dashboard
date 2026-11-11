@@ -2,32 +2,36 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portran.local/schema/messages.schema.json",
   "title": "PortRAN observability message",
-  "description": "JSON Lines 한 줄 = 메시지 하나. type 필드로 종류를 구분한다. 사람이 읽는 설명은 schema/SCHEMA.md 참고. alert·evidence·gap·kpm2·hello·f1_evt는 탐지 엔진 레코드(reference/detection/27_ 명세), metric·detection·attack_run은 mock 전용 옛 메시지(교체 예정), overhead는 형식 미정(R5)이라 옛 형식 그대로다.",
+  "description": "JSON Lines 한 줄 = 메시지 하나. type 필드로 종류를 구분한다. 사람이 읽는 설명은 schema/SCHEMA.md 참고. alert·evidence·gap·kpm2·hello·f1_evt는 탐지 엔진 레코드(reference/detection/27_ 명세), overhead는 형식 미정(R5)이라 옛 형식 그대로다.",
   "type": "object",
-  "required": ["type"],
+  "required": [
+    "type"
+  ],
   "properties": {
     "type": {
       "enum": [
-        "alert", "evidence", "gap", "kpm2", "hello", "f1_evt",
-        "metric", "detection", "attack_run", "overhead"
+        "alert",
+        "evidence",
+        "gap",
+        "kpm2",
+        "hello",
+        "f1_evt",
+        "overhead"
       ]
     }
   },
   "allOf": [
-    { "if": { "properties": { "type": { "const": "alert" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/alert" } },
-    { "if": { "properties": { "type": { "const": "evidence" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/evidence" } },
-    { "if": { "properties": { "type": { "const": "gap" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/gap" } },
-    { "if": { "properties": { "type": { "const": "kpm2" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/kpm2" } },
-    { "if": { "properties": { "type": { "const": "hello" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/hello" } },
-    { "if": { "properties": { "type": { "const": "f1_evt" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/f1_evt" } },
-    { "if": { "properties": { "type": { "const": "metric" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/metric" } },
-    { "if": { "properties": { "type": { "const": "detection" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/detection" } },
-    { "if": { "properties": { "type": { "const": "attack_run" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/attack_run" } },
-    { "if": { "properties": { "type": { "const": "overhead" } }, "required": ["type"] }, "then": { "$ref": "#/$defs/overhead" } }
+    {"if": {"properties": {"type": {"const": "alert"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/alert"}},
+    {"if": {"properties": {"type": {"const": "evidence"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/evidence"}},
+    {"if": {"properties": {"type": {"const": "gap"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/gap"}},
+    {"if": {"properties": {"type": {"const": "kpm2"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/kpm2"}},
+    {"if": {"properties": {"type": {"const": "hello"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/hello"}},
+    {"if": {"properties": {"type": {"const": "f1_evt"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/f1_evt"}},
+    {"if": {"properties": {"type": {"const": "overhead"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/overhead"}}
   ],
   "$defs": {
     "epoch_ns": {
-      "description": "Unix epoch 나노초 정수(옛 메시지). 하한(2001-09-09)은 초·밀리초·마이크로초 단위 실수를 잡기 위한 것.",
+      "description": "Unix epoch 나노초 정수(overhead). 하한(2001-09-09)은 초·밀리초·마이크로초 단위 실수를 잡기 위한 것.",
       "type": "integer",
       "minimum": 1000000000000000000,
       "maximum": 9223372036854775807
@@ -38,322 +42,576 @@
       "minimum": 1000000000000,
       "maximum": 9999999999999
     },
-    "non_negative_int": { "type": "integer", "minimum": 0 },
-    "non_empty_string": { "type": "string", "minLength": 1 },
-    "string_array": { "type": "array", "items": { "type": "string" } },
-    "int_or_null": { "type": ["integer", "null"] },
+    "non_negative_int": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "string_array": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "int_or_null": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "kpm_counter": {
       "description": "kpm2 cc·si·ext의 값: 숫자, 모름(null), 또는 하위 키(원인별 등)마다 숫자·null을 담은 객체 (27_ §4.1).",
-      "type": ["number", "null", "object"],
-      "additionalProperties": { "type": ["number", "null"] }
+      "type": [
+        "number",
+        "null",
+        "object"
+      ],
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      }
     },
     "kpm_section": {
       "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/kpm_counter" }
+      "additionalProperties": {
+        "$ref": "#/$defs/kpm_counter"
+      }
     },
-
     "alert_ue": {
       "description": "alert ues[] 한 칸 (27_ §5.6). 키는 (cell, du_ue_id, uid).",
       "type": "object",
-      "required": ["cell", "du_ue_id", "uid"],
+      "required": [
+        "cell",
+        "du_ue_id",
+        "uid"
+      ],
       "properties": {
-        "cell": { "$ref": "#/$defs/non_negative_int" },
-        "du_ue_id": { "type": "integer" },
-        "uid": { "type": "integer" },
-        "cu_ue_id": { "$ref": "#/$defs/int_or_null" },
-        "crnti": { "$ref": "#/$defs/int_or_null" },
-        "s_tmsi": { "type": ["string", "null"] },
-        "cond": { "$ref": "#/$defs/string_array" },
-        "t_hit": { "$ref": "#/$defs/epoch_ms" },
-        "values": { "type": "object" },
-        "uncertain": { "$ref": "#/$defs/string_array" },
-        "conditions": { "$ref": "#/$defs/string_array" },
-        "peers": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
-        "seq_range": {
-          "oneOf": [
-            { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
-            { "type": "null" }
+        "cell": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "du_ue_id": {
+          "type": "integer"
+        },
+        "uid": {
+          "type": "integer"
+        },
+        "cu_ue_id": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "crnti": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "s_tmsi": {
+          "type": [
+            "string",
+            "null"
           ]
         },
-        "evidence": { "type": "boolean" }
-      }
-    },
-
-    "alert": {
-      "description": "경보 생애 레코드 (27_ §5). 모르는 필드는 받는다(fmt 1 그대로 필드를 더할 수 있음). fmt가 1이 아니면 거부(D8).",
-      "type": "object",
-      "required": ["type", "fmt", "alert_id", "event", "rule", "stage", "unit", "kind", "cell", "t", "severity", "mode"],
-      "properties": {
-        "type": { "const": "alert" },
-        "fmt": { "const": 1 },
-        "alert_id": { "$ref": "#/$defs/non_empty_string" },
-        "event": { "enum": ["raise", "update", "clear", "end"] },
-        "rule": { "$ref": "#/$defs/non_empty_string" },
-        "stage": { "type": "integer", "minimum": 1, "maximum": 4 },
-        "unit": { "enum": ["cell", "ue"] },
-        "kind": { "enum": ["attack", "anomaly"] },
-        "cell": { "$ref": "#/$defs/non_negative_int" },
-        "t": { "$ref": "#/$defs/epoch_ms" },
-        "severity": { "$ref": "#/$defs/non_empty_string" },
-        "mode": { "$ref": "#/$defs/non_empty_string" },
-        "branch": { "type": "string" },
-        "cond": { "$ref": "#/$defs/string_array" },
-        "candidates": { "$ref": "#/$defs/string_array" },
-        "conditions": { "$ref": "#/$defs/string_array" },
-        "values": { "type": "object" },
-        "params": { "type": "object" },
-        "refs": { "type": "object" },
-        "ues": { "type": "array", "items": { "$ref": "#/$defs/alert_ue" } },
-        "ues_total": { "$ref": "#/$defs/non_negative_int" },
-        "duration_ms": { "$ref": "#/$defs/non_negative_int" },
-        "evidence_sent": { "$ref": "#/$defs/non_negative_int" },
-        "evidence_dropped": { "$ref": "#/$defs/non_negative_int" },
-        "reason": { "type": "string" }
-      }
-    },
-
-    "evidence": {
-      "description": "경보 근거 (27_ §6). raw는 분석 엔진의 원본 줄 그대로라 type만 검사하고 해석하지 않는다.",
-      "type": "object",
-      "required": ["type", "alert_id", "phase", "seq", "raw"],
-      "properties": {
-        "type": { "const": "evidence" },
-        "alert_id": { "$ref": "#/$defs/non_empty_string" },
-        "phase": { "enum": ["pre", "active", "post"] },
-        "seq": { "$ref": "#/$defs/non_negative_int" },
-        "ue": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
-        "raw": {
-          "description": "분석 엔진의 원본 줄. type만 확인하고, ue_evt(KPM1)면 타임라인에 쓰는 필드만 최소 검사한다($defs.ue_evt).",
-          "type": "object",
-          "required": ["type"],
-          "properties": { "type": { "$ref": "#/$defs/non_empty_string" } },
-          "if": { "properties": { "type": { "const": "ue_evt" } } },
-          "then": { "$ref": "#/$defs/ue_evt" }
+        "cond": {
+          "$ref": "#/$defs/string_array"
+        },
+        "t_hit": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "values": {
+          "type": "object"
+        },
+        "uncertain": {
+          "$ref": "#/$defs/string_array"
+        },
+        "conditions": {
+          "$ref": "#/$defs/string_array"
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "seq_range": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "type": "boolean"
         }
       }
     },
-
+    "alert": {
+      "description": "경보 생애 레코드 (27_ §5). 모르는 필드는 받는다(fmt 1 그대로 필드를 더할 수 있음). fmt가 1이 아니면 거부(D8).",
+      "type": "object",
+      "required": [
+        "type",
+        "fmt",
+        "alert_id",
+        "event",
+        "rule",
+        "stage",
+        "unit",
+        "kind",
+        "cell",
+        "t",
+        "severity",
+        "mode"
+      ],
+      "properties": {
+        "type": {
+          "const": "alert"
+        },
+        "fmt": {
+          "const": 1
+        },
+        "alert_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "event": {
+          "enum": [
+            "raise",
+            "update",
+            "clear",
+            "end"
+          ]
+        },
+        "rule": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "stage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "unit": {
+          "enum": [
+            "cell",
+            "ue"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "attack",
+            "anomaly"
+          ]
+        },
+        "cell": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "t": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "severity": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "mode": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "cond": {
+          "$ref": "#/$defs/string_array"
+        },
+        "candidates": {
+          "$ref": "#/$defs/string_array"
+        },
+        "conditions": {
+          "$ref": "#/$defs/string_array"
+        },
+        "values": {
+          "type": "object"
+        },
+        "params": {
+          "type": "object"
+        },
+        "refs": {
+          "type": "object"
+        },
+        "ues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/alert_ue"
+          }
+        },
+        "ues_total": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "evidence_sent": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "evidence_dropped": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "description": "경보 근거 (27_ §6). raw는 분석 엔진의 원본 줄 그대로라 type만 검사하고 해석하지 않는다.",
+      "type": "object",
+      "required": [
+        "type",
+        "alert_id",
+        "phase",
+        "seq",
+        "raw"
+      ],
+      "properties": {
+        "type": {
+          "const": "evidence"
+        },
+        "alert_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "phase": {
+          "enum": [
+            "pre",
+            "active",
+            "post"
+          ]
+        },
+        "seq": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "ue": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "raw": {
+          "description": "분석 엔진의 원본 줄. type만 확인하고, ue_evt(KPM1)면 타임라인에 쓰는 필드만 최소 검사한다($defs.ue_evt).",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "$ref": "#/$defs/non_empty_string"
+            }
+          },
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ue_evt"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/ue_evt"
+          }
+        }
+      }
+    },
     "ue_evt": {
       "description": "KPM1 — UE 메시지 하나 (27_ §4.2). 단독으로는 오지 않고 evidence.raw 안에 온다. 형식이 아직 분석 엔진 답 대기 중이라(27_ §8) 근거 타임라인에 쓰는 필드만 검사하고 나머지는 받는다. msg는 목록 밖 이름도 받는다.",
       "type": "object",
-      "required": ["type", "t_ms", "cell_id", "du_ue_id", "dir", "proto", "msg"],
+      "required": [
+        "type",
+        "t_ms",
+        "cell_id",
+        "du_ue_id",
+        "dir",
+        "proto",
+        "msg"
+      ],
       "properties": {
-        "type": { "const": "ue_evt" },
-        "t_ms": { "$ref": "#/$defs/epoch_ms" },
-        "cell_id": { "$ref": "#/$defs/non_negative_int" },
-        "du_ue_id": { "$ref": "#/$defs/int_or_null" },
-        "dir": { "enum": ["UL", "DL"] },
-        "proto": { "enum": ["RRC", "NAS", "F1AP"] },
-        "msg": { "$ref": "#/$defs/non_empty_string" }
+        "type": {
+          "const": "ue_evt"
+        },
+        "t_ms": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "cell_id": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "du_ue_id": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "dir": {
+          "enum": [
+            "UL",
+            "DL"
+          ]
+        },
+        "proto": {
+          "enum": [
+            "RRC",
+            "NAS",
+            "F1AP"
+          ]
+        },
+        "msg": {
+          "$ref": "#/$defs/non_empty_string"
+        }
       }
     },
-
     "gap": {
       "description": "경보 중 그 셀의 kpm2가 끊긴 구간 (27_ §6.4).",
       "type": "object",
-      "required": ["type", "alert_id", "cell", "t_from", "t_to"],
+      "required": [
+        "type",
+        "alert_id",
+        "cell",
+        "t_from",
+        "t_to"
+      ],
       "properties": {
-        "type": { "const": "gap" },
-        "alert_id": { "$ref": "#/$defs/non_empty_string" },
-        "cell": { "$ref": "#/$defs/non_negative_int" },
-        "t_from": { "$ref": "#/$defs/epoch_ms" },
-        "t_to": { "$ref": "#/$defs/epoch_ms" },
-        "seq_from": { "$ref": "#/$defs/int_or_null" },
-        "seq_to": { "$ref": "#/$defs/int_or_null" }
+        "type": {
+          "const": "gap"
+        },
+        "alert_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "cell": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "t_from": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "t_to": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "seq_from": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "seq_to": {
+          "$ref": "#/$defs/int_or_null"
+        }
       }
     },
-
     "kpm2": {
       "description": "상시 KPM2 — 셀마다 묶은 줄 (27_ §4.1). /ingest로 오는 kpm2는 모두 묶은 줄이라 agg_ms가 필수다(100 ms 원본은 evidence.raw 안에만 온다).",
       "type": "object",
-      "required": ["type", "ver", "agg_ms", "session", "cell_id", "t_start_ms", "t_end_ms", "n"],
+      "required": [
+        "type",
+        "ver",
+        "agg_ms",
+        "session",
+        "cell_id",
+        "t_start_ms",
+        "t_end_ms",
+        "n"
+      ],
       "properties": {
-        "type": { "const": "kpm2" },
-        "ver": { "const": 1 },
-        "agg_ms": { "type": "integer", "minimum": 1 },
-        "session": { "$ref": "#/$defs/non_empty_string" },
-        "cell_id": { "$ref": "#/$defs/non_negative_int" },
-        "t_start_ms": { "$ref": "#/$defs/epoch_ms" },
-        "t_end_ms": { "$ref": "#/$defs/epoch_ms" },
-        "n": { "$ref": "#/$defs/non_negative_int" },
-        "seq_from": { "$ref": "#/$defs/int_or_null" },
-        "seq_to": { "$ref": "#/$defs/int_or_null" },
-        "cc": { "$ref": "#/$defs/kpm_section" },
-        "si": { "$ref": "#/$defs/kpm_section" },
-        "ext": { "$ref": "#/$defs/kpm_section" },
-        "partial": { "$ref": "#/$defs/string_array" }
+        "type": {
+          "const": "kpm2"
+        },
+        "ver": {
+          "const": 1
+        },
+        "agg_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "cell_id": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "t_start_ms": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "t_end_ms": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "n": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "seq_from": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "seq_to": {
+          "$ref": "#/$defs/int_or_null"
+        },
+        "cc": {
+          "$ref": "#/$defs/kpm_section"
+        },
+        "si": {
+          "$ref": "#/$defs/kpm_section"
+        },
+        "ext": {
+          "$ref": "#/$defs/kpm_section"
+        },
+        "partial": {
+          "$ref": "#/$defs/string_array"
+        }
       }
     },
-
     "hello": {
       "description": "분석 엔진 접속 알림 — 새 session의 시작 (27_ §4.3). 시각 필드가 없다.",
       "type": "object",
-      "required": ["type", "ver", "session", "seq"],
+      "required": [
+        "type",
+        "ver",
+        "session",
+        "seq"
+      ],
       "properties": {
-        "type": { "const": "hello" },
-        "ver": { "const": 1 },
-        "session": { "$ref": "#/$defs/non_empty_string" },
-        "seq": { "$ref": "#/$defs/non_negative_int" },
-        "producer": { "type": "string" },
-        "node_id": { "type": "string" },
+        "type": {
+          "const": "hello"
+        },
+        "ver": {
+          "const": 1
+        },
+        "session": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "seq": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "producer": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
         "cells": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "cell_id": { "$ref": "#/$defs/non_negative_int" },
-              "max_conn": { "$ref": "#/$defs/int_or_null" }
+              "cell_id": {
+                "$ref": "#/$defs/non_negative_int"
+              },
+              "max_conn": {
+                "$ref": "#/$defs/int_or_null"
+              }
             }
           }
         },
-        "period_ms": { "$ref": "#/$defs/non_negative_int" },
-        "noreply_timeout_ms": { "$ref": "#/$defs/non_negative_int" },
-        "si_sample_ms": { "$ref": "#/$defs/non_negative_int" },
-        "clock": { "type": "string" },
-        "ue_evt": { "type": "boolean" }
+        "period_ms": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "noreply_timeout_ms": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "si_sample_ms": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "clock": {
+          "type": "string"
+        },
+        "ue_evt": {
+          "type": "boolean"
+        }
       }
     },
-
     "f1_evt": {
       "description": "DU·CU 재시작(F1 새로 맺음·리셋) 알림 (27_ §4.3).",
       "type": "object",
-      "required": ["type", "ver", "session", "seq", "t_ms", "msg"],
+      "required": [
+        "type",
+        "ver",
+        "session",
+        "seq",
+        "t_ms",
+        "msg"
+      ],
       "properties": {
-        "type": { "const": "f1_evt" },
-        "ver": { "const": 1 },
-        "session": { "$ref": "#/$defs/non_empty_string" },
-        "seq": { "$ref": "#/$defs/non_negative_int" },
-        "t_ms": { "$ref": "#/$defs/epoch_ms" },
-        "msg": { "$ref": "#/$defs/non_empty_string" },
+        "type": {
+          "const": "f1_evt"
+        },
+        "ver": {
+          "const": 1
+        },
+        "session": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "seq": {
+          "$ref": "#/$defs/non_negative_int"
+        },
+        "t_ms": {
+          "$ref": "#/$defs/epoch_ms"
+        },
+        "msg": {
+          "$ref": "#/$defs/non_empty_string"
+        },
         "cells": {
           "oneOf": [
-            { "type": "array", "items": { "type": "integer" } },
-            { "type": "null" }
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "du_ue_ids": { "type": "array", "items": { "type": "integer" } }
-      }
-    },
-
-    "node": { "enum": ["cu", "du", "core"] },
-    "source": { "enum": ["ebpf", "kpm"] },
-    "attack_type": {
-      "description": "가안 (옛 메시지). detection.attack_type과 attack_run.scenario가 공유한다.",
-      "enum": ["RRC_SIGNALING_STORM", "ABNORMAL_UE_ATTACH", "F1AP_MSG_TAMPER"]
-    },
-    "cell_id": { "type": "string", "minLength": 1 },
-    "ue_id": {
-      "description": "TODO: UE ID 형식 미확정 (예시는 \"0x4601\"). 확정 전까지 비어 있지 않은 문자열만 검사한다.",
-      "type": "string",
-      "minLength": 1
-    },
-
-    "metric": {
-      "description": "옛 메시지 — mock 전용, 교체 예정.",
-      "type": "object",
-      "required": ["type", "ts", "src", "node", "kind", "name", "value", "unit"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "metric" },
-        "ts": { "$ref": "#/$defs/epoch_ns" },
-        "src": { "$ref": "#/$defs/source" },
-        "node": { "$ref": "#/$defs/node" },
-        "kind": { "enum": ["ekpm", "kpm"] },
-        "name": {
-          "description": "형식만 검사한다.",
-          "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_.\\-]*$"
-        },
-        "value": { "type": "number" },
-        "unit": { "type": "string" },
-        "labels": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "cell": { "$ref": "#/$defs/cell_id" },
-            "ue": { "$ref": "#/$defs/ue_id" }
-          }
-        }
-      }
-    },
-
-    "detection_evidence": {
-      "type": "object",
-      "required": ["source", "metric", "op", "value", "threshold", "window_ms"],
-      "additionalProperties": false,
-      "properties": {
-        "source": { "$ref": "#/$defs/source" },
-        "metric": { "$ref": "#/$defs/non_empty_string" },
-        "op": { "enum": [">", ">=", "<", "<=", "==", "!="] },
-        "value": { "type": "number" },
-        "threshold": { "type": "number" },
-        "window_ms": { "type": "integer", "minimum": 0 }
-      }
-    },
-
-    "detection": {
-      "description": "옛 메시지 — mock 전용, 교체 예정 (실제 탐지 엔진은 alert를 보낸다).",
-      "type": "object",
-      "required": [
-        "type", "event_id", "ts_detected", "ts_first_evidence", "attack_type",
-        "severity", "ruleset", "rule_id", "rule_version", "target", "evidence"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "detection" },
-        "event_id": { "$ref": "#/$defs/non_empty_string" },
-        "ts_detected": { "$ref": "#/$defs/epoch_ns" },
-        "ts_first_evidence": { "$ref": "#/$defs/epoch_ns" },
-        "attack_type": { "$ref": "#/$defs/attack_type" },
-        "severity": { "enum": ["low", "medium", "high", "critical"] },
-        "ruleset": { "enum": ["full", "kpm_only"] },
-        "rule_id": { "$ref": "#/$defs/non_empty_string" },
-        "rule_version": { "$ref": "#/$defs/non_empty_string" },
-        "target": {
-          "type": "object",
-          "required": ["node"],
-          "additionalProperties": false,
-          "properties": {
-            "node": { "$ref": "#/$defs/node" },
-            "cell": { "$ref": "#/$defs/cell_id" },
-            "ue": { "type": "array", "items": { "$ref": "#/$defs/ue_id" } }
-          }
-        },
-        "evidence": {
+        "du_ue_ids": {
           "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/detection_evidence" }
+          "items": {
+            "type": "integer"
+          }
         }
       }
     },
-
-    "attack_run": {
-      "description": "옛 메시지 — mock 전용, 교체 예정.",
-      "type": "object",
-      "required": ["type", "run_id", "scenario", "ts_start", "ts_end", "params"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "attack_run" },
-        "run_id": { "$ref": "#/$defs/non_empty_string" },
-        "scenario": { "$ref": "#/$defs/attack_type" },
-        "ts_start": { "$ref": "#/$defs/epoch_ns" },
-        "ts_end": { "$ref": "#/$defs/epoch_ns" },
-        "params": { "type": "object" }
-      }
+    "node": {
+      "enum": [
+        "cu",
+        "du",
+        "core"
+      ]
     },
-
     "overhead": {
       "description": "수집 오버헤드. 측정 주체·형식은 탐지 쪽과 협의 중(R5)이라 옛 형식 그대로 둔다.",
       "type": "object",
-      "required": ["type", "ts", "node", "ebpf_on", "cpu_pct", "mem_mb"],
+      "required": [
+        "type",
+        "ts",
+        "node",
+        "ebpf_on",
+        "cpu_pct",
+        "mem_mb"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "overhead" },
-        "ts": { "$ref": "#/$defs/epoch_ns" },
-        "node": { "$ref": "#/$defs/node" },
-        "ebpf_on": { "type": "boolean" },
-        "cpu_pct": { "type": "number", "minimum": 0 },
-        "mem_mb": { "type": "number", "minimum": 0 }
+        "type": {
+          "const": "overhead"
+        },
+        "ts": {
+          "$ref": "#/$defs/epoch_ns"
+        },
+        "node": {
+          "$ref": "#/$defs/node"
+        },
+        "ebpf_on": {
+          "type": "boolean"
+        },
+        "cpu_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mem_mb": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     }
   }

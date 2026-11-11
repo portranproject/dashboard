@@ -20,7 +20,7 @@ def test_schema_file_is_valid_json_schema():
     Draft202012Validator.check_schema(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
 
 
-ALL_TYPES = ["alert", "attack_run", "detection", "evidence", "f1_evt", "gap", "hello", "kpm2", "metric", "overhead"]
+ALL_TYPES = ["alert", "evidence", "f1_evt", "gap", "hello", "kpm2", "overhead"]
 DETECTION_SAMPLES = sorted((REPO_ROOT / "tests" / "data" / "detection").glob("*.jsonl"))
 
 
@@ -78,63 +78,33 @@ def test_new_records_accept_unknown_fields_and_nulls():
     assert is_valid(mutated("alert", lambda m: m.update(ues=[alert_ue], ues_total=1)))
 
 
-def test_optional_fields_can_be_omitted():
-    assert is_valid(mutated("metric", lambda m: m.pop("labels")))
-    assert is_valid(mutated("metric", lambda m: m.update(labels={})))
-    assert is_valid(mutated("detection", lambda m: m.update(target={"node": "du"})))
-    assert is_valid(mutated("attack_run", lambda m: m.update(params={})))
-    assert is_valid(mutated("metric", lambda m: m.update(unit="")))
+def test_overhead_allows_multicore_total():
     assert is_valid(mutated("overhead", lambda m: m.update(cpu_pct=250.0)))  # 멀티코어 합산
 
 
 INVALID = {
     # 공통
-    "no type": ("metric", lambda m: m.pop("type")),
-    "unknown type": ("metric", lambda m: m.update(type="log")),
+    "no type": ("alert", lambda m: m.pop("type")),
+    "unknown type": ("alert", lambda m: m.update(type="log")),
+    "removed old type metric": ("overhead", lambda m: m.update(type="metric")),  # 옛 메시지는 M10에서 지움
     "not an object": (None, None),
-    # 시각
-    "ts in seconds": ("metric", lambda m: m.update(ts=1763280000)),
-    "ts in ms": ("metric", lambda m: m.update(ts=1763280000123)),
-    "ts as float": ("metric", lambda m: m.update(ts=1763280000123456789.0)),
-    "ts as string": ("metric", lambda m: m.update(ts="1763280000123456789")),
+    # 숫자
+    "value NaN": ("overhead", lambda m: m.update(cpu_pct=float("nan"))),
+    "value Infinity": ("overhead", lambda m: m.update(cpu_pct=float("inf"))),
+    "value as bool": ("overhead", lambda m: m.update(cpu_pct=True)),
+    # overhead 시각 (ns)
+    "ts in seconds": ("overhead", lambda m: m.update(ts=1763280000)),
+    "ts in ms": ("overhead", lambda m: m.update(ts=1763280000123)),
+    "ts as float": ("overhead", lambda m: m.update(ts=1763280000123456789.0)),
+    "ts as string": ("overhead", lambda m: m.update(ts="1763280000123456789")),
     "negative ts": ("overhead", lambda m: m.update(ts=-1)),
     "ts as bool": ("overhead", lambda m: m.update(ts=True)),
-    # 숫자
-    "value NaN": ("metric", lambda m: m.update(value=float("nan"))),
-    "value Infinity": ("metric", lambda m: m.update(value=float("inf"))),
-    "value as bool": ("metric", lambda m: m.update(value=True)),
-    # metric
-    "metric bad src": ("metric", lambda m: m.update(src="snmp")),
-    "metric bad node": ("metric", lambda m: m.update(node="ru")),
-    "metric bad kind": ("metric", lambda m: m.update(kind="custom")),
-    "metric missing value": ("metric", lambda m: m.pop("value")),
-    "metric missing unit": ("metric", lambda m: m.pop("unit")),
-    "metric value as string": ("metric", lambda m: m.update(value="120")),
-    "metric name with space": ("metric", lambda m: m.update(name="rrc setup")),
-    "metric empty name": ("metric", lambda m: m.update(name="")),
-    "metric unknown field": ("metric", lambda m: m.update(extra=1)),
-    "metric unknown label": ("metric", lambda m: m["labels"].update(rnti="17921")),
-    "metric numeric cell": ("metric", lambda m: m["labels"].update(cell=1)),
-    # detection
-    "detection bad severity": ("detection", lambda m: m.update(severity="fatal")),
-    "detection bad ruleset": ("detection", lambda m: m.update(ruleset="ekpm_only")),
-    "detection unknown attack_type": ("detection", lambda m: m.update(attack_type="RRC_STORM")),
-    "detection typo field": ("detection", lambda m: m.update(ts_detect=m.pop("ts_detected"))),
-    "detection empty evidence": ("detection", lambda m: m.update(evidence=[])),
-    "detection evidence bad op": ("detection", lambda m: m["evidence"][0].update(op="gt")),
-    "detection evidence missing threshold": ("detection", lambda m: m["evidence"][0].pop("threshold")),
-    "detection evidence float window": ("detection", lambda m: m["evidence"][0].update(window_ms=1000.5)),
-    "detection target missing node": ("detection", lambda m: m["target"].pop("node")),
-    "detection target ue not array": ("detection", lambda m: m["target"].update(ue="0x4601")),
-    "detection empty event_id": ("detection", lambda m: m.update(event_id="")),
-    # attack_run
-    "attack_run bad scenario": ("attack_run", lambda m: m.update(scenario="mixed")),
-    "attack_run missing ts_end": ("attack_run", lambda m: m.pop("ts_end")),
-    "attack_run missing params": ("attack_run", lambda m: m.pop("params")),
     # overhead
     "overhead ebpf_on as string": ("overhead", lambda m: m.update(ebpf_on="true")),
     "overhead negative cpu": ("overhead", lambda m: m.update(cpu_pct=-1)),
     "overhead missing mem": ("overhead", lambda m: m.pop("mem_mb")),
+    "overhead bad node": ("overhead", lambda m: m.update(node="ru")),
+    "overhead unknown field": ("overhead", lambda m: m.update(extra=1)),  # overhead는 옛 규칙대로 모르는 필드 거부
     # alert (27_ §5)
     "alert fmt 2": ("alert", lambda m: m.update(fmt=2)),
     "alert missing fmt": ("alert", lambda m: m.pop("fmt")),
@@ -202,5 +172,5 @@ def test_invalid_messages_are_rejected(case):
 
 
 def test_error_message_points_to_field():
-    errors = validation_errors(mutated("detection", lambda m: m.update(severity="fatal")))
-    assert any("severity" in e for e in errors), errors
+    errors = validation_errors(mutated("alert", lambda m: m.update(event="resolve")))
+    assert any("event" in e for e in errors), errors

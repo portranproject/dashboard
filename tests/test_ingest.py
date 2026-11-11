@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from collector.collector import Collector, run
-from collector.influx_writer import MS, WriteError, kpm_fields, representative, to_point
+from collector.influx_writer import MS, WriteError, alert_ue_points, kpm_fields, representative, to_point
 from collector.ingest import DEFAULT_ENV, IngestSource, dedup_key, parse_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -112,6 +112,23 @@ def test_representative_is_none_when_event_has_no_value():
     assert representative(clear) is None  # 1단계 clear에는 values.ratio가 없다
 
 
+def test_alert_ue_points_one_per_ue():
+    raise_ = json.loads(sample_lines("S20_L3-20_CONNECTED_high_evidence.jsonl")[0])
+    [line] = [p.to_line_protocol() for p in alert_ue_points(raise_, "lab")]
+    series, rest = line.split(" ", 1)
+    assert series == "alert_ue,alert_id=20261105T100800Z-L3-20-1-77,env=lab,ue=1-2-2"
+    assert rest.endswith(" 1792209006090000000")  # t_hit
+    for f in ('cond="same_stmsi,concurrent,not_accepted"', 'peers="1-1-1"', 's_tmsi="0x0123456789ab"', "seq_from=22i",
+              "seq_to=25i", "evidence=true", 'event="raise"', "uid=2i", r'values_json="{\"peer\":\"concurrent\"'):
+        assert f in rest, f
+    assert alert_ue_points(json.loads(sample_lines(T10)[0]), "lab") == []  # 1단계에는 ues가 없다
+    # 같은 경보의 raise·update에 실린 UE가 모두 행이 되고 서로 덮어쓰지 않는다
+    lines = sample_lines("S20_L3-20_반복_UPDATE_evidence.jsonl")
+    alerts = [json.loads(l) for l in lines if l.startswith('{"type":"alert"')]
+    keys = {(lp(p)[0], lp(p)[2]) for a in alerts for p in alert_ue_points(a, "lab")}
+    assert len(keys) == sum(len(a["ues"]) for a in alerts) == 3
+
+
 def test_evidence_kpm1_point():
     series, fields, t = lp(to_point(example("evidence"), env="lab"))
     assert series == "evidence,alert_id=S1-L3-24-1-21,cell=1,env=lab,phase=pre,raw_type=ue_evt,session=S1"
@@ -201,7 +218,7 @@ def test_dedup_key():
     assert dedup_key(e, "p4") != dedup_key(example("evidence", ue=[1, 3, 2]), "p4")
     k = example("kpm2")
     assert dedup_key(k, "p4") != dedup_key(example("kpm2", agg_ms=5000), "p4")  # 주기를 바꾼 칸은 따로 저장
-    assert dedup_key(example("metric"), "p4") is None
+    assert dedup_key(example("overhead"), "p4") is None  # overhead는 거르지 않음
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -312,6 +329,14 @@ def test_alert_gets_session_from_evidence_in_same_request(tmp_path):
     assert len(alerts) == 2 and all('session="20261105T100100Z"' in l for l in alerts)
 
 
+def test_request_writes_alert_ue_points(tmp_path):
+    w = FakeWriter()
+    c = make_collector(tmp_path, w)
+    lines = sample_lines("S20_L3-20_반복_UPDATE_evidence.jsonl")
+    assert c.handle_request(body_of(*lines), "lab", "t")[1]["accepted"] == len(lines)
+    assert sum(l.startswith("alert_ue,") for l in w.points) == 3
+
+
 def test_session_is_backfilled_when_evidence_comes_in_later_request(tmp_path):
     w = FakeWriter()
     c = make_collector(tmp_path, w)
@@ -359,12 +384,12 @@ def test_udp_or_file_input_uses_default_env_and_dedups(tmp_path):
     lines = sample_lines("S20_L3-20_CONNECTED_high_evidence.jsonl")
     for line in lines + lines[:2]:
         c.handle(line.encode("utf-8"), "file")
-    c.handle(json.dumps(example("metric")).encode("utf-8"), "udp")
+    c.handle(json.dumps(example("overhead")).encode("utf-8"), "udp")
     c.flush()
     c.close()
     assert (c.stats.received, c.stats.stored, c.stats.duplicates) == (8, 6, 2)
     assert c.env_raw_path("sample").read_text(encoding="utf-8").splitlines() == lines
-    assert len(c.raw_path.read_text(encoding="utf-8").splitlines()) == 1  # 옛 메시지는 원래 녹화 파일
+    assert len(c.raw_path.read_text(encoding="utf-8").splitlines()) == 1  # overhead는 원래 녹화 파일
     assert sum(1 for l in w.points if l.startswith("alert,") and 'session="' in l) == 1
 
 
@@ -412,7 +437,7 @@ def test_http_ingest_end_to_end(server):
     status, payload = request(port, "POST", "/ingest", body_of(*lines), {**NDJSON, "X-Env": "p4"})
     assert (status, payload) == (200, {"accepted": len(lines), "rejected": 0, "duplicates": 0})
     assert request(port, "POST", "/ingest", body_of(*lines), {**NDJSON, "X-Env": "p4"})[1]["duplicates"] == len(lines)
-    assert len(w.points) == len(lines)
+    assert len([l for l in w.points if not l.startswith("alert_ue,")]) == len(lines)  # 레코드마다 점 하나 (+ 걸린 UE 점)
     assert c.env_raw_path("p4").exists()
 
 

@@ -10,7 +10,6 @@ venv
 
 # 실행에 필요 없는 것
 recordings
-reports
 personal
 reference
 docs

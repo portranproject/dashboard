@@ -1,25 +1,24 @@
-# PortRAN 메시지 스키마 (v0.3)
+# PortRAN 메시지 스키마 (v0.4)
 
 collector가 받는 메시지 형식이다. **기계 검증의 단일 기준은 [`messages.schema.json`](messages.schema.json)**이고, 이 문서는 그 내용을 사람이 읽기 쉽게 풀어 쓴 것이다. 둘이 다르면 JSON Schema가 맞다.
-
-메시지는 두 갈래다.
 
 | 갈래 | `type` | 보내는 곳 | 기준 |
 |---|---|---|---|
 | **탐지 엔진 레코드** | `alert` · `evidence` · `gap` · `kpm2` · `hello` · `f1_evt` | 탐지 엔진 전송기 (`POST /ingest`) | 탐지 엔진 담당 명세 [`27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](../reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (2026-11-05 확정, 이하 **27_**). 뜻·룰별 값은 27_이 기준이고, 이 문서는 collector가 무엇을 검사하고 어떻게 저장하는지를 적는다 |
-| **옛 메시지** | `metric` · `detection` · `attack_run` | mock 생성기만 | **교체 예정.** 대시보드를 탐지 엔진 레코드로 재구성할 때 지운다(6절) |
-| | `overhead` | 미정 | 측정 주체·형식을 탐지 쪽과 협의 중(R5)이라 옛 형식 그대로 둔다 |
+| **수집 오버헤드** | `overhead` | 미정 | 측정 주체·형식을 탐지 쪽과 협의 중(R5)이라 처음 형식 그대로 둔다(6절) |
+
+처음 스키마의 `metric`·`detection`·`attack_run`(mock 생성기 전용)은 M10에서 mock·evaluator와 함께 지웠다(v0.4).
 
 > 스키마를 바꾸고 싶으면 먼저 팀에 공유하고 합의한 뒤 두 파일을 함께 고친다. 탐지 엔진 레코드는 27_이 바뀌면 따라 고친다.
 
 ## 1. 공통 규칙
 
-| 항목 | 탐지 엔진 레코드 | 옛 메시지 |
+| 항목 | 탐지 엔진 레코드 | `overhead` |
 |---|---|---|
 | 전송 단위 | JSON 한 줄 = 레코드 하나 (JSON Lines, UTF-8) | 같음 |
 | 전송 방식 | `POST /ingest` (2절). 시험용으로 UDP·파일도 받는다(이때 환경은 collector `--env`) | UDP(기본 `127.0.0.1:9999`, 데이터그램 하나에 한 줄) 또는 파일 |
 | 시각 | **Unix epoch 밀리초 정수** — 분석 엔진이 붙인 데이터 시각(27_ §2.3). 2001-09-09 ~ 2286년 범위만 받는다(초·마이크로초·나노초로 잘못 보낸 값을 잡으려고) | **Unix epoch 나노초 정수** (2001-09-09 이후) |
-| 모르는 필드 | **받는다.** 녹화에는 그대로 남고 InfluxDB 저장과 화면에서는 무시한다. 탐지 쪽은 필드를 더할 때 형식 판을 올리지 않는다(27_ §2.4) | **거부한다.** 오타(`ts_detect` 등)를 바로 잡기 위해서다 |
+| 모르는 필드 | **받는다.** 녹화에는 그대로 남고 InfluxDB 저장과 화면에서는 무시한다. 탐지 쪽은 필드를 더할 때 형식 판을 올리지 않는다(27_ §2.4) | **거부한다.** 오타를 바로 잡기 위해서다(처음 규칙) |
 | 형식 판 | `alert`의 `fmt`, `kpm2`·`hello`·`f1_evt`의 `ver`가 `1`이 아니면 거부(대시보드 2차 답변서 D8, 27_ §9) | — |
 | `null` | "그 값을 셌어야 하는데 모름". 키가 없음 = 해당 없음. InfluxDB에는 그 필드를 빼고 쓴다(그래프에서 0이 아니라 '데이터 없음') | 허용하지 않음 |
 | 다시 보낸 줄 | 환경 + 레코드별 키가 같으면 한 번만 저장(2.3) | 거르지 않음 |
@@ -257,7 +256,7 @@ TeleRAN 논문([`reference/TeleRAN.pdf`](../reference/TeleRAN.pdf) 4쪽)의 Tabl
 | RRC Message ID · NAS Message ID | `proto` + `msg` (메시지 이름 문자열) |
 | UE RRC State · UE NAS State · UE RRC Security State · UE NAS Security State | 분석 엔진이 보내지 않는다. 탐지 엔진이 메시지 순서로 만들어 일부 룰의 `ues[].values`에 `rrc_sec`·`nas_sec`으로 싣는다 |
 
-v0.2의 숫자 코드표(상태·알고리즘·메시지 ID)는 쓰지 않는다. `ue_evt`는 메시지 이름과 알고리즘 이름을 문자열로 보낸다. 옛 코드표는 mock 전용으로 6.5절에 남는다.
+v0.2의 숫자 코드표(상태·알고리즘·메시지 ID)는 쓰지 않는다. `ue_evt`는 메시지 이름과 알고리즘 이름을 문자열로 보낸다.
 
 ## 5. InfluxDB 저장 형태 (참고)
 
@@ -271,84 +270,23 @@ collector가 아래처럼 변환한다. 보내는 쪽은 신경 쓰지 않아도
 | `kpm2` | `t_start_ms` | env, session, cell, agg_ms | t_end_ms, n, seq_from, seq_to, partial_json, `cc.<이름>[.<하위 키>]`·`si.<이름>`·`ext.<이름>` 실수 |
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
-| `metric` · `detection` · `attack_run` · `overhead` | 6절 | | |
+| `alert_ue` | `ues[].t_hit` | env, alert_id, ue(`<cell>-<du_ue_id>-<uid>`) | cell, du_ue_id, uid, cu_ue_id, crnti, s_tmsi, cond, uncertain, conditions, peers(쉼표·`;`로 이은 문자열), seq_from, seq_to, evidence, values_json, event |
+| `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
 
 - **시각**: ms를 ns로 바꿔 쓴다. 같은 ms에 여러 줄이 올 수 있어(27_ §4.2) `evidence`·`f1_evt`는 ms 안의 ns 자리에 `seq`를 넣어 가른다(`t_ms × 10⁶ + seq mod 10⁶`). 표시 시각은 1 ms 안에서만 달라진다.
 - **`alert_id`를 tag로 둔다**(field로는 두지 않는다 — 같은 이름의 tag·field가 있으면 pivot 때 열이 겹친다). 같은 원본 줄이 두 경보의 근거로 함께 올 수 있어(예: `L3-24`·`L3-14` 판정 보류 경보) `alert_id`가 series를 가르지 않으면 서로 덮어쓴다. 경보는 공격마다 하나라 series 수는 경보 수에 비례한다(경보 하나에 `evidence` series 3개 정도).
 - **세션**: `alert`·`gap`의 `session` 필드는 그 경보의 첫 `evidence`에서 알게 된다. 경보를 먼저 쓴 뒤 세션을 알면 같은 점에 `session` 필드만 더해 쓴다.
 - **숫자 타입**: `kpm2`·근거 `kpm2`의 지표는 모두 실수로 쓴다(정수·실수가 섞이면 InfluxDB가 쓰기를 거부함, 27_ §7.1). `values`·`params`·`ues`처럼 룰마다 다른 묶음은 JSON 문자열로 통째 저장하고 화면에서 펼친다.
 - **대표 값** `rep_value`: 화면에 값 하나만 보일 때 쓰는 룰별 값(27_ §5.3 '대표 값(제안)'). 판정 보류 경보는 `held_w`. `rep_key`가 어떤 값인지 알려 준다.
+- **`alert_ue`**: `alert`의 `ues[]` 한 칸 = 점 하나(M10). 경보 상세의 '걸린 UE' 표를 행으로 그리려고 따로 둔다(`ues_json` 배열은 Flux·Grafana에서 행으로 펴기 어렵다). `update`에는 새로 걸린 UE만 오므로 모으면 그 경보의 전체 UE다.
 
-## 6. 옛 메시지 — mock 전용 (교체 예정)
-
-`metric`·`detection`·`attack_run`은 mock 생성기와 지금 대시보드·evaluator·replay가 쓴다. 실제 파트는 보내지 않는다(탐지 엔진은 3절 레코드를 보내고, 정답 기록은 받지 않기로 함 — 평가는 전체 파이프라인 완성 뒤 탐지 쪽과 함께 정한다, 27_ §9). 대시보드를 재구성할 때 이 절을 지운다. `overhead`는 R5 협의 전까지 남긴다.
-
-### 6.1 `metric`
-
-```json
-{"type":"metric","ts":1763280000123456789,"src":"ebpf","node":"cu",
- "kind":"ekpm","name":"rrc_msg_id","value":0,"unit":"code",
- "labels":{"cell":"1","ue":"0x4601"}}
-```
-
-필수: `type` · `ts`(ns) · `src`(`ebpf`·`kpm`) · `node`(`cu`·`du`·`core`) · `kind`(`ekpm`·`kpm`) · `name`(영문자로 시작, 영숫자·`_`·`.`·`-`) · `value`(숫자) · `unit`(문자열). 선택: `labels`(`cell`·`ue` 문자열만). mock은 6.5절의 이름만 낸다.
-
-### 6.2 `detection`
-
-```json
-{"type":"detection",
- "event_id":"det-000123",
- "ts_detected":1763280000523456789,
- "ts_first_evidence":1763280000123456789,
- "attack_type":"RRC_SIGNALING_STORM",
- "severity":"high",
- "ruleset":"full",
- "rule_id":"R-RRC-001","rule_version":"1.0",
- "target":{"node":"cu","cell":"1","ue":["0x4601","0x4602"]},
- "evidence":[
-   {"source":"ebpf","metric":"count(rrc_msg_id=RRCSetupRequest)","op":">","value":5,"threshold":2,"window_ms":1000},
-   {"source":"kpm","metric":"RRC.ConnEstabAtt","op":">","value":25,"threshold":10,"window_ms":5000}
- ]}
-```
-
-| 필드 | 내용 |
-|---|---|
-| 필수 | `event_id` · `ts_detected`·`ts_first_evidence`(ns) · `attack_type`(6.3절 열거) · `severity`(`low`·`medium`·`high`·`critical`) · `ruleset`(`full`·`kpm_only`) · `rule_id` · `rule_version` · `target.node` · `evidence`(1개 이상) |
-| `evidence[]` | `source`(`ebpf`·`kpm`) · `metric` · `op`(`>` `>=` `<` `<=` `==` `!=`) · `value` · `threshold` · `window_ms`(0 이상 정수) 모두 필수 |
-| 선택 | `target.cell`(문자열), `target.ue`(문자열 배열) |
-
-탐지 지연 = `ts_detected - ts_first_evidence`. `ts_first_evidence > ts_detected`면 collector가 경고만 하고 저장한다.
-
-### 6.3 `attack_run`
-
-```json
-{"type":"attack_run","run_id":"run-007","scenario":"RRC_SIGNALING_STORM",
- "ts_start":1763280000000000000,"ts_end":1763280060000000000,
- "params":{"rate":200,"fake_ue_count":50}}
-```
-
-필수: `run_id` · `scenario` · `ts_start`·`ts_end`(ns, 어긋나면 경고만) · `params`(객체, 없으면 `{}`). `scenario`·`attack_type` 값: `RRC_SIGNALING_STORM` · `ABNORMAL_UE_ATTACH` · `F1AP_MSG_TAMPER`(목록 밖은 거부).
-
-### 6.4 `overhead` (R5 협의 전까지 유지)
+## 6. `overhead` — 수집 오버헤드 (R5 협의 전까지 처음 형식)
 
 ```json
 {"type":"overhead","ts":1763280000000000000,"node":"cu","ebpf_on":true,"cpu_pct":23.4,"mem_mb":512}
 ```
 
-필수: `ts`(ns) · `node` · `ebpf_on`(불리언, 문자열 `"true"`는 거부) · `cpu_pct`·`mem_mb`(0 이상 숫자, 멀티코어 합산이면 100을 넘을 수 있음).
-
-### 6.5 mock 지표 이름과 코드표
-
-mock은 Table I을 eKPM 10개(`ue_c_rnti` · `ue_s_tmsi` · `ue_cipher_alg` · `ue_integrity_alg` · `ue_rrc_state` · `ue_nas_state` · `ue_rrc_sec_state` · `ue_nas_sec_state` · `rrc_msg_id` · `nas_msg_id`, `src: "ebpf"`, `unit` `code`·`id`)로, Table II를 14개 이름 그대로(`src: "kpm"`, `unit: "count"`, 1초마다) 낸다. 상태·알고리즘·메시지 ID의 숫자 코드표는 [`mock/scenarios.yaml`](../mock/scenarios.yaml)의 `codes`에 있다(mock 전용 가안).
-
-### 6.6 InfluxDB 저장 형태
-
-| measurement | time | tags | fields |
-|---|---|---|---|
-| `metric` | `ts` | src, node, kind, name, cell, ue | value(float), unit |
-| `detection` | `ts_detected` | attack_type, severity, ruleset, rule_id, node | event_id, rule_version, ts_first_evidence, latency_ms, cell, ue_list(JSON 문자열), evidence_json(JSON 문자열) |
-| `attack_run` | `ts_start` | scenario | run_id, ts_end, params_json |
-| `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
+필수: `ts`(Unix epoch **나노초** 정수) · `node`(`cu`·`du`·`core`) · `ebpf_on`(불리언, 문자열 `"true"`는 거부) · `cpu_pct`·`mem_mb`(0 이상 숫자, 멀티코어 합산이면 100을 넘을 수 있음). 모르는 필드는 거부한다. UDP·파일로 받는다. 측정 주체·형식은 탐지 쪽과 협의 중이라(27_ §9 R5) 정해지면 이 절을 고친다.
 
 ## 7. 직접 검증해 보기
 
@@ -376,3 +314,4 @@ python -c "import json,sys; from common.schema import validation_errors as v; \
 | 0.1 | 2026-10-19 | 문서만: 6절 지표를 TeleRAN 논문 Table I·II 기준으로 바꾸고 코드표 추가 (스키마 변경 없음) |
 | 0.2 | 2026-11-04 | (커밋 전에 0.3에 합침) 지표 이름을 TeleRAN Table I·II의 24개로 고정 |
 | 0.3 | 2026-11-09 | **탐지 엔진 레코드 6종 추가**(`alert`·`evidence`·`gap`·`kpm2`·`hello`·`f1_evt`, 27_ 명세 그대로 — ms 시각, 모르는 필드 받음, `fmt`·`ver` 1). `POST /ingest`·`X-Env`·중복 키(2절). Table I·II 대응을 `kpm2` 키와 `ue_evt` 필드로 바꿈(4절). `evidence.raw`가 KPM1 `ue_evt`면 타임라인 필드 7개(`t_ms`·`cell_id`·`du_ue_id`·`dir`·`proto`·`msg`·`type`)를 검사(3.7절, `$defs.ue_evt`). `metric`·`detection`·`attack_run`은 mock 전용·교체 예정으로 6절에 모음. 스키마 `$defs.evidence`(탐지 근거 항목)는 `$defs.detection_evidence`로 이름만 바꿈 |
+| 0.4 | 2026-11-11 | `metric`·`detection`·`attack_run`(mock 전용)을 mock 생성기·evaluator·옛 대시보드와 함께 **삭제**(M10). `overhead`만 처음 형식으로 남김(6절). InfluxDB `alert_ue`(걸린 UE 한 칸 = 점 하나) 추가(5절) |

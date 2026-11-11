@@ -729,6 +729,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "spanNulls": false,
+            "insertNulls": 6000,
             "thresholdsStyle": {
               "mode": "line+area"
             }

@@ -111,7 +111,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 경보 목록 | 경보 하나 = 한 행(시작·셀·단계·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이), 룰별 경보 수. **행을 누르면 경보 상세가 그 경보로 바뀐다** |
 | 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE, 근거 KPM2 100 ms(1단계), 근거 KPM1 UE별 메시지 흐름·메시지 표(2~4단계) |
 
-- 위쪽 변수: **데이터 출처**(AWS = 실측 `p4` / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀, 경보. 경보 선택은 경보 상세 줄에만 적용된다.
+- 위쪽 변수: **데이터 출처**(AWS = 실측 `p4` / On-Premise = 연구실 `lab`, 아직 받지 않음 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀, 경보. 경보 선택은 경보 상세 줄에만 적용된다.
 - 위쪽 토글로 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)를 끄고 켤 수 있다.
 - 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(탐지 엔진이 죽었거나 다시 떴을 수 있음).
 - **대시보드 JSON은 [`grafana/build.py`](grafana/build.py)로 만든다.** UI에서 고쳐도 저장되지 않고, JSON을 손으로 고치면 다음 생성 때 사라진다. `build.py`를 고치고 `python grafana/build.py`로 다시 쓴 뒤 커밋한다(테스트가 어긋남을 잡는다). 룰 ID → 공격 이름은 [`grafana/rule-names.json`](grafana/rule-names.json). 설계는 [`docs/dashboard-design.md`](docs/dashboard-design.md).

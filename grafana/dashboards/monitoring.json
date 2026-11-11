@@ -296,7 +296,7 @@
         "name": "source",
         "label": "데이터 출처",
         "type": "custom",
-        "query": "AWS : p4, 재생 : replay, 샘플 : sample",
+        "query": "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample",
         "current": {
           "text": "AWS",
           "value": "p4"
@@ -306,6 +306,11 @@
             "text": "AWS",
             "value": "p4",
             "selected": true
+          },
+          {
+            "text": "On-Premise",
+            "value": "lab",
+            "selected": false
           },
           {
             "text": "재생",
@@ -319,7 +324,7 @@
           }
         ],
         "hide": 0,
-        "description": "AWS = AWS 테스트베드 p4 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플. On-Premise(연구실)는 받기 시작하면 더한다"
+        "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
       },
       {
         "name": "cell",

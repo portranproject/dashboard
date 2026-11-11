@@ -86,7 +86,7 @@ def test_new_dashboards_filter_by_source(name):
     d = load(DASHBOARD_DIR / name)
     source = next(v for v in d["templating"]["list"] if v["name"] == "source")
     assert source["type"] == "custom" and source["current"]["value"] == "p4"
-    assert "AWS : p4" in source["query"]
+    assert source["query"] == "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample"
     for item, q, _ in queries(d):
         if item != "variable source":
             assert 'r.env == "${source}"' in q, item

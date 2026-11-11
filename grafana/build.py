@@ -20,7 +20,8 @@ RULE_NAMES = json.loads((ROOT / "rule-names.json").read_text(encoding="utf-8"))
 DS = {"type": "influxdb", "uid": "portran-influxdb"}
 
 # 데이터 출처 선택 (docs/dashboard-design.md 1절). 지금은 AWS만 받는다. On-Premise를 받게 되면 ("On-Premise", "lab")을 더한다.
-SOURCES = [("AWS", "p4"), ("재생", "replay"), ("샘플", "sample")]
+# On-Premise(lab)는 아직 받지 않는다 — 선택지만 둔다(D158)
+SOURCES = [("AWS", "p4"), ("On-Premise", "lab"), ("재생", "replay"), ("샘플", "sample")]
 
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
@@ -163,8 +164,8 @@ def source_variable() -> dict:
     options = [{"text": name, "value": env, "selected": i == 0} for i, (name, env) in enumerate(SOURCES)]
     return {"name": "source", "label": "데이터 출처", "type": "custom", "query": ", ".join(f"{n} : {e}" for n, e in SOURCES),
             "current": {"text": SOURCES[0][0], "value": SOURCES[0][1]}, "options": options, "hide": 0,
-            "description": "AWS = AWS 테스트베드 p4 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플. "
-                           "On-Premise(연구실)는 받기 시작하면 더한다"}
+            "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · "
+                           "재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,

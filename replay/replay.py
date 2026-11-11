@@ -346,8 +346,11 @@ def run(planned: list[Planned], sink, speed: float) -> Counter:
 # --------------------------------------------------------------------------- CLI
 
 def parse_time(value: str) -> int:
-    """ISO 시각(2026-11-11T15:08, 2026-11-11 15:08:30, …+09:00) → epoch ms. 시간대가 없으면 한국 시각(KST)."""
-    dt = datetime.fromisoformat(value)
+    """ISO 시각(2026-11-11T15:08, 2026-11-11 15:08:30, …+09:00, …Z) → epoch ms. 시간대가 없으면 한국 시각(KST)."""
+    text = value.strip()
+    if text[-1:] in ("Z", "z"):  # Python 3.10의 fromisoformat은 Z를 못 읽는다(3.11부터 읽음)
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=KST)
     return round(dt.timestamp() * MS_PER_S)

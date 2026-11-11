@@ -10,8 +10,8 @@ from collector.collector import Collector, run as run_collector
 from collector.ingest import IngestSource
 from common.schema import validation_errors
 from common.transport import encode
-from replay.replay import (FileSink, IngestSink, SendError, align_ms, load, main, plan, record_time, replay_tag,
-                           run, shift_record)
+from replay.replay import (FileSink, IngestSink, SendError, align_ms, kst, load, main, parse_time, plan, record_time,
+                           replay_tag, run, select_window, shift_record)
 
 SAMPLES = Path(__file__).resolve().parent / "data" / "detection"
 T10 = SAMPLES / "T10_긴공격_evidence.jsonl"         # 1단계: raise → pre 21 → active → clear → post
@@ -108,6 +108,49 @@ def test_plan_without_retime_keeps_records_as_they_were():
 def test_replay_tag():
     assert replay_tag(None) == ""
     assert replay_tag(1_800_000_000_000) == "~r20270115T080000Z"
+
+
+# --------------------------------------------------------------------------- 구간 (--from/--to)
+
+def test_parse_time_without_zone_is_korean_time():
+    """Grafana 화면 시각(한국)을 그대로 적는다. 서버·컨테이너 시계(UTC)와 상관없이 같은 값."""
+    utc_ms = 1_794_378_480_000  # 2026-11-11 06:28:00 UTC = 15:28 KST
+    assert parse_time("2026-11-11T15:28") == parse_time("2026-11-11 15:28:00") == utc_ms
+    assert parse_time("2026-11-11T06:28:00Z") == parse_time("2026-11-11T15:28:00+09:00") == utc_ms
+    assert kst(utc_ms) == "2026-11-11 15:28:00"
+
+
+def test_select_window_keeps_whole_alerts():
+    recs = records(T10)  # raise → pre(경보 2.1초 전 데이터) … → clear → post(clear 뒤 데이터)
+    raise_t = recs[0]["t"]
+    # 경보가 구간 안에서 시작했으면 구간 밖 레코드(pre 근거, clear·post)까지 통째로
+    assert select_window(recs, raise_t, raise_t + 1) == recs
+    assert select_window(recs, None, raise_t + 1) == recs
+    # 구간 전에 시작한 경보는 구간 안의 근거·clear가 있어도 모두 뺀다(앞이 잘린 경보를 만들지 않음)
+    assert select_window(recs, raise_t + 1, None) == []
+    assert select_window(recs, None, None) is recs
+
+
+def test_select_window_by_data_time_and_hello_takes_next_time():
+    kpm_early = {**KPM2, "t_start_ms": 1792209000000, "t_end_ms": 1792209003000}
+    recs = [kpm_early, HELLO, KPM2, F1]  # 나가는 시각: 003000, (다음 줄) 006000, 006000, 004000
+    assert select_window(recs, 1792209005000, 1792209007000) == [HELLO, KPM2]
+    assert select_window(recs, 1792209003000, 1792209005000) == [kpm_early, F1]
+    assert select_window(recs, None, 1792209003000) == []  # to는 그 시각 전까지
+    assert select_window([KPM2, HELLO], 1792209006000, None) == [KPM2, HELLO]  # 뒤에 줄이 없으면 앞 줄 시각
+
+
+def test_cli_window_in_korean_time(tmp_path):
+    """녹화 두 경보 중 구간 안에서 시작한 것만, 앞뒤 근거까지 통째로 보낸다."""
+    s24, t10 = records(S24), records(T10)
+    assert s24[0]["t"] + 1000 < t10[0]["t"]  # S24 경보가 먼저 시작, 근거는 T10 시작 뒤까지 섞여 있음
+    rec = write(tmp_path / "raw-p4.jsonl", [encode(m) for m in s24 + t10])
+    out = tmp_path / "out.jsonl"
+    common = ["--retime", "none", "--speed", "0", "--out", f"file://{out}"]
+    # kst()는 초까지라 T10 시작(…06.4초)보다 조금 앞, S24 시작(…01.1초)보다는 뒤
+    assert main([str(rec), "--from", kst(t10[0]["t"]), *common]) == 0
+    assert [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines()] == t10
+    assert main([str(rec), "--to", kst(s24[0]["t"]), *common]) == 1  # 두 경보 모두 그 뒤에 시작
 
 
 # --------------------------------------------------------------------------- collector로 보내기
@@ -208,6 +251,8 @@ def test_file_output_is_valid_and_paced_run_counts(tmp_path):
     (["--out", "udp://127.0.0.1:9999"], "--out"),
     (["--retime", "yesterday"], "--retime"),
     (["--speed", "-1"], "--speed"),
+    (["--from", "3pm"], "--from"),
+    (["--from", "2026-11-11T15:10", "--to", "2026-11-11T15:08"], "--from은 --to보다 앞"),
 ])
 def test_cli_errors(argv, message, capsys):
     with pytest.raises(SystemExit):

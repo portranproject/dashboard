@@ -5,10 +5,14 @@
     python -m replay.replay tests/data/detection/*.jsonl --speed 0 --gap-sec 30            # 여러 파일을 30초 간격으로 이어서
     python -m replay.replay a.jsonl --out https://3.39.170.31/ingest --ca certs/ingest.crt  # AWS로 (443이 열린 곳에서)
     python -m replay.replay a.jsonl --out file://recordings/retimed.jsonl --speed 0         # 파일로
+    python -m replay.replay recordings/raw-20261111-060000-p4.jsonl --from 2026-11-11T15:08 --to 2026-11-11T15:14  # 구간만
 
 --retime now(기본): 첫 파일의 첫 레코드를 지금으로 옮긴다. 이동량은 kpm2 칸 길이(agg_ms)의 배수로 맞춰 3초 칸 경계가 그대로다.
   같은 파일을 여러 번 재생해도 따로 저장되도록 session·alert_id 끝에 재생 표시(~r<재생 시작 시각>)를 붙인다.
 --retime none: 시각·ID를 원본 그대로 보낸다(InfluxDB 장애 뒤 녹화를 다시 넣을 때 — 이미 있는 줄은 중복으로 걸러진다).
+--from/--to: 원본 데이터 시각이 [from, to)인 것만 보낸다. 경보는 통째로 — 구간 안에서 시작한(raise) 경보는 근거·clear까지
+  구간 밖이어도 모두 보내고, 구간 전에 시작한 경보는 뺀다(앞뒤가 잘린 경보를 만들지 않게).
+시각을 적을 때 시간대가 없으면 한국 시각(KST)이다 — Grafana 화면의 시각 그대로 쓰면 된다(서버·컨테이너 시계는 UTC).
 
 레코드는 파일 순서대로 보내되 보내는 시각이 거꾸로 가지 않게 한다(예: 경보 raise 직후에 그 경보의 pre 근거).
 여러 파일은 하나씩 이어서 재생한다(--gap-sec 간격). overhead는 재생하지 않는다.
@@ -28,7 +32,7 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from common.config import env_int, load_env
@@ -40,6 +44,8 @@ MS_PER_S = 1000
 MAX_SKIP_DETAILS = 5
 NEW_RECORD_TYPES = ("alert", "evidence", "gap", "kpm2", "hello", "f1_evt")
 DEFAULT_ALIGN_MS = 3000  # 27_ §4.1 상시 kpm2 기본 칸 길이
+KST = timezone(timedelta(hours=9), "KST")  # 시간대 없이 적은 시각의 기준(Grafana 화면 시각). 서머타임 없음
+ALERT_PATH_TYPES = ("alert", "evidence", "gap")
 
 log = logging.getLogger("replay")
 
@@ -93,6 +99,45 @@ def record_time(msg: dict) -> int | None:
     if t == "f1_evt":
         return msg["t_ms"]
     return None
+
+
+def kst(ms: int) -> str:
+    return datetime.fromtimestamp(ms / MS_PER_S, KST).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def select_window(records: list[dict], from_ms: int | None, to_ms: int | None) -> list[dict]:
+    """원본 데이터 시각이 [from_ms, to_ms)인 레코드만, 파일 순서 그대로.
+    경보 경로(alert·evidence·gap)는 경보 단위로 고른다: 그 경보가 시작한 시각(파일에서 그 alert_id의 첫 alert 시각,
+    alert가 없으면 첫 레코드 시각)이 구간 안이면 구간 밖 레코드(pre 근거, 늦은 clear·post 근거)까지 모두, 아니면 모두 뺀다.
+    hello처럼 시각이 없는 줄은 다음 줄의 시각을 쓴다(27_ §4.3 — 뒤에 줄이 없으면 앞 줄)."""
+    if from_ms is None and to_ms is None:
+        return records
+
+    def inside(t: int | None) -> bool:
+        return t is not None and (from_ms is None or t >= from_ms) and (to_ms is None or t < to_ms)
+
+    times = [record_time(m) for m in records]
+    following = None
+    for i in reversed(range(len(records))):
+        if times[i] is None:
+            times[i] = following
+        else:
+            following = times[i]
+    previous = None
+    for i, t in enumerate(times):
+        times[i] = t if t is not None else previous
+        previous = times[i]
+
+    alert_start: dict[str, int | None] = {}
+    first_seen: dict[str, int | None] = {}
+    for msg, t in zip(records, times):
+        if msg["type"] in ALERT_PATH_TYPES:
+            first_seen.setdefault(msg["alert_id"], t)
+            if msg["type"] == "alert":
+                alert_start.setdefault(msg["alert_id"], t)
+    return [msg for msg, t in zip(records, times)
+            if inside(alert_start.get(msg["alert_id"], first_seen[msg["alert_id"]])
+                      if msg["type"] in ALERT_PATH_TYPES else t)]
 
 
 def align_ms(records: list[dict]) -> int:
@@ -300,13 +345,20 @@ def run(planned: list[Planned], sink, speed: float) -> Counter:
 
 # --------------------------------------------------------------------------- CLI
 
+def parse_time(value: str) -> int:
+    """ISO 시각(2026-11-11T15:08, 2026-11-11 15:08:30, …+09:00) → epoch ms. 시간대가 없으면 한국 시각(KST)."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=KST)
+    return round(dt.timestamp() * MS_PER_S)
+
+
 def parse_retime(value: str) -> int | None:
     if value == "none":
         return None
     if value == "now":
         return time.time_ns() // 1_000_000
-    # 시간대가 없으면 로컬 시각
-    return round(datetime.fromisoformat(value).timestamp() * MS_PER_S)
+    return parse_time(value)
 
 
 def replay_tag(start_ms: int | None) -> str:
@@ -325,10 +377,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env", default="replay", help="X-Env (기본 replay — 실측 p4와 섞이지 않게)")
     parser.add_argument("--ca", help="https일 때 서버 인증서(PEM). 예: certs/ingest.crt")
     parser.add_argument("--speed", type=float, default=1.0, help="배속. 0이면 기다리지 않고 바로 보냄 (기본 1)")
-    parser.add_argument("--retime", default="now", help="now(기본) | none | 2026-11-20T10:00:00 — 첫 레코드를 둘 시각")
+    parser.add_argument("--retime", default="now",
+                        help="now(기본) | none | 2026-11-20T10:00:00 — 첫 레코드를 둘 시각(시간대 없으면 한국 시각)")
+    parser.add_argument("--from", dest="from_time", metavar="시각",
+                        help="원본 데이터 시각이 이때부터인 것만 (예: 2026-11-11T15:08, 시간대 없으면 한국 시각). 경보는 통째로")
+    parser.add_argument("--to", dest="to_time", metavar="시각", help="원본 데이터 시각이 이때 전까지인 것만 (--from과 같은 형식)")
     parser.add_argument("--gap-sec", type=float, default=10.0, help="여러 파일을 이어 재생할 때 사이 간격 (기본 10초)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [replay] %(message)s", datefmt="%H:%M:%S")
+    for handler in logging.getLogger().handlers:  # 로그 앞 시각도 한국 시각(컨테이너 시계는 UTC)
+        if handler.formatter:
+            handler.formatter.converter = lambda ts: datetime.fromtimestamp(ts, KST).timetuple()
     if args.speed < 0:
         parser.error("--speed는 0 이상이어야 합니다")
     if parse_env(args.env) != args.env:
@@ -340,6 +399,14 @@ def main(argv: list[str] | None = None) -> int:
         start_ms = parse_retime(args.retime)
     except ValueError:
         parser.error(f"--retime은 now, none 또는 2026-11-20T10:00:00 형식이어야 합니다: {args.retime}")
+    window = {}
+    for name, value in (("from", args.from_time), ("to", args.to_time)):
+        try:
+            window[name] = parse_time(value) if value else None
+        except ValueError:
+            parser.error(f"--{name}은 2026-11-11T15:08:00 형식이어야 합니다: {value}")
+    if window["from"] is not None and window["to"] is not None and window["from"] >= window["to"]:
+        parser.error("--from은 --to보다 앞이어야 합니다")
     try:
         sink = open_sink(args.out, args.env, args.ca, env_int("COLLECTOR_HTTP_MAX_BYTES"))
     except (ValueError, OSError, ssl.SSLError) as e:
@@ -348,16 +415,25 @@ def main(argv: list[str] | None = None) -> int:
     files = []
     for path in args.files:
         records, skipped = load(path)
-        log.info("%s: %d건 (건너뜀 %d) %s", path.name, len(records), skipped,
-                 ", ".join(f"{k}={v}" for k, v in sorted(Counter(m["type"] for m in records).items())))
+        times = [t for t in (record_time(m) for m in records) if t is not None]
+        span = f" | 데이터 시각 {kst(min(times))} ~ {kst(max(times))} (한국 시각)" if times else ""
+        log.info("%s: %d건 (건너뜀 %d) %s%s", path.name, len(records), skipped,
+                 ", ".join(f"{k}={v}" for k, v in sorted(Counter(m["type"] for m in records).items())), span)
+        if window["from"] is not None or window["to"] is not None:
+            total = len(records)
+            records = select_window(records, window["from"], window["to"])
+            alerts = len({m["alert_id"] for m in records if m["type"] in ALERT_PATH_TYPES})
+            log.info("  구간 %s ~ %s: %d건 중 %d건 (경보 %d개)", kst(window["from"]) if window["from"] is not None else "처음",
+                     kst(window["to"]) if window["to"] is not None else "끝", total, len(records), alerts)
         files.append((path.name, records))
     tag = replay_tag(start_ms)
     planned = plan(files, start_ms, round(args.gap_sec * MS_PER_S), tag)
     if not planned:
-        log.error("보낼 레코드가 없습니다")
+        log.error("보낼 레코드가 없습니다%s", " — --from/--to는 한국 시각이고 원본 데이터 시각 기준입니다(위 데이터 시각 참고)"
+                  if window["from"] is not None or window["to"] is not None else "")
         return 1
     span_s = (planned[-1].send_ms - planned[0].send_ms) / MS_PER_S
-    first = datetime.fromtimestamp(planned[0].send_ms / MS_PER_S).isoformat(timespec="seconds")
+    first = kst(planned[0].send_ms) + " (한국 시각)"
     log.info("%d건, 데이터 시각 %s부터 %.0f초, speed=%s, out=%s, X-Env=%s%s", len(planned), first, span_s,
              args.speed, args.out, args.env, f", 재생 표시 {tag}" if tag else "")
 

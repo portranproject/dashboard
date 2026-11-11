@@ -264,10 +264,13 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --env replay            # 지금 시각으로 옮겨 로컬 collector로
 python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --gap-sec 30
 python -m replay.replay a.jsonl --out https://3.39.170.31/ingest --ca certs/ingest.crt
+python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08 --to 2026-11-11T15:14   # 구간만
 ```
 - 탐지 엔진 레코드를 `/ingest`로 다시 보낸다(전송기처럼 500줄·1 MiB 묶음, 413이면 나눠서, 503이면 다시). `X-Env` 기본 `replay`.
 - `--retime now`(기본): 첫 레코드를 지금으로 옮긴다. 이동량은 `kpm2` 칸 길이의 배수(3초 칸 경계 유지). 재생마다 `session`·`alert_id` 끝에 재생 표시(`~r<시각>`)를 붙여 여러 번 재생해도 따로 저장된다. `--retime none`이면 원본 그대로(이미 있는 줄은 중복으로 걸러짐).
 - 파일 순서를 지키되 보내는 시각이 거꾸로 가지 않게 한다(경보 `raise` 직후 그 경보의 `pre` 근거). 여러 파일은 `--gap-sec` 간격으로 이어서.
+- `--from`/`--to`: 원본 데이터 시각이 `[from, to)`인 것만. 경보는 통째로 고른다 — 구간 안에서 시작한 경보는 구간 밖 근거·`clear`까지, 구간 전에 시작한 경보는 모두 뺀다(앞뒤가 잘린 경보를 만들지 않음). `hello`는 다음 줄 시각을 쓴다.
+- 시간대 없이 적은 시각(`--retime`·`--from`·`--to`)은 **한국 시각(KST)** 이다. 컨테이너 시계(UTC)와 상관없이 Grafana 화면 시각을 그대로 쓴다.
 - 발표 당일 테스트베드 시연이 실패할 경우의 백업용이다.
 
 ## 12. 작업 원칙

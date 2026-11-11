@@ -1021,6 +1021,8 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 | D151 | InfluxDB 2.7 Flux 우회 3가지: 경보 합치기는 `pivot` 대신 값을 문자열 한 열로 모아 `reduce`, `union` 전에 `group()`, `map` 결과에 그대로 옮긴 열 하나 이상 | `pivot`은 경보마다 표 모양이 갈림, `reduce` 결과에 `join.left`는 내부 오류, 계산 값만 내는 `map`은 조건식이 null이 됨(로컬에서 재현) | 불필요 |
 | D152 | 상태 불명 = 열린 경보에 마지막 레코드(경보·근거) 뒤 1단계 15초·2~4단계 90초 무소식. 요약 '열린 경보'에서 따로 세고, 경보 구간 주석은 마지막 레코드까지 | 27_ §7. 샘플처럼 clear 없이 끝난 경보가 지금까지 열린 것처럼 칠해지던 문제(사용자 지적) | 불필요 |
 | D153 | `overhead`만 처음 형식으로 남기고 UDP 입력 유지 | 측정 주체·형식이 R5 협의 중 | 탐지 쪽 (R5) |
+| D154 | Grafana provisioning `disableDeletion: false` | `true`면 JSON을 지워도 대시보드가 남는다. M10 배포 뒤 옛 대시보드 2개가 남았음. UI 수정 금지(`allowUiUpdates: false`)는 그대로 | 불필요 |
+| D155 | 배포 스크립트가 `grafana/dashboards`·`grafana/provisioning`의 서버 파일과 컨테이너 안 파일(해시)을 비교해 다르면 Grafana를 다시 만든다 | M10 배포(#28)에서 checkout이 `grafana/dashboards`의 파일을 모두 바꿔 git이 폴더를 지웠다 다시 만들었고, Grafana 컨테이너는 지워진 옛 폴더(빈 폴더)를 계속 봐서 새 관제 대시보드가 안 보였다(사용자가 서버에서 확인: 서버엔 `monitoring.json`, 컨테이너 안은 비어 있음). compose는 설정이 같으면 Grafana를 다시 만들지 않음 | 불필요 |
 
 ### 확인 결과 (지금까지)
 
@@ -1037,5 +1039,6 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 
 - [ ] 성능 대시보드 `performance.json` (`docs/dashboard-design.md` 3절)
 - [ ] 로컬 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 실제 값으로 맞춰 대시보드 쿼리 테스트 실행
-- [ ] PR(`feat/dashboard-M10` → `dev`) → `main` 배포 → AWS에서 `env=sample`(연동 시험 데이터)로 관제 화면 확인
-- [ ] `docs/m9-complete` PR 병합 (이 브랜치의 바탕)
+- [x] PR(`feat/dashboard-M10` → `dev`, #27) → `main` 배포(#28, 2026-11-11). 배포는 Success였지만 Grafana에 새 관제 대시보드가 안 보이고 옛 대시보드가 남음 → 원인 D154·D155. 서버에서 `docker compose up -d --force-recreate grafana`로 풀고, 같은 일이 없게 `fix/grafana-redeploy`로 고침(`docs/m9-complete`는 #27에 함께 병합)
+- [ ] (사용자) AWS·로컬 Grafana에서 옛 대시보드 2개(실시간 관제·성능 검증)를 UI에서 지우기 — `disableDeletion: true`일 때 파일이 없어지면서 provisioning 연결이 이미 끊겨, `false`로 바꿔도 저절로 지워지지 않는다(앞으로 지우는 파일부터 적용)
+- [ ] AWS에서 관제 화면 확인 (서버 녹화를 `--env replay`로 재생)

@@ -323,6 +323,7 @@ EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기�
 | `AccessDeniedException ... ssm:SendCommand` | 인라인 정책의 리전·계정·인스턴스 ID·문서 이름 |
 | `InvalidInstanceId` | 인스턴스가 중지됐거나 SSM 에이전트가 오프라인(Session Manager로 접속되는지) |
 | `== 결과: Failed` | 로그의 "서버 출력"·"서버 오류 출력". 예: `.env에 COMPOSE_FILE ... 줄이 없습니다`, `실패 Grafana datasource`. 헬스 체크는 하나가 실패해도 모두 돌고 맨 끝 `== 헬스 체크 실패: …`에 실패한 것이 모인다. 컨테이너는 이미 새 커밋으로 떠 있다(되돌리지 않음) |
+| 배포는 Success인데 Grafana에 새 대시보드가 없다 / 지운 대시보드가 남아 있다 | Grafana가 마운트한 폴더를 checkout이 지웠다 다시 만들어, 컨테이너가 옛 폴더를 보고 있다(M10 배포에서 겪음). `sudo docker compose exec grafana ls /etc/grafana/dashboards`가 서버의 `ls grafana/dashboards`와 다르면 이 경우. `sudo docker compose up -d --force-recreate grafana`. 지금은 배포 스크립트가 서버 파일과 컨테이너 안을 비교해 다르면 Grafana를 다시 만든다(`== Grafana 다시 만들기` 줄) |
 | `실패 Grafana datasource (… 마지막 응답 HTTP 401)` | `.env`의 `GRAFANA_ADMIN_PASSWORD`가 Grafana에 실제로 저장된 비밀번호와 다르다. Grafana 비밀번호는 **처음 기동할 때만** `.env`에서 들어가고, 그 뒤 웹 화면에서 바꾸면 `.env`와 어긋난다. 웹에서 바꾼 비밀번호를 쓰려면 `.env`를 그 값으로 고치고, `.env` 값으로 맞추려면 `docker compose exec grafana grafana cli admin reset-admin-password "<.env의 비밀번호>"`. 그다음 Deploy 워크플로를 다시 실행 |
 
 ## 10. 탐지 엔진 수집 경로 `/ingest` (M9)

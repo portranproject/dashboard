@@ -5,9 +5,10 @@ providers:
     orgId: 1
     folder: PortRAN
     type: file
-    disableDeletion: true
-    # 대시보드의 기준은 grafana/dashboards/*.json 이다.
-    # UI에서 고친 내용은 JSON으로 내보내 커밋해야 유지된다.
+    # 대시보드의 기준은 grafana/dashboards/*.json 이다(grafana/build.py로 만든다).
+    # 파일을 지우면 대시보드도 지운다. true면 지운 파일의 대시보드가 남는다(M10에서 옛 대시보드가 남았음).
+    disableDeletion: false
+    # UI에서 고친 내용은 저장되지 않는다. build.py를 고쳐 JSON을 다시 만들고 커밋한다.
     allowUiUpdates: false
     updateIntervalSeconds: 10
     options:

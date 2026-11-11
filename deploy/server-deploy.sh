@@ -41,6 +41,23 @@ echo "== 배포: $(git log --oneline -1)"
 docker compose up -d --build --wait --wait-timeout 300
 docker image prune -f >/dev/null  # 다시 빌드하면서 남은 이전 이미지 정리
 
+# Grafana는 grafana/dashboards·grafana/provisioning 폴더를 마운트한다. checkout이 폴더 안 파일을 모두 바꾸면 git이 폴더를
+# 지웠다 다시 만드는데, 컨테이너는 지워진 옛 폴더를 계속 본다(M10 배포에서 새 대시보드가 안 보였음). compose는 설정이
+# 그대로면 Grafana를 다시 만들지 않으므로, 서버 파일과 컨테이너가 보는 파일이 다르면 Grafana를 다시 만든다.
+files_digest() {  # <폴더>: 그 아래 파일 목록과 내용의 해시
+  (cd "$1" && find . -type f | sort | xargs -r sha256sum)
+}
+for mount in "grafana/dashboards:/etc/grafana/dashboards" "grafana/provisioning:/etc/grafana/provisioning"; do
+  host_dir=${mount%%:*}
+  container_dir=${mount#*:}
+  seen=$(docker compose exec -T grafana sh -c "cd $container_dir && find . -type f | sort | xargs -r sha256sum" 2>/dev/null || true)
+  if [ "$(files_digest "$host_dir")" != "$seen" ]; then
+    echo "== Grafana 다시 만들기 ($host_dir: 서버 파일과 컨테이너 안이 다름)"
+    docker compose up -d --force-recreate --wait grafana
+    break
+  fi
+done
+
 # check <이름> <URL> <찾을 패턴> [curl 옵션...]: 60초까지 다시 시도한다(Grafana는 healthcheck가 없어 --wait가 기다려 주지 않음)
 # 하나가 실패해도 나머지를 모두 확인하고 맨 끝에서 실패로 끝낸다(어디가 문제인지 한 번에 보이도록)
 failed=()

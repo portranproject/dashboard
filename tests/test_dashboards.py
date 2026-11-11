@@ -43,13 +43,13 @@ def queries(d):
 
 
 def test_dashboards_exist():
-    # 옛 메시지 기준 realtime·evaluation은 M10에서 지웠다. performance.json은 M10에서 더한다
-    assert [p.name for p in DASHBOARDS] == ["monitoring.json"]
+    # 옛 메시지 기준 realtime·evaluation은 M10에서 지웠다
+    assert [p.name for p in DASHBOARDS] == ["monitoring.json", "performance.json"]
 
 
 # --------------------------------------------------------------------------- 새 대시보드 (grafana/build.py, M10)
 
-NEW_DASHBOARDS = ["monitoring.json"]
+NEW_DASHBOARDS = ["monitoring.json", "performance.json"]
 RULE_NAMES = json.loads((REPO_ROOT / "grafana" / "rule-names.json").read_text(encoding="utf-8"))
 
 
@@ -89,7 +89,8 @@ def test_new_dashboards_filter_by_source(name):
     assert source["query"] == "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample"
     for item, q, _ in queries(d):
         if item != "variable source":
-            assert 'r.env == "${source}"' in q, item
+            # 단계 비교는 출처를 함수 인자로 넘긴다(count_raises(env: "${source}"))
+            assert 'r.env == "${source}"' in q or 'env: "${source}"' in q, item
 
 
 def test_monitoring_layout():
@@ -119,6 +120,29 @@ def test_kpm2_lines_break_where_data_is_missing():
     for panel in lines:
         custom = panel["fieldConfig"]["defaults"]["custom"]
         assert custom["spanNulls"] is False and custom["insertNulls"] == 6000, panel["title"]
+
+
+def test_performance_layout():
+    """성능 대시보드 = 탐지 성과(docs/dashboard-design.md 3절). 오버헤드는 형식이 정해진 뒤(27_ §9 R5)."""
+    d = load(DASHBOARD_DIR / "performance.json")
+    assert d["uid"] == "portran-performance"
+    rows = [p["title"].split(" — ")[0] for p in d["panels"] if p["type"] == "row"]
+    assert rows == ["탐지 결과", "경보·입력 품질", "파이프라인 완성 뒤 채울 것"]
+    variables = {v["name"]: v for v in d["templating"]["list"]}
+    assert list(variables) == ["source", "cell", "kpm_only"]
+    assert variables["kpm_only"]["current"]["value"] == "replay-kpm-only"  # 27_ §3
+    panels = {p["title"]: p for p in d["panels"] if p["type"] != "row"}
+    # 단계 비교는 데이터 출처와 1단계만 재생을 같은 시간 범위에서 견준다
+    for title in ("단계 비교 — 1~4단계 vs 1단계만", "단계 비교 — 룰별 경보 수"):
+        q = panels[title]["targets"][0]["query"]
+        assert 'env: "${source}"' in q and 'env: "${kpm_only}"' in q, title
+    # 막대 그래프 이름: 모든 룰·후보 ID가 들어 있다
+    q = panels["단계 비교 — 룰별 경보 수"]["targets"][0]["query"]
+    assert all(f'"{rule}":' in q for rule in {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]})
+    # 경보·입력 품질도 셀로 거른다
+    for p in panels.values():
+        for t in p.get("targets", []):
+            assert "${cell:json}" in t["query"], p["title"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
@@ -198,6 +222,7 @@ VARIABLE_VALUES = {
     "${cell:json}": '["1"]',
     "${cell}": "1",
     "${alert_id}": "alert-not-exist",
+    "${kpm_only}": "replay-kpm-only",
 }
 
 
@@ -233,6 +258,11 @@ def test_all_queries_run_without_error(grafana_up, path):
     for name, q, _ in queries(load(path)):
         for k, v in VARIABLE_VALUES.items():
             q = q.replace(k, v)
+        # 바꾸지 않은 변수가 남으면 Flux가 문자열 보간("${x}")으로 읽어 엉뚱한 오류가 난다 — 먼저 잡는다
+        left = set(re.findall(r"\$\{[^}]+\}", q))
+        if left:
+            errors.append(f"{name}: VARIABLE_VALUES에 없는 변수 {sorted(left)}")
+            continue
         result = grafana_query(q)
         if "error" in result:
             errors.append(f"{name}: {result['error']}")

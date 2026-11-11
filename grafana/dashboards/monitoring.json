@@ -169,7 +169,7 @@
         }
       },
       {
-        "name": "세션 시작 · 재시작",
+        "name": "세션 시작",
         "datasource": {
           "type": "influxdb",
           "uid": "portran-influxdb"
@@ -183,7 +183,46 @@
             "uid": "portran-influxdb"
           },
           "refId": "Anno",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => ((r._measurement == \"hello\" and r._field == \"seq\") or (r._measurement == \"f1_evt\" and r._field == \"msg\")) and r.env == \"${source}\")\n  |> map(fn: (r) => ({_time: r._time,\n      text: if r._measurement == \"hello\" then \"분석 엔진 접속 — 새 세션 \" + r.session else \"DU·CU 재시작 (\" + string(v: r._value) + \")\",\n      tags: r._measurement}))\n  |> group()"
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"hello\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> map(fn: (r) => ({_time: r._time, text: \"분석 엔진 접속 — 새 세션 \" + r.session, tags: \"hello\"}))\n  |> group()"
+        },
+        "mappings": {
+          "time": {
+            "source": "field",
+            "value": "_time"
+          },
+          "text": {
+            "source": "field",
+            "value": "text"
+          },
+          "tags": {
+            "source": "field",
+            "value": "tags"
+          }
+        },
+        "filter": {
+          "exclude": false,
+          "ids": [
+            7,
+            8
+          ]
+        }
+      },
+      {
+        "name": "DU·CU 재시작",
+        "datasource": {
+          "type": "influxdb",
+          "uid": "portran-influxdb"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(163, 82, 204, 1)",
+        "target": {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "Anno",
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"f1_evt\" and r._field == \"msg\" and r.env == \"${source}\")\n  |> map(fn: (r) => ({_time: r._time, text: \"DU·CU 재시작 (\" + string(v: r._value) + \")\", tags: \"f1_evt\"}))\n  |> group()"
         },
         "mappings": {
           "time": {
@@ -257,7 +296,7 @@
         "name": "source",
         "label": "데이터 출처",
         "type": "custom",
-        "query": "AWS : p4, 재생 : replay, 샘플 : sample",
+        "query": "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample",
         "current": {
           "text": "AWS",
           "value": "p4"
@@ -267,6 +306,11 @@
             "text": "AWS",
             "value": "p4",
             "selected": true
+          },
+          {
+            "text": "On-Premise",
+            "value": "lab",
+            "selected": false
           },
           {
             "text": "재생",
@@ -280,7 +324,7 @@
           }
         ],
         "hide": 0,
-        "description": "AWS = AWS 테스트베드 p4 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플. On-Premise(연구실)는 받기 시작하면 더한다"
+        "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
       },
       {
         "name": "cell",
@@ -597,7 +641,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "RRC 연결 시도 · 성공 · 무응답 (3초마다)",
-      "description": "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 세로선 = 세션 시작·재시작",
+      "description": "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"

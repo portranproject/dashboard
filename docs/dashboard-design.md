@@ -20,12 +20,14 @@ M10에서 처음 대시보드 2개(`realtime.json`·`evaluation.json`, mock 메�
 | 선택지(화면 이름) | `env` 값 | 어디서 오나 (27_ §3) | 지금 |
 |---|---|---|---|
 | **AWS** | `p4` | AWS 테스트베드 p4 CU 박스 (공인 IP `43.202.191.147` 고정) | **받는다** |
-| **On-Premise** | `lab` | 연구실 실험 노트북 | 나중 (사용자 결정 11/09 — 우선 AWS만) |
+| **On-Premise** | `lab` | 연구실 실험 노트북 | 선택지만 있음 — 받는 것은 나중 (사용자 결정 11/09 — 우선 AWS만, 11/11 선택지 추가) |
+| 재생 | `replay` | `replay`로 다시 보낸 녹화 — 시연 백업 | 쓴다 |
+| 샘플 | `sample` | 탐지 쪽 시험 샘플 — 개발용 | 쓴다 |
 
-- Grafana 변수 `source`(사용자 정의, 한 개만 선택). 지금 값은 `AWS : p4` 하나다. On-Premise를 받게 되면 `, On-Premise : lab`을 더하기만 하면 된다.
+- Grafana 변수 `source`(사용자 정의, 한 개만 선택). 값은 `AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample`(D150·D158). On-Premise는 아직 데이터가 없어 고르면 빈 화면이다. 받기 시작하면 대시보드는 고칠 것이 없다.
 - 모든 쿼리에 `r.env == "${source}"`를 건다 — 나중에 출처가 둘이 돼도 데이터가 섞이지 않는다.
 - 대시보드를 출처마다 따로 만들지 않는다. 화면이 같으므로 변수 하나로 바꾼다(패널을 고칠 때 두 벌을 맞출 일이 없음).
-- 시험용 값(`sample`, 헤더가 없을 때의 `unknown`)은 선택지에 넣지 않는다. 개발 중에만 `개발 (샘플) : sample`을 더해 쓴다.
+- 헤더가 없을 때의 `unknown`은 선택지에 넣지 않는다.
 
 **On-Premise를 더할 때 정할 것** (지금은 하지 않음)
 1. 연구실 노트북이 AWS `/ingest`로 보내려면 연구실 공인 IP를 보안 그룹에 열어야 한다(탐지 쪽이 확인해 알려 주기로 함, 27_ §9 D2⑤). 고정 IP가 없으면 다른 방법(VPN 등)이 필요하다.
@@ -63,7 +65,7 @@ M10에서 처음 대시보드 2개(`realtime.json`·`evaluation.json`, mock 메�
 | 요약 | 지금 세션 | 분석 엔진이 언제 다시 떴나 | 마지막 `hello`의 `session`·시각, 시간 범위 안 `f1_evt` 수 |
 | 상시 KPM2 | 연결 시도·성공·무응답 | 셀에 무슨 일이 일어나고 있나 (1단계 공격은 시도·무응답이 함께 솟고 성공은 그대로) | `kpm2` 필드 `cc.RRC.ConnEstabAtt.total`·`cc.RRC.ConnEstabSucc.total`·`cc.RRC.ConnEstabFailCause.NoReply`, 3초 막대 |
 | 상시 KPM2 | UE 컨텍스트 수 | 셀 자원이 고갈되고 있나 | `ext.UeCtxMax` 선 + 셀 한도 96 기준선(27_ §5.3 `high` 조건 = 90%) · `si.RRC.ConnMax`·`si.RRC.ConnMean` |
-| 상시 KPM2 | (겹쳐 표시) | 경보가 언제 울렸나 | 주석: `alert` `raise`~`clear`/`end` 구간(영역), `hello`(세션 시작)·`f1_evt`(재시작) 세로선, `gap` 구간 '데이터 없음' |
+| 상시 KPM2 | (겹쳐 표시) | 경보가 언제 울렸나 | 주석: `alert` `raise`~`clear`/`end` 구간(영역), `hello`(세션 시작, 파랑)·`f1_evt`(DU·CU 재시작, 보라) 세로선 — 색과 토글을 나눈다(D157), `gap` 구간 '데이터 없음' |
 | 경보 목록 | 경보 표 | 어떤 경보가 있었나 | `alert`를 `alert_id`로 묶어 한 행: 시작 = `raise`의 시각, 심각도 = 최대, UE 수 = 마지막 `ues_total`, 대표 값 = 마지막 `rep_value`(`rep_key`), 상태 = 열림 / 해제(`clear`) / 강제 종료(`end`·`reason`) / 상태 불명(4절). 공격 이름은 6절 대응표 |
 | 경보 목록 | 룰·단계별 경보 수 | 어떤 공격이 많았나 | `alert` `event == "raise"`를 `rule`·`stage`로 셈 |
 | 경보 상세 | 판정 정보 | 왜 이 경보가 났나 | `alert_id == ${alert_id}`의 `cond_json`·`candidates_json`(→ 이름)·`conditions_json`·`mode`·`branch`·`params_json`. `values_json`은 **마지막 것**(`update`가 덮어씀, 27_ §7) |

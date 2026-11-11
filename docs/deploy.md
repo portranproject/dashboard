@@ -218,6 +218,13 @@ docker compose run -d --rm tools python -m replay.replay recordings/demo.jsonl -
 docker compose logs -f --tail 3 collector     # 수신 N 저장 N 거부 0 이면 정상 (Ctrl+C로 나오기)
 ```
 
+공격 구간만 시연하려면 `--from`/`--to`로 원본 데이터 시각 구간을 고른다. 시각은 Grafana 화면에 보이는 **한국 시각** 그대로 적는다(서버 시계는 UTC지만 replay가 한국 시각으로 읽는다). 구간 안에서 시작한 경보는 근거·해제까지 통째로 보낸다. 실행 로그 첫 줄에 파일의 데이터 시각 범위가 한국 시각으로 나오니, 구간을 잘못 적어 `보낼 레코드가 없습니다`가 나오면 그 범위를 보고 다시 적는다.
+
+```bash
+docker compose run -d --rm tools python -m replay.replay recordings/demo.jsonl --env replay \
+  --from 2026-11-11T15:08 --to 2026-11-11T15:14
+```
+
 관제 대시보드의 데이터 출처를 **재생**으로 고르면 보인다. 재생마다 `session`·`alert_id`에 재생 표시가 붙어 같은 녹화를 여러 번 재생해도 따로 저장된다(README "개발·시연 데이터").
 
 평가(탐지율·오탐·지연)는 지금 없다. 처음 evaluator는 M10에서 지웠고, 평가 방식은 전체 파이프라인 완성 뒤 탐지 쪽과 정한다(CLAUDE.md 10절).

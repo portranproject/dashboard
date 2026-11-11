@@ -20,7 +20,8 @@ RULE_NAMES = json.loads((ROOT / "rule-names.json").read_text(encoding="utf-8"))
 DS = {"type": "influxdb", "uid": "portran-influxdb"}
 
 # 데이터 출처 선택 (docs/dashboard-design.md 1절). 지금은 AWS만 받는다. On-Premise를 받게 되면 ("On-Premise", "lab")을 더한다.
-SOURCES = [("AWS", "p4"), ("재생", "replay"), ("샘플", "sample")]
+# On-Premise(lab)는 아직 받지 않는다 — 선택지만 둔다(D158)
+SOURCES = [("AWS", "p4"), ("On-Premise", "lab"), ("재생", "replay"), ("샘플", "sample")]
 
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
@@ -163,8 +164,8 @@ def source_variable() -> dict:
     options = [{"text": name, "value": env, "selected": i == 0} for i, (name, env) in enumerate(SOURCES)]
     return {"name": "source", "label": "데이터 출처", "type": "custom", "query": ", ".join(f"{n} : {e}" for n, e in SOURCES),
             "current": {"text": SOURCES[0][0], "value": SOURCES[0][1]}, "options": options, "hide": 0,
-            "description": "AWS = AWS 테스트베드 p4 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플. "
-                           "On-Premise(연구실)는 받기 시작하면 더한다"}
+            "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · "
+                           "재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,
@@ -314,7 +315,7 @@ from(bucket: v.defaultBucket)
 '''
     bars = b.add("timeseries", "RRC 연결 시도 · 성공 · 무응답 (3초마다)", 0, 24, 9, [target(kpm_bars)],
                  "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). "
-                 "주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 세로선 = 세션 시작·재시작",
+                 "주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
                  field_config={"defaults": {"unit": "none", "min": 0,
                                             "displayName": "${__field.name} · 셀 ${__field.labels.cell}",
                                             "custom": {"drawStyle": "bars", "fillOpacity": 70, "barAlignment": -1,
@@ -644,13 +645,19 @@ from(bucket: v.defaultBucket)
   |> map(fn: (r) => ({{_time: r._time, timeEnd: time(v: r.t_end_ms * 1000000),
       text: "칸 일부 없음 (n " + string(v: r.n) + " / " + string(v: int(v: r.agg_ms) / 100) + ", 셀 " + r.cell + ")", tags: "partial"}}))
 '''
+    # 세션 시작(hello)과 DU·CU 재시작(f1_evt)은 뜻이 달라 색·토글을 나눈다(D157)
     sessions = f'''
 from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => ((r._measurement == "hello" and r._field == "seq") or (r._measurement == "f1_evt" and r._field == "msg")) and {ENV})
-  |> map(fn: (r) => ({{_time: r._time,
-      text: if r._measurement == "hello" then "분석 엔진 접속 — 새 세션 " + r.session else "DU·CU 재시작 (" + string(v: r._value) + ")",
-      tags: r._measurement}}))
+  |> filter(fn: (r) => r._measurement == "hello" and r._field == "seq" and {ENV})
+  |> map(fn: (r) => ({{_time: r._time, text: "분석 엔진 접속 — 새 세션 " + r.session, tags: "hello"}}))
+  |> group()
+'''
+    restarts = f'''
+from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "f1_evt" and r._field == "msg" and {ENV})
+  |> map(fn: (r) => ({{_time: r._time, text: "DU·CU 재시작 (" + string(v: r._value) + ")", tags: "f1_evt"}}))
   |> group()
 '''
     ev_gaps = f'''
@@ -664,7 +671,8 @@ from(bucket: v.defaultBucket)
         annotation("경보 구간", alert_regions, "rgba(255, 152, 48, 0.12)", kpm_panels, region=True),
         annotation("데이터 없음 (gap)", gaps, "rgba(128, 128, 128, 0.25)", kpm_panels, region=True),
         annotation("칸 일부 없음", partial, "rgba(128, 128, 128, 0.12)", kpm_panels, region=True),
-        annotation("세션 시작 · 재시작", sessions, "rgba(31, 120, 193, 1)", kpm_panels),
+        annotation("세션 시작", sessions, "rgba(31, 120, 193, 1)", kpm_panels),
+        annotation("DU·CU 재시작", restarts, "rgba(163, 82, 204, 1)", kpm_panels),
         annotation("근거 데이터 없음 (gap)", ev_gaps, "rgba(128, 128, 128, 0.25)", [ev_bars["id"]], region=True),
     ]
     return dashboard("portran-monitoring", "PortRAN 관제",

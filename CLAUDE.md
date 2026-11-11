@@ -50,7 +50,7 @@
 | 출처 | 무엇 | `X-Env` | 대시보드 선택지 | 지금 |
 |---|---|---|---|---|
 | **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `p4` | AWS | **받는다** |
-| **On-Premise** | 연구실 실물 테스트베드(실험 노트북) | `lab` | On-Premise | 나중 (2026-11-09 사용자 결정 — 우선 AWS만) |
+| **On-Premise** | 연구실 실물 테스트베드(실험 노트북) | `lab` | On-Premise (선택지만 있음) | 나중 (2026-11-09 사용자 결정 — 우선 AWS만) |
 
 - 분석 엔진(eBPF)·탐지 엔진·전송기는 CU 인스턴스에서 돈다(27_ §9 R5 "p4 CU 박스"). 전송기가 HTTPS `POST /ingest`로 **대시보드 EC2**(테스트베드 세트와 별개, t3.small, `docs/deploy.md`)에 보낸다.
 - 두 출처는 같은 대시보드에서 데이터 출처 선택(`env` 태그)으로 고른다. 설계는 `docs/dashboard-design.md` 1절.
@@ -191,7 +191,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 
-- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`)·재생(`replay`)·샘플(`sample`)이고, On-Premise(`lab`)는 받기 시작하면 더한다(**지금은 AWS만 받는다**). 단계 비교는 `p4` vs `replay-kpm-only`(27_ §7, `docs/dashboard-design.md`).
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`)·On-Premise(`lab`)·재생(`replay`)·샘플(`sample`)이다. On-Premise는 선택지만 있고 **지금은 AWS만 받는다**. 단계 비교는 `p4` vs `replay-kpm-only`(27_ §7, `docs/dashboard-design.md`).
 - **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
 - `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
 - `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
@@ -215,7 +215,7 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 | collector 녹화 (실측·연동 시험) | `recordings/raw-<시각>-<환경>.jsonl` | `python -m replay.replay recordings/raw-…-p4.jsonl --env replay` |
 | 실측 | `X-Env: p4` | 탐지 쪽 전송기 |
 
-- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`p4`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / 재생 / 샘플)이 이 값으로 거른다.
+- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`p4`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / 재생 / 샘플)이 이 값으로 거른다.
 - 상시 KPM2(`kpm2` 3초 묶음) 샘플은 저장소에 없다(연동 시험 때 서버 녹화에만 있음, progress Q19).
 
 ## 8. collector 요구사항
@@ -237,7 +237,7 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 - **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3).
 - 설계(패널마다 답하는 질문과 쓰는 레코드, 데이터 없음 처리)는 `docs/dashboard-design.md`.
-- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`p4`)·재생(`replay`)·샘플(`sample`). On-Premise(`lab`)는 받기 시작하면 더한다.
+- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`p4`)·On-Premise(`lab`, 아직 받지 않음)·재생(`replay`)·샘플(`sample`).
 
 ### 9.1 관제 (`monitoring.json`, uid `portran-monitoring`), 새로고침 5초
 | 행 | 패널 |
@@ -264,10 +264,13 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --env replay            # 지금 시각으로 옮겨 로컬 collector로
 python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --gap-sec 30
 python -m replay.replay a.jsonl --out https://3.39.170.31/ingest --ca certs/ingest.crt
+python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08 --to 2026-11-11T15:14   # 구간만
 ```
 - 탐지 엔진 레코드를 `/ingest`로 다시 보낸다(전송기처럼 500줄·1 MiB 묶음, 413이면 나눠서, 503이면 다시). `X-Env` 기본 `replay`.
 - `--retime now`(기본): 첫 레코드를 지금으로 옮긴다. 이동량은 `kpm2` 칸 길이의 배수(3초 칸 경계 유지). 재생마다 `session`·`alert_id` 끝에 재생 표시(`~r<시각>`)를 붙여 여러 번 재생해도 따로 저장된다. `--retime none`이면 원본 그대로(이미 있는 줄은 중복으로 걸러짐).
 - 파일 순서를 지키되 보내는 시각이 거꾸로 가지 않게 한다(경보 `raise` 직후 그 경보의 `pre` 근거). 여러 파일은 `--gap-sec` 간격으로 이어서.
+- `--from`/`--to`: 원본 데이터 시각이 `[from, to)`인 것만. 경보는 통째로 고른다 — 구간 안에서 시작한 경보는 구간 밖 근거·`clear`까지, 구간 전에 시작한 경보는 모두 뺀다(앞뒤가 잘린 경보를 만들지 않음). `hello`는 다음 줄 시각을 쓴다.
+- 시간대 없이 적은 시각(`--retime`·`--from`·`--to`)은 **한국 시각(KST)** 이다. 컨테이너 시계(UTC)와 상관없이 Grafana 화면 시각을 그대로 쓴다.
 - 발표 당일 테스트베드 시연이 실패할 경우의 백업용이다.
 
 ## 12. 작업 원칙

@@ -970,7 +970,20 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "지표": 0,
+              "칸": 1
+            }
+          }
+        }
+      ]
     },
     {
       "id": 12,

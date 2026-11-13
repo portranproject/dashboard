@@ -30,6 +30,8 @@ CELL_LIMIT = 96  # 셀 UE 컨텍스트 한도 (27_ §5.3, ext.UeCtxMax ≥ 90%�
 # 상시 KPM2 선은 점 사이가 이보다 길게 비면 끊는다(3초 묶음 2칸). 이으면 받지 않은 구간에
 # 값이 서서히 변한 것처럼 보인다.
 KPM2_LINE_BREAK_MS = 2 * 3000
+# 근거 KPM1 타임라인에서 UE의 마지막 메시지를 이만큼만 그린다(그 뒤는 빈칸)
+TIMELINE_END_S = 1
 
 
 # --------------------------------------------------------------------------- 공통 조각
@@ -143,6 +145,13 @@ def target(query: str, ref: str = "A", hide: bool = False) -> dict:
     if hide:
         t["hide"] = True
     return t
+
+
+def column_order(columns: list[str], hide: tuple[str, ...] = ()) -> list[dict]:
+    """표·stat의 열 순서를 고정하는 Grafana 변환. Flux map의 열 순서는 정해져 있지 않아, 정하지 않으면 새로고침할 때마다
+    열이 섞여 나온다(관제 판정 요약 등, 11/13 사용자 지적)."""
+    return [{"id": "organize", "options": {"excludeByName": {name: True for name in hide}, "renameByName": {},
+                                           "indexByName": {name: i for i, name in enumerate(columns)}}}]
 
 
 def override(name: str, *props: tuple[str, object], regex: bool = False) -> dict:
@@ -472,7 +481,9 @@ from(bucket: v.defaultBucket)
                         "overrides": [override("공격", ("mappings", rule_mappings()), ("custom.width", 300)),
                                       override("심각도", ("mappings", SEVERITY_MAPPINGS),
                                                ("custom.cellOptions", {"type": "color-background"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["룰", "공격", "종류", "셀", "심각도", "마지막 이벤트", "모드", "갈래", "세션"]),
+          new_line=True)
 
     labels = [("cond_json", "성립 조건 (cond)"), ("candidates_json", "같은 모양의 다른 공격 후보 (candidates)"),
               ("conditions_json", "공격자 행동 전제 (conditions)"), ("values_json", "관측값 (values, 마지막 값)"),
@@ -499,7 +510,8 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "left", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("항목", ("custom.width", 260)),
                                       override("값", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "md", "footer": {"show": False}})
+          options={"showHeader": True, "cellHeight": "md", "footer": {"show": False}},
+          transformations=column_order(["항목", "값"]))
 
     candidates = f'''
 import "array"
@@ -521,7 +533,8 @@ array.from(rows: if length(arr: ids) > 0 then array.map(arr: ids, fn: (x) => ({{
           field_config={"defaults": {"custom": {"align": "left"}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),
                                       override("ID", ("custom.width", 90))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["ID", "공격"]), new_line=True)
 
     ues = f'''
 import "date"
@@ -549,7 +562,10 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("걸린 시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("UE 관측값", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["걸린 시각", "UE (cell-du_ue_id-uid)", "S-TMSI", "C-RNTI", "조건", "불확실", "전제",
+                                        "피해자 연결 (peers)", "근거", "UE 관측값", "이벤트"]),
+          new_line=True)
 
     ev_kpm2 = f'''
 import "date"
@@ -578,9 +594,11 @@ from(bucket: v.defaultBucket)
                     options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
                              "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
 
+    # 상태 타임라인은 값을 다음 값이 올 때까지 늘여 그린다 — UE의 마지막 메시지는 화면 끝(지금)까지 이어져
+    # 24분짜리 상태처럼 보였다(11/13). 마지막 메시지 1초 뒤에 빈 값을 끼워 거기서 끝낸다(빈 값은 투명)
     timeline = f'''
 import "date"
-from(bucket: v.defaultBucket)
+msgs = from(bucket: v.defaultBucket)
   |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => r._measurement == "evidence" and {ENV} and r.alert_id == "${{alert_id}}" and r.raw_type == "ue_evt")
   |> filter(fn: (r) => r._field == "msg" or r._field == "dir" or r._field == "uid")
@@ -588,12 +606,21 @@ from(bucket: v.defaultBucket)
   |> map(fn: (r) => ({{_time: r._time, _value: (if r.dir == "UL" then "↑ " else "↓ ") + r.msg, ue: "UE " + string(v: r.uid)}}))
   |> group(columns: ["ue"])
   |> sort(columns: ["_time"])
+ends = msgs
+  |> last()
+  |> map(fn: (r) => ({{_time: date.add(d: {TIMELINE_END_S}s, to: r._time), _value: "", ue: r.ue}}))
+union(tables: [msgs, ends])
+  |> group(columns: ["ue"])
+  |> sort(columns: ["_time"])
 '''
     tl = b.add("state-timeline", "근거 KPM1 — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
                "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
                "자세한 값은 아래 표",
                field_config={"defaults": {"displayName": "${__field.labels.ue}", "color": {"mode": "palette-classic"},
-                                          "custom": {"fillOpacity": 80, "lineWidth": 1}}, "overrides": []},
+                                          "custom": {"fillOpacity": 80, "lineWidth": 1},
+                                          "mappings": [{"type": "special", "options": {
+                                              "match": "empty", "result": {"color": "transparent", "text": " ", "index": 0}}}]},
+                               "overrides": []},
                options={"showValue": "always", "rowHeight": 0.8, "mergeValues": False, "alignValue": "left",
                         "legend": {"showLegend": False}, "tooltip": {"mode": "single"}}, new_line=True)
 
@@ -617,7 +644,8 @@ from(bucket: v.defaultBucket)
                                       override("방향", ("custom.width", 70)), override("프로토콜", ("custom.width", 70)),
                                       override("구간", ("custom.width", 65)),
                                       override("원본", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["시각", "UE", "구간", "방향", "프로토콜", "메시지", "원본"]), new_line=True)
 
     # ---- 변수·주석
     variables = [
@@ -1190,6 +1218,7 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "noValue": "없음"},
                         "overrides": [override("칸", ("custom.width", 70))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["지표", "칸"]),
           new_line=True)
 
     # ---- CU 자원 (수집 오버헤드, M11)

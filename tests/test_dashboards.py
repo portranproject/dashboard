@@ -141,6 +141,15 @@ def test_tables_sort_before_renaming_map():
     assert "단계" not in order and min(order, key=order.get) == "시작"
 
 
+def test_kpm1_timeline_ends_after_last_message():
+    """상태 타임라인은 마지막 값을 화면 끝까지 늘인다 — UE마다 마지막 메시지 1초 뒤 빈 값(투명)으로 끝낸다(11/13)."""
+    p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p["title"] == "근거 KPM1 — UE별 메시지 흐름")
+    q = p["targets"][0]["query"]
+    assert "|> last()" in q and "date.add(d: 1s" in q and 'union(tables: [msgs, ends])' in q
+    [mapping] = p["fieldConfig"]["defaults"]["mappings"]
+    assert mapping["options"]["match"] == "empty" and mapping["options"]["result"]["color"] == "transparent"
+
+
 def test_performance_layout():
     """성능 대시보드 = 탐지 성과 + CU 자원(수집 오버헤드, M11) (docs/dashboard-design.md 3절)."""
     d = load(DASHBOARD_DIR / "performance.json")
@@ -227,6 +236,15 @@ def test_panel_layout(path):
             for y in range(g["y"], g["y"] + g["h"]):
                 assert (x, y) not in cells, f"겹침: {p['title']}"
                 cells.add((x, y))
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_tables_have_fixed_column_order(path):
+    """Flux map의 열 순서는 정해져 있지 않다 — 표마다 organize로 순서를 고정하지 않으면 새로고침할 때마다 섞인다(11/13)."""
+    for p in load(path)["panels"]:
+        if p["type"] == "table":
+            org = [t for t in p.get("transformations", []) if t["id"] == "organize"]
+            assert org and org[0]["options"]["indexByName"], p["title"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
@@ -341,6 +359,13 @@ def grafana_up():
         urllib.request.urlopen(f"http://localhost:{os.environ.get('GRAFANA_PORT', '3000')}/api/health", timeout=3)
     except Exception:
         pytest.skip("Grafana에 접속할 수 없음")
+
+
+def test_grafana_always_gets_a_slack_webhook_url():
+    """SLACK_WEBHOOK_URL이 비어 있으면 Slack 연락처 검사에 걸려 Grafana가 아예 뜨지 않는다(11/13 임시 Grafana에서 확인).
+    compose가 비어 있을 때도 기본 주소를 넘겨야 한다."""
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-http" in compose
 
 
 def test_alert_queries_run_without_error(grafana_up):

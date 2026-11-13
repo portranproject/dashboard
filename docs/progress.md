@@ -13,7 +13,7 @@
 | M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
 | M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
 | M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 완료 (PR #22·#24, 배포 #23·#25, 탐지 쪽 전송기 연동 시험 통과) | 2026-11-09 |
-| M10 대시보드 재구성 · 옛 메시지 삭제 | 진행 중 (브랜치 `feat/dashboard-M10` — replay·관제 대시보드·정리 끝, 성능 대시보드 남음) | |
+| M10 대시보드 재구성 · 옛 메시지 삭제 | 진행 중 (PR #27~#38, 배포 #28·#30·#32·#34·#36·#38 — replay·관제·성능(탐지 성과) 대시보드·정리 배포 완료. 남은 것: 수집 오버헤드(R5)·단계 비교 데이터, 탐지 쪽 대기) | |
 
 ---
 
@@ -30,6 +30,8 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
 | Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ② 단계 비교 재생 `X-Env`에 출처 붙이기(`p4-kpm-only`·`lab-kpm-only`). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
+| Q23 | AWS 상시 KPM2의 `ext.UeCtxMax`가 **125까지** 올라 셀 한도 96(27_ §5.3, 대시보드 `CELL_LIMIT`)을 넘었다(11/11 15:53 공격). 한도가 이 테스트베드 셀의 실제 값인지, `UeCtxMax`가 한도를 넘는 대기 UE까지 세는지. 1·2단계 경보가 high가 되는 기준(90% = 86)과 관련. `hello`의 `cells[].max_conn`에 실제 한도가 오면 그 값을 쓰도록 바꿀 수 있음. 11/12 탐지 쪽 변경으로 `L3-01-V`의 절대 수 문턱 `f_abs`도 셀 한도 × 0.1(올림)이 되어, 한도가 틀리면 `C2a` 판정도 달라진다(D162) | 탐지 엔진·테스트베드 | 관제 "UE 컨텍스트 · 연결 UE 수", `grafana/build.py` `CELL_LIMIT` |
+| Q24 | AWS p4 셀이 **1개(6733824) → 4개(6733824~6733827)** 로 늘었고, 최근 3시간에 DU·CU 재시작(`f1_evt`)이 26번 왔다(11/11 오후). 의도한 테스트베드 변경·시험인지 | 테스트베드·탐지 엔진 | 관제 화면 셀 변수(셀을 하나 고르면 그 셀만 보임) |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -987,7 +989,7 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 
 ---
 
-## M10 — 대시보드 재구성 · 처음 메시지·mock·evaluator 삭제 (2026-11-09~, 브랜치 `feat/dashboard-M10`, 진행 중)
+## M10 — 대시보드 재구성 · 처음 메시지·mock·evaluator 삭제 (2026-11-09~, 브랜치 `feat/dashboard-M10` 외 — 병합 뒤 삭제, 진행 중)
 
 목표(CLAUDE.md 13절): 관제·성능 대시보드를 탐지 엔진 레코드로 다시 만들고, replay를 새 형식으로 바꾸고, mock·evaluator·처음 메시지(`metric`·`detection`·`attack_run`)·옛 대시보드를 지운다. 설계는 `docs/dashboard-design.md`.
 
@@ -1006,6 +1008,30 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 | 테스트 | `test_replay.py` 새로 씀(17개), `test_collector.py`를 overhead·샘플 기준으로 다시 씀, `test_ingest.py`(`alert_ue`), `test_dashboards.py`(생성기 `--check`, 룰 이름 대응표가 샘플·27_ 모두 덮음, 모든 쿼리가 `env`로 거름, 관제 구성), `test_schema.py`·`test_influx_integration.py`(처음 메시지 → overhead) |
 | 문서 | `CLAUDE.md`(2·4·5·6·7·9·10·11·12·13절), `README.md`(collector·대시보드·개발·시연 데이터), `docs/deploy.md` 7절, `docs/dashboard-design.md`, `reference/README.md`(5G-Spector 공격 ↔ 탐지 엔진 룰 대응) |
 
+
+### 한 일 — 첫 배포(#28) 뒤 고친 것·더한 것 (2026-11-11)
+
+PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge commit)으로 배포했다.
+
+| PR → 배포 | 내용 | 파일 | 결정 |
+|---|---|---|---|
+| #29 → #30 | Grafana가 옛 대시보드 폴더(빈 폴더)를 붙잡아 새 관제 대시보드가 안 보이던 문제 — 배포 스크립트가 서버와 컨테이너 안 파일 해시가 다르면 Grafana를 다시 만든다. 지운 JSON의 대시보드도 지운다 | `deploy/server-deploy.sh`, `grafana/provisioning/dashboards/dashboards.yml`, `tests/test_deploy.py`(2개), `docs/deploy.md` 문제 해결 | D154·D155 |
+| #31 → #32 | 상시 KPM2 선 그래프가 6초(3초 묶음 2칸) 넘게 데이터가 없으면 선을 끊는다 — 받지 않은 구간이 비스듬히 이어져 값이 있었던 것처럼 보이던 문제 | `grafana/build.py`(`KPM2_LINE_BREAK_MS`), `docs/dashboard-design.md` 4절 | D156 |
+| #33 → #34 | ① 세로선을 분석 엔진 세션 시작(`hello`, 파랑)과 DU·CU 재시작(`f1_evt`, 보라)으로 나누고 토글도 따로 ② 데이터 출처에 On-Premise(`lab`, 선택지만) ③ replay `--from`/`--to`(원본 데이터 시각 구간, 경보는 통째로)와 시각을 한국 시각으로 읽기(`--retime` 포함, 로그 시각도) ④ Python 3.10에서 `…Z` 시각을 못 읽던 것(CI 실패) | `grafana/build.py`, `replay/replay.py`, `tests/test_dashboards.py`·`test_replay.py`(구간·KST 4개), README·CLAUDE.md 9·11절·`docs/deploy.md` 7절 | D157·D158·D159 |
+| #35 → #36 | 지난 시간 범위를 고르면 요약 줄 "열린 경보"·"최고 심각도"가 `cannot query an empty range`로 깨지던 문제 — 두 패널은 지금(`now()`)까지 조회. 모든 쿼리의 `range` start·stop 기준이 섞이지 않는지 검사하는 테스트 | `grafana/build.py`(`alert_summary`의 `stop`), `tests/test_dashboards.py`, CLAUDE.md Flux 주의 | D160 |
+| #37 → #38 | **성능 대시보드** `performance.json`(uid `portran-performance`) — 탐지 성과: 종류별 경보 수, 단계 비교(요약·룰별 막대), 경보 길이 분포, 룰 × 단계 × 종류 표, 경보가 어떻게 끝났나, 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움, 일부만 측정된 지표, 파이프라인 완성 뒤 자리. CI의 Grafana 쿼리 테스트에 `${kpm_only}` 값 추가(빠뜨려 CI 실패)와 바꾸지 않은 변수 검사 | `grafana/build.py`(`performance()`, `alert_summary`가 근거 없이도 동작), `grafana/dashboards/performance.json`, `tests/test_dashboards.py`, README·CLAUDE.md 9.2절·`docs/dashboard-design.md` 3절 | D161 |
+| (정리) | 원격·로컬 브랜치를 `main`·`dev`만 남기고 지움(모두 `main`에 병합된 것: 원격 10개, 로컬 12개). 지운 원격 브랜치는 각 PR의 "Restore branch"로 되살릴 수 있다 | — | — |
+
+### 한 일 — 탐지 쪽 `L3-01-V` 필드 변경 반영 (2026-11-13, 브랜치 `docs/l3-01-v-1112`)
+
+탐지 쪽 알림(11/12): `L3-01-V` `raise` 줄의 `params`에서 `k`가 빠지고 `z`(급증 문턱의 표준편차 배수, 3.0)·`f_abs_frac`(0.1, normal 모드만)가 생김. `f_abs`는 고정 10에서 셀 한도 × `f_abs_frac` 올림(한도 96이면 10)으로 바뀌고 normal 모드이고 셀 한도를 알 때만 실림. `values`에 `sigma`(기준선 표준편차)가 `base` 뒤에 생김. `C3`은 `a_w` ≥ `base` + `z` × `sigma`(전에는 `k` × `base`), `C2a`는 셀 한도를 모르면 나오지 않음.
+
+| 파일 | 변경 |
+|---|---|
+| `reference/detection/27_…명세서.md` | 맨 위에 변경 반영 표시, §5.4 `L3-01-V` 표(`C2a`·`C3` 뜻, `sigma`, `z`·`theta`·`f_abs_frac`·`f_abs`), §5.7 예시, §7.1 필드 타입 표(실수: `sigma`·`z`·`f_abs_frac`) |
+| `CLAUDE.md` 5.1절 · `schema/SCHEMA.md` 3.1절 | 경보 예시를 새 형식으로(테스트의 예시 메시지도 이것을 씀) |
+| `tests/test_ingest.py` | 새 형식 3가지(normal, `dl_missing`, 셀 한도 모름 — `f_abs`·`C2a` 없음)가 스키마를 통과하고 `values_json`·`params_json`에 그대로 저장되는지, 대표 값은 `ratio`가 있을 때만 |
+| 코드 | 바꾸지 않음(D162) |
 ### 결정 사항
 
 | # | 결정 | 이유 | 팀 확인 |
@@ -1029,24 +1055,41 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 | D159 | replay `--from`/`--to`: 원본 데이터 시각 `[from, to)`만 보낸다. 경보는 통째로(구간 안에서 시작한 경보는 구간 밖 근거·`clear`까지, 구간 전에 시작한 경보는 모두 뺌). 시간대 없이 적은 시각(`--retime` 포함)은 한국 시각 | 녹화에서 공격 구간만 시연하려고(사용자 요청 11/11). 시각 기준으로만 자르면 앞뒤가 잘린 경보(raise 없는 clear, pre 근거 없는 raise)가 생긴다. 서버·컨테이너 시계가 UTC라 전에는 `--retime 2026-12-04T13:00:00`이 UTC 13시(한국 22시)로 읽혔다 — Grafana 화면 시각(한국)과 맞춘다 | 불필요 |
 | D160 | 요약 줄의 "열린 경보"·"최고 심각도"는 화면 시간 범위와 상관없이 지금까지 조회한다(`stop: now()`). `range`의 start·stop 기준을 섞지 않는 테스트 추가 | 근거를 `-5m`부터 화면 범위 끝까지 조회해서, 지난 범위(예: 16:02:47~16:07:47를 16:16에)를 고르면 start > stop이 되어 `cannot query an empty range`로 두 패널이 깨졌다(사용자 AWS 화면 11/11). 요약 줄은 제목대로 "지금" 상태이고 상태 불명도 now() 기준 | 불필요 |
 | D161 | 성능 대시보드 `performance.json`은 탐지 성과부터 — 종류별 경보 수, 단계 비교(`${source}` 대 변수 `kpm_only`, 기본 `replay-kpm-only`), 경보 길이 분포, 룰 × 단계 × 종류 표, 경보가 어떻게 끝났나, 근거 손실, gap, 상시 KPM2 칸 채움·partial 지표. 경보는 시간 범위 안에서 시작한 것만 세고 근거는 읽지 않는다(clear·end가 없으면 '끝이 안 옴'). 수집 오버헤드는 자리만 | 사용자 결정(11/11): eBPF는 항상 켜므로 켬·끔 비교 대신 에이전트 프로세스 몫을 재야 하고(형식은 R5), 그 전에 지금 받는 경보 데이터로 만들 수 있는 탐지 성과부터. 근거를 읽지 않는 것은 넓은 실험 구간에서 근거가 수십만 점이라 느려서 | 탐지 쪽 (R5 오버헤드 형식) |
+| D162 | 탐지 쪽 `L3-01-V` 경보 필드 변경(11/12 알림)을 반영 — 코드는 그대로, 탐지 쪽 명세 사본(27_ §5.4·§5.7·§7.1)과 예시(CLAUDE.md 5.1절, SCHEMA.md 3.1절)를 새 형식으로 고치고 테스트 추가. 저장소의 탐지 쪽 샘플(`tests/data/detection/`, `k` 형식 4개 파일)은 바뀌기 전 형식 그대로 둔다 | `values`·`params`는 스키마에서 형식 제한 없는 객체이고, 저장은 JSON 문자열 통째(`values_json`·`params_json`), 화면(경보 상세 '판정 근거 값')도 그대로 보여 주므로 필드가 바뀌어도 받기·저장·표시가 그대로 된다. 대표 값(`ratio`)도 그대로 있음. 샘플은 탐지 엔진이 실제로 낸 출력이라 임의로 고치지 않음(새 샘플은 탐지 쪽에서 받으면 바꿈) | 불필요 |
 
 ### 확인 결과 (지금까지)
 
 | 확인 | 결과 |
 |---|---|
 | `pytest` | 233 passed, 1 failed — 실패는 `test_dashboards`의 Grafana 쿼리 실행(로컬 `.env` 비밀번호 불일치 401, 코드와 무관) |
+| `pytest` (11/11, #37 기준) | 253개 — 로컬에서 251 passed + Grafana 쿼리 실행 2개는 임시 Grafana(아래)로 통과. CI는 Python 3.10에서 두 번 실패(`…Z` 시각 #33, `${kpm_only}` 누락 #37) → 고친 뒤 병합 |
+| 임시 Grafana로 확인 (11/11) | 로컬 InfluxDB가 있는 compose 네트워크에 `grafana/grafana:12.4.13`을 포트 3001로 따로 띄워(저장소 provisioning 마운트) 관제 23개·성능 11개 쿼리 오류 0, `test_all_queries_run_without_error` 2 passed. Edge headless로 성능 화면을 캡처해 표 열 순서·막대 이름 잘림·단위를 다듬음. 끝나면 컨테이너를 지움 |
+| 단계 비교 계산 | 1단계만 재생 결과가 없을 때 '재생 없음', 있을 때(샘플을 자기 자신과 비교) 41·41·0, '못 잡은 경보' 합은 임의 값으로 따로 확인 |
+| replay 구간 | `TZ=UTC`(서버처럼)에서 두 샘플 경보를 이은 파일에 `--from 12:50:06 --to 12:50:30` → 구간 안에서 시작한 경보 하나만, 구간 뒤 clear까지 667건 |
+| 탐지 쪽 `L3-01-V` 변경 (11/13) | `pytest tests/test_ingest.py tests/test_schema.py tests/test_collector.py` 175 passed(새 형식 테스트 3개 포함) |
+| AWS (사용자, 11/11) | #28 뒤 Grafana를 다시 만들어 관제 대시보드가 보임. 실측 p4 데이터로 관제 화면 확인: UE 컨텍스트 고갈 공격(15:53·16:02 등, UE 컨텍스트 최대 125)이 경보 구간·빨간 위험 구간으로 보임, 선 끊기(#31)·세로선 색(#33) 반영. 지난 범위를 고를 때의 요약 오류를 사용자가 찾아 #35로 고침 |
 | 관제 대시보드 쿼리 | 로컬 InfluxDB(샘플 32개 + 개발용 KPM2 묶음)에 Grafana처럼 `v`·변수를 채워 23개 쿼리 모두 실행 확인 |
 | 화면 | 사용자가 로컬 Grafana에서 확인, 지적 반영: 경보 구간이 지금까지 칠해짐(상태 불명 처리), 범례 이름 빠짐(`pivot`으로 열 이름), 요약이 0(Flux `map` 버그 우회), 수집 상태·세션 라벨, 판정 요약 높이, 경보 구간 색 연하게 |
 | 실시간 재생 | 샘플 5개 + 같은 시간대 KPM2 묶음을 1배속으로 재생해 경보 열림·해제·상태 불명 전환 확인(사용자) |
 
-확인하지 못한 것: Grafana API로 대시보드 쿼리 실행 테스트(로컬 `.env`의 Grafana 비밀번호가 실제와 달라 401), CI(push 뒤), AWS 배포.
+확인하지 못한 것: AWS에서 성능 대시보드를 p4 실험 구간으로 본 화면(11/11에는 로컬 Grafana를 보고 있었음), 실제 1단계만 재생(`replay-kpm-only`) 데이터로 본 단계 비교, 로컬 `.env`의 Grafana 비밀번호(아직 실제와 다름).
+
+### 환경 메모 (11/11)
+
+- **로컬 Grafana 비밀번호가 `.env`와 달라 쿼리 테스트가 401일 때**: 임시 Grafana를 `.env` 계정으로 띄워 같은 테스트를 돌린다. `docker run -d --rm --name portran-grafana-check --network dashboard_default -p 127.0.0.1:3001:3000 --env-file <INFLUX_ORG·INFLUX_BUCKET·INFLUX_TOKEN·GF_SECURITY_ADMIN_USER·GF_SECURITY_ADMIN_PASSWORD만 담은 파일> -v <저장소>/grafana/provisioning:/etc/grafana/provisioning:ro -v <저장소>/grafana/dashboards:/etc/grafana/dashboards:ro grafana/grafana:12.4.13` 뒤 `GRAFANA_PORT=3001 pytest tests/test_dashboards.py -k run_without_error`. 끝나면 `docker stop portran-grafana-check`.
+- **Windows Docker Desktop**에서는 바인드 마운트한 대시보드 JSON을 고쳐도 실행 중인 Grafana가 다시 읽지 않았다 → 컨테이너를 다시 시작한다. AWS(Linux)에서는 배포 때 바로 반영됐다.
+- **서버에서 명령은 `sudo -i` 뒤 `/opt/portran/dashboard`에서** 실행한다. 일반 사용자로 하면 `.env` 읽기 거부, git `dubious ownership`이 난다.
 
 ### 남은 일
 
 - [x] 성능 대시보드 `performance.json` — 탐지 성과(D161). 로컬 샘플 데이터로 쿼리 11개를 Grafana(12.4.13)에서 실행하고 화면 확인
 - [ ] 성능 대시보드 수집 오버헤드 — 탐지 쪽과 형식 협의(R5): 호스트 전체·eBPF 에이전트 프로세스 CPU·메모리, `ebpf_on` 빼기, `/ingest`로 `X-Env` 붙여 보내기
 - [ ] 단계 비교 데이터 — 탐지 쪽이 녹화를 1단계만으로 다시 재생해 `X-Env: replay-kpm-only`로 보내기(27_ §3)
-- [ ] 로컬 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 실제 값으로 맞춰 대시보드 쿼리 테스트 실행
+- [ ] 로컬 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 실제 값으로 맞춰 대시보드 쿼리 테스트 실행(그 전까지는 위 환경 메모의 임시 Grafana로)
+- [ ] AWS에서 성능 대시보드 확인 — `http://3.39.170.31:3000/d/portran-performance?var-source=p4`, 시간 범위를 실험 구간으로
+- [ ] 탐지 쪽 확인: Q23(셀 한도 96 vs `UeCtxMax` 125), Q24(셀 4개·DU·CU 재시작 26회)
 - [x] PR(`feat/dashboard-M10` → `dev`, #27) → `main` 배포(#28, 2026-11-11). 배포는 Success였지만 Grafana에 새 관제 대시보드가 안 보이고 옛 대시보드가 남음 → 원인 D154·D155. 서버에서 `docker compose up -d --force-recreate grafana`로 풀고, 같은 일이 없게 `fix/grafana-redeploy`로 고침(`docs/m9-complete`는 #27에 함께 병합). 고친 것은 #29 → `main` #30으로 배포
 - [ ] (사용자) AWS·로컬 Grafana에서 옛 대시보드 2개(실시간 관제·성능 검증)를 UI에서 지우기 — `disableDeletion: true`일 때 파일이 없어지면서 provisioning 연결이 이미 끊겨, `false`로 바꿔도 저절로 지워지지 않는다(앞으로 지우는 파일부터 적용)
-- [ ] AWS에서 관제 화면 확인 (서버 녹화를 `--env replay`로 재생)
+- [x] AWS에서 관제 화면 확인 — 재생 대신 실측 p4 데이터로 확인(11/11, 사용자). 고친 것은 #31·#33·#35
+- [x] #29~#38 배포 (2026-11-11) — 위 "첫 배포 뒤 고친 것·더한 것"
+- [x] 브랜치 정리 — 원격·로컬 모두 `main`·`dev`만 (2026-11-11)

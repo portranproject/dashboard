@@ -89,6 +89,28 @@ def test_alert_point():
     assert "session=" not in fields and "alert_id=" not in fields  # alert_id는 tag로만
 
 
+@pytest.mark.parametrize("mode, cond, values, params", [
+    # 11/12 탐지 쪽 변경: k → z·f_abs_frac, values에 sigma (예시는 SCHEMA.md 3.1 = normal 모드)
+    ("normal", None, None, None),
+    ("dl_missing", ["U"], {"a_w": 13, "u": 0.9230769230769231, "base": 1.0, "sigma": 0.0}, {"z": 3.0, "theta": 0.5}),
+    # 셀 한도를 모르면 f_abs·C2a가 없다
+    ("normal", ["C1", "C2"], {"a_w": 13, "f_w": 12, "ratio": 0.9230769230769231, "base": 1.0, "sigma": 0.0},
+     {"z": 3.0, "theta": 0.5, "f_abs_frac": 0.1}),
+])
+def test_l3_01_v_fields_after_1112_change_are_stored_as_is(mode, cond, values, params):
+    from common.schema import validation_errors
+
+    msg = example("alert", mode=mode)
+    if cond is not None:
+        msg.update(cond=cond, values=values, params=params)
+    assert "sigma" in msg["values"] and "z" in msg["params"] and "k" not in msg["params"]
+    assert validation_errors(msg) == []
+    _, fields, _ = lp(to_point(msg, env="p4"))
+    assert "values_json=" + json.dumps(json.dumps(msg["values"], separators=(",", ":"))) in fields
+    assert "params_json=" + json.dumps(json.dumps(msg["params"], separators=(",", ":"))) in fields
+    assert ("rep_key=" in fields) == ("ratio" in msg["values"])  # 대표 값 = ratio (normal 모드만, 27_ §5.3)
+
+
 def test_alert_point_with_session_and_end_fields():
     end = next(json.loads(l) for l in sample_lines("T07_세션변경_evidence.jsonl") if '"event":"end"' in l)
     _, fields, _ = lp(to_point(end, env="p4", session="20261105T100200Z"))

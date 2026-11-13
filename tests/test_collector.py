@@ -1,4 +1,4 @@
-"""collector 공통 동작 — UDP·파일 입력, 검증·거부 로그, 녹화, 배치 쓰기, InfluxDB 장애.
+"""collector 공통 동작 — UDP·파일 입력, 검증·거부 로그, 녹화, 배치 쓰기, InfluxDB 장애. overhead 변환.
 
 /ingest 요청 처리·중복 제거·세션·탐지 엔진 레코드 변환은 tests/test_ingest.py.
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from collector.collector import Collector, run
-from collector.influx_writer import WriteError, to_point
+from collector.influx_writer import WriteError, overhead_link_points, to_point
 from common.transport import FileTailSource, encode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,21 +27,54 @@ def example(msg_type, **changes):
     return msg
 
 
-def overhead(i=0, **changes):
-    return example("overhead", ts=example("overhead")["ts"] + i, **changes)
+def overhead(i=0, busy=0.03, link=False, **changes):
+    """i번째 3초 구간의 overhead(SCHEMA.md 6절 예시 기준). 공통 동작 시험에는 link 없이 = 줄 하나에 점 하나."""
+    msg = example("overhead", **changes)
+    msg["seq"] += i
+    msg["t_start_ms"] += 3000 * i
+    msg["t_end_ms"] += 3000 * i
+    msg["cpu"]["node_busy_cores"] = busy
+    if not link:
+        msg.pop("link", None)
+    return msg
 
 
 # --------------------------------------------------------------------------- InfluxDB 변환 (overhead)
 
 def test_overhead_point():
-    assert to_point(example("overhead")).to_line_protocol() == (
-        "overhead,ebpf_on=true,node=cu cpu_pct=23.4,mem_mb=512 1763280000000000000"
+    assert to_point(example("overhead"), env="p4").to_line_protocol() == (
+        "overhead,env=p4,node=cu,session=20261113T043024Z "
+        "cpu_count=4i,mem_total_bytes=8153268224i,mem_used_bytes=4623908864i,node_busy_cores=0.03,"
+        'process_cores=0,process_rss_bytes=323219456i,process_scope="self",seq=37i,t_end_ms=1794544264000i '
+        "1794544261000000000"
     )
 
 
-def test_overhead_integer_values_are_float():
-    line = to_point(overhead(cpu_pct=3, mem_mb=100)).to_line_protocol()
-    assert "cpu_pct=3," in line and "mem_mb=100 " in line and "i" not in line.split(" ")[1]
+def test_overhead_cores_are_always_float_and_nulls_are_dropped():
+    msg = overhead(busy=2)  # 정수 2로 와도 실수로(0.03과 같은 필드라 타입이 섞이면 InfluxDB가 거부)
+    msg["cpu"]["process_cores"] = None
+    msg["memory"]["process_rss_bytes"] = None
+    msg.pop("node_id")
+    series, fields = to_point(msg, env="p4").to_line_protocol().split(" ")[:2]
+    assert series == "overhead,env=p4,session=20261113T043024Z"  # node_id가 없으면 node tag도 없음
+    assert "node_busy_cores=2," in fields and "node_busy_cores=2i" not in fields
+    assert "process_cores" not in fields and "process_rss_bytes" not in fields
+
+
+def test_overhead_link_points():
+    msg = example("overhead")
+    msg["link"].append({"interface_name": "br-6afe1528cfa6", "role": "n2", "ingress": {}, "egress": {
+        "sctp_packet_count": 12, "wire_byte_count": None}})
+    msg["link"].append({"role": "f1"})  # interface_name 없는 칸은 건너뜀(스키마가 이미 거부)
+    lines = [p.to_line_protocol() for p in overhead_link_points(msg, "p4")]
+    assert lines == [
+        "overhead_link,env=p4,iface=ens5,node=cu,role=f1,session=20261113T043024Z egress_sctp_packets=0i,"
+        "egress_wire_bytes=0i,ingress_sctp_packets=0i,ingress_wire_bytes=0i,seq=37i,t_end_ms=1794544264000i "
+        "1794544261000000000",
+        "overhead_link,env=p4,iface=br-6afe1528cfa6,node=cu,role=n2,session=20261113T043024Z "
+        "egress_sctp_packets=12i,seq=37i,t_end_ms=1794544264000i 1794544261000000000",
+    ]
+    assert overhead_link_points(example("alert"), "p4") == []
 
 
 # --------------------------------------------------------------------------- Collector
@@ -50,13 +83,13 @@ class FakeWriter:
     def __init__(self):
         self.batches = []
         self.fail_with = None      # 다음 write에서 던질 WriteError
-        self.bad_values = set()    # 이 cpu_pct를 가진 overhead는 한 건씩 쓸 때도 거부
+        self.bad_values = set()    # 이 node_busy_cores를 가진 overhead는 한 건씩 쓸 때도 거부
 
     def write(self, points):
         if self.fail_with:
             raise self.fail_with
         lines = [p.to_line_protocol() for p in points]
-        if any(f"cpu_pct={v}," in l for v in self.bad_values for l in lines):
+        if any(f"node_busy_cores={v}," in l for v in self.bad_values for l in lines):
             raise WriteError("HTTP 422: field type conflict", retryable=False)
         self.batches.append(lines)
 
@@ -82,22 +115,21 @@ def test_valid_messages_are_recorded_verbatim_and_written(tmp_path):
     w = FakeWriter()
     c = make_collector(tmp_path, w, default_env="lab")
     # 공백·키 순서가 다른 원본도 "받은 그대로" 녹화돼야 한다
-    lines = [encode(overhead()).replace(",", ", "), encode(example("alert")), encode(example("kpm2"))]
+    lines = [encode(overhead(link=True)).replace(",", ", "), encode(example("alert")), encode(example("kpm2"))]
     feed(c, *lines)
     assert w.points == []  # flush 전에는 쓰지 않음
     c.flush()
     c.close()
-    assert len(w.points) == 3 and len(w.batches) == 1
-    assert c.raw_path.read_text(encoding="utf-8").splitlines() == lines[:1]          # overhead
-    assert c.env_raw_path("lab").read_text(encoding="utf-8").splitlines() == lines[1:]  # 탐지 엔진 레코드는 환경별
+    assert len(w.points) == 4 and len(w.batches) == 1  # overhead는 링크 한 칸 = 점 하나 더
+    assert c.env_raw_path("lab").read_text(encoding="utf-8").splitlines() == lines  # overhead도 환경별 녹화
     assert not c.rejected_path.exists()
     assert (c.stats.received, c.stats.stored, c.stats.rejected) == (3, 3, 0)
 
 
 @pytest.mark.parametrize("raw, reason", [
     (b'{"type":"alert", broken', "JSON 파싱 실패"),
-    (encode(overhead(cpu_pct=1)).replace('"cpu_pct":1', '"cpu_pct":NaN').encode(), "표준이 아닌 값 NaN"),
-    (encode(overhead(node="ru")).encode(), "'ru' is not one of"),
+    (encode(overhead(busy=1)).replace('"node_busy_cores":1', '"node_busy_cores":NaN').encode(), "표준이 아닌 값 NaN"),
+    (encode(overhead(ver=2)).encode(), "1 was expected"),
     (encode(example("alert", fmt=2)).encode(), "fmt"),
     (b'{"type":"alert","t":"\xff\xfe"}', "UTF-8"),
     (b"[1, 2, 3]", "is not of type 'object'"),
@@ -108,7 +140,7 @@ def test_invalid_messages_go_to_rejected_log_with_reason(tmp_path, raw, reason):
     feed(c, raw)
     c.flush()
     c.close()
-    assert w.points == [] and not c.raw_path.exists()
+    assert w.points == [] and not c.env_raw_path("unknown").exists()
     [record] = read_jsonl(c.rejected_path)
     assert record["source"] == "test"
     assert any(reason in r for r in record["reasons"]), record["reasons"]
@@ -148,12 +180,12 @@ def test_data_error_isolates_bad_message(tmp_path):
     w = FakeWriter()
     w.bad_values = {"666"}
     c = make_collector(tmp_path, w)
-    feed(c, encode(overhead(0, cpu_pct=1.0)), encode(overhead(1, cpu_pct=666.0)), encode(example("alert")))
+    feed(c, encode(overhead(0, busy=1.0)), encode(overhead(1, busy=666.0)), encode(example("alert")))
     c.flush()
     c.close()
     assert c.stats.stored == 2 and c.stats.rejected == 1
     [record] = read_jsonl(c.rejected_path)
-    assert "InfluxDB 거부" in record["reasons"][0] and '"cpu_pct":666.0' in record["raw"]
+    assert "InfluxDB 거부" in record["reasons"][0] and '"node_busy_cores":666.0' in record["raw"]
 
 
 def test_pending_is_capped_while_influx_is_down(tmp_path):
@@ -163,7 +195,7 @@ def test_pending_is_capped_while_influx_is_down(tmp_path):
     feed(c, *[encode(overhead(i)) for i in range(8)])
     assert len(c.pending) == 5 and c.stats.dropped == 3
     c.close()
-    assert len(c.raw_path.read_text(encoding="utf-8").splitlines()) == 8  # 버린 것도 녹화에는 있다
+    assert len(c.env_raw_path("unknown").read_text(encoding="utf-8").splitlines()) == 8  # 버린 것도 녹화에는 있다
 
 
 def test_dry_run_records_without_writer(tmp_path):
@@ -172,7 +204,7 @@ def test_dry_run_records_without_writer(tmp_path):
     c.flush()
     c.close()
     assert (c.stats.stored, c.stats.rejected) == (1, 1)
-    assert c.raw_path.exists() and c.rejected_path.exists()
+    assert c.env_raw_path("unknown").exists() and c.rejected_path.exists()
 
 
 def test_run_reads_sample_file_to_end_and_flushes(tmp_path):

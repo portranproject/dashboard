@@ -20,6 +20,9 @@ KPM2 = {"type": "kpm2", "ver": 1, "agg_ms": 3000, "session": "S9", "cell_id": 1,
         "t_end_ms": 1792209006000, "n": 30, "cc": {"RRC.ConnEstabAtt": {"total": 1}}, "partial": []}
 HELLO = {"type": "hello", "ver": 1, "session": "S9", "seq": 1}
 F1 = {"type": "f1_evt", "ver": 1, "session": "S9", "seq": 5, "t_ms": 1792209004000, "msg": "F1SetupRequest", "cells": [1]}
+OVERHEAD = {"type": "overhead", "ver": 1, "session": "S9", "seq": 6, "node_id": "cu", "t_start_ms": 1792209003000,
+            "t_end_ms": 1792209006000, "cpu": {"count": 4, "node_busy_cores": 0.5, "process_cores": 0.1},
+            "memory": {"total_bytes": 8, "used_bytes": 4, "process_rss_bytes": 1}, "link": []}
 
 
 def records(path):
@@ -34,7 +37,7 @@ def write(path, lines):
 # --------------------------------------------------------------------------- 읽기·시각 옮기기
 
 def test_load_keeps_file_order_and_skips_bad_and_old_messages(tmp_path):
-    good = T10.read_text(encoding="utf-8").splitlines()[:5]
+    good = [*T10.read_text(encoding="utf-8").splitlines()[:4], encode(OVERHEAD)]  # overhead(v0.5)도 재생한다
     old = encode({"type": "overhead", "ts": 1763280000000000000, "node": "cu", "ebpf_on": True, "cpu_pct": 1, "mem_mb": 1})
     path = write(tmp_path / "x.jsonl", [good[0], "not json", old, *good[1:], '{"type":"alert"}', ""])
     loaded, skipped = load(path)
@@ -49,6 +52,7 @@ def test_record_time():
     assert record_time(records(S24)[1]) == records(S24)[1]["raw"]["t_ms"]
     assert record_time(KPM2) == KPM2["t_end_ms"]  # 묶은 칸은 칸이 닫힌 뒤에 나간다
     assert record_time(F1) == F1["t_ms"]
+    assert record_time(OVERHEAD) == OVERHEAD["t_end_ms"]  # 구간이 닫힌 뒤에 나간다
     assert record_time(HELLO) is None
 
 
@@ -64,6 +68,9 @@ def test_shift_record_moves_every_time_and_tags_ids():
     assert (k["t_start_ms"], k["t_end_ms"], k["session"]) == (1792209006000, 1792209009000, "S9~rX")
     assert shift_record(HELLO, 3000, "~rX")["session"] == "S9~rX"
     assert shift_record(F1, 3000, "")["t_ms"] == F1["t_ms"] + 3000
+    o = shift_record(OVERHEAD, 3000, "~rX")
+    assert (o["t_start_ms"], o["t_end_ms"], o["session"]) == (1792209006000, 1792209009000, "S9~rX")
+    assert validation_errors(o) == []
     assert raise_["t"] == records(S24)[0]["t"]  # 원본은 그대로
     for m in (moved, moved_pre, k):
         assert validation_errors(m) == []

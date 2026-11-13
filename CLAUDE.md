@@ -57,7 +57,7 @@
 
 ## 2. 이 저장소의 범위 (내 담당)
 
-처음에는 다른 팀원 담당(공격 도구, eBPF 에이전트, 탐지 엔진)이 없어서 mock 생성기로 먼저 개발했다(M1~M7). 탐지 엔진 출력 형식이 확정되어(2026-11-05, 5절) 실제 경로로 바꿨고(M8~M10), mock 생성기·evaluator와 처음 메시지 형식은 M10에서 지웠다.
+처음에는 다른 팀원 담당(공격 도구, eBPF 에이전트, 탐지 엔진)이 없어서 mock 생성기로 먼저 개발했다(M1~M7). 탐지 엔진 출력 형식이 확정되어(2026-11-05, 5절) 실제 경로로 바꿨고(M8~M10), mock 생성기·evaluator와 처음 메시지 형식은 M10에서 지웠다. 수집 오버헤드는 탐지 쪽 형식(11/13)으로 M11에서 바꿨다.
 
 ```
 분석 엔진(eBPF) ─> 탐지 엔진 ─> 전송기 ─HTTPS POST /ingest─> nginx(TLS) ─> collector ─> InfluxDB ─> Grafana (관제·성능)
@@ -65,7 +65,7 @@
                                                        raw 녹화(.jsonl) <─────────┘──> replay ─> /ingest (시연·백업)
 ```
 
-eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 탐지 엔진이 받은 줄 가운데 상시 KPM2(`kpm2` 3초 묶음)·`hello`·`f1_evt`를 경보(`alert`·`evidence`·`gap`)와 같은 전송기로 보낸다. 공격 정답 기록은 받지 않는다(5.1절).
+eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 탐지 엔진이 받은 줄 가운데 상시 KPM2(`kpm2` 3초 묶음)·`hello`·`f1_evt`·수집 오버헤드(`overhead`, 3초)를 경보(`alert`·`evidence`·`gap`)와 같은 전송기로 보낸다. 공격 정답 기록은 받지 않는다(5.1절).
 
 포함하는 것:
 1. 메시지 스키마 정의 (팀 공용 기준 문서)
@@ -138,21 +138,22 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 ├── recordings/                   # raw 녹화 (.gitignore)
 └── tests/
     └── data/detection/           # 탐지 쪽 경보 경로 샘플 32개 (11/05, 지금 탐지 엔진 코드 출력)
+        data/overhead/            # 탐지 쪽 overhead 실제 출력 30줄 (11/13, M11)
 ```
 
 ## 5. 메시지 스키마
 
-스키마의 단일 기준은 `schema/messages.schema.json`이다. collector, replay, 테스트 모두 이 파일로 검증한다. 사람이 읽는 설명은 `schema/SCHEMA.md`(v0.4).
+스키마의 단일 기준은 `schema/messages.schema.json`이다. collector, replay, 테스트 모두 이 파일로 검증한다. 사람이 읽는 설명은 `schema/SCHEMA.md`(v0.5).
 
 | 갈래 | `type` | 보내는 곳 | 기준 |
 |---|---|---|---|
 | **탐지 엔진 레코드** | `alert` · `evidence` · `gap` · `kpm2` · `hello` · `f1_evt` | 탐지 엔진 전송기 → HTTPS `POST /ingest` | 탐지 엔진 담당 명세 `reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`(2026-11-05 확정, 이하 27_). **형식은 27_ 그대로 받는다** |
-| **수집 오버헤드** | `overhead` | 미정 | 측정 주체·형식을 탐지 쪽과 협의 중(R5). 그때까지 처음 형식(UDP·파일) |
+| **수집 오버헤드** | `overhead` | 분석 엔진(계측기)이 3초마다 → 전송기 → HTTPS `POST /ingest` | 탐지 쪽이 11/13에 보낸 형식(27_ 밖, R5). `schema/SCHEMA.md` 6절(M11) |
 
 공통 규칙:
 - 전송 단위: **JSON 한 줄 = 메시지 하나** (JSON Lines, UTF-8)
-- 탐지 엔진 레코드: 시각은 **Unix epoch 밀리초 정수**(분석 엔진이 붙인 데이터 시각). 모르는 필드는 받고(녹화에 남기고 화면에서 무시), `alert.fmt`·`kpm2`·`hello`·`f1_evt`의 `ver`가 1이 아니면 거부한다. `null`은 "모름"이다.
-- `overhead`: 시각은 **Unix epoch 나노초 정수**, 모르는 필드는 거부. UDP(기본 `127.0.0.1:9999`) 또는 파일로 받는다.
+- 모든 레코드(`overhead` 포함): 시각은 **Unix epoch 밀리초 정수**(분석 엔진이 붙인 데이터 시각). 모르는 필드는 받고(녹화에 남기고 화면에서 무시), `alert.fmt`·`kpm2`·`hello`·`f1_evt`·`overhead`의 `ver`가 1이 아니면 거부한다. `null`은 "모름"이다.
+- v0.4까지 `overhead`만 쓰던 규칙(ns 시각, 모르는 필드 거부, UDP)은 v0.5(M11)에서 없앴다. UDP·파일 입력은 시험용으로 남아 있다.
 
 ### 5.1 탐지 엔진 레코드 (27_)
 
@@ -172,11 +173,11 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 - **KPM2 = TeleRAN Table II**(셀 카운터): `kpm2`의 `cc`·`si` 키가 Table II 14개 이름 그대로다(+ 탐지 쪽 확장 `ext` 3개). **KPM1 = Table I**(UE별, 팀 용어 eKPM): `ue_evt` 한 줄 = UE 메시지 하나. **상시로는 오지 않고** 경보 근거(`evidence.raw`)로만 온다. 탐지 엔진이 이것으로 2~4단계를 판정하고, 대시보드는 판정 결과(`alert`)와 근거(`evidence`)를 보여 준다. `ue_evt` 형식은 `schema/SCHEMA.md` 3.7절(타임라인 필드 7개만 검사), Table I·II 대응표는 4절.
 - 받는 방법(`/ingest`·`X-Env`·응답 코드·중복 키)은 8절과 `schema/SCHEMA.md` 2절.
 - `alert`에는 `session`이 없다. 같은 `alert_id`의 첫 `evidence`의 `raw.session`이 그 경보의 세션이다(27_ §7).
-- 평가 결과(R1 `eval`·R2 `eval_run`)·경보별 지연(R3)·오버헤드(R5)는 전체 파이프라인(분석 엔진 → 탐지 엔진 → 대시보드, 실제 공격)이 완성된 뒤 탐지 쪽과 함께 정한다(27_ §9).
+- 평가 결과(R1 `eval`·R2 `eval_run`)·경보별 지연(R3)은 전체 파이프라인(분석 엔진 → 탐지 엔진 → 대시보드, 실제 공격)이 완성된 뒤 탐지 쪽과 함께 정한다(27_ §9).
 
-### 5.2 overhead (R5 협의 전까지)
+### 5.2 overhead — 수집 오버헤드 (M11)
 
-수집 오버헤드(노드, eBPF 켜짐 여부, CPU·메모리). 필드·예시는 `schema/SCHEMA.md` 6절. 처음 스키마의 `metric`·`detection`·`attack_run`(mock 전용)은 M10에서 지웠다.
+분석 엔진(계측기)이 `kpm2`·`ue_evt`·`f1_evt`와 같은 소켓·번호열(`session`·`seq`)로 3초 구간(`t_start_ms`~`t_end_ms`)마다 한 줄 낸다. 노드 CPU(`count`·`node_busy_cores` — 바쁜 코어 수 평균)·메모리(바이트), 계측기 프로세스 몫(`process_cores`·`process_rss_bytes`, `process_scope: self`), 선언한 NIC별 F1·N2 패킷·바이트 증가분(`link[]`). `node_id`는 `cu`로 통일(11/13). 점유율(%)은 보내는 쪽이 나누지 않고 화면이 계산한다. 필드·예시는 `schema/SCHEMA.md` 6절. 처음 스키마의 `metric`·`detection`·`attack_run`(mock 전용)은 M10에서, 옛 `overhead` 형식(ns `ts`·`ebpf_on`·`cpu_pct`·`mem_mb`)은 M11에서 지웠다.
 
 ## 6. InfluxDB 매핑
 
@@ -191,7 +192,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 
-- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`)·On-Premise(`lab`)·재생(`replay`)·샘플(`sample`)이다. On-Premise는 선택지만 있고 **지금은 AWS만 받는다**. 단계 비교는 `p4` vs `replay-kpm-only`(27_ §7, `docs/dashboard-design.md`).
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`)·On-Premise(`lab`)·재생(`replay`)·샘플(`sample`)이다. On-Premise는 선택지만 있고 **지금은 AWS만 받는다**. 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
 - **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
 - `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
 - `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
@@ -201,7 +202,10 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 
 | measurement | time | tags | fields |
 |---|---|---|---|
-| `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
+| `overhead` | `t_start_ms` | env, session, node(`node_id`) | t_end_ms, seq, process_scope, cpu_count, node_busy_cores·process_cores(늘 실수), mem_total_bytes·mem_used_bytes·process_rss_bytes |
+| `overhead_link` | `t_start_ms` | env, session, node, iface, role | t_end_ms, seq, ingress_sctp_packets, ingress_wire_bytes, egress_sctp_packets, egress_wire_bytes |
+
+- `overhead_link`: `link[]` 한 칸(NIC 하나) = 점 하나(`alert_ue`와 같은 이유). 값은 구간 증가분 그대로, 초당 값은 화면에서 구간 길이로 나눈다. `null`·빈 객체·키 없음은 필드를 뺀다.
 
 - 값마다 고유한 것은 원칙적으로 tag로 두지 않는다(cardinality 폭증 방지). `alert_id`·`alert_ue.ue`는 위의 이유로 예외다.
 
@@ -222,7 +226,7 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 
 - UDP, 파일(tail -f 방식), HTTP `POST /ingest` 입력을 지원한다. HTTP는 탐지 엔진 전송기용이고 TLS는 앞단이 맡는다(collector는 서버 안에서 평문으로 받음).
 - 메시지마다 JSON Schema로 검증하고, 실패한 메시지는 버리지 말고 `recordings/rejected.jsonl`에 사유와 함께 남긴다.
-- 정상 메시지는 원본 그대로 녹화한다(replay용). 탐지 엔진 레코드는 환경별로 `recordings/raw-<날짜시각>-<환경>.jsonl`, `overhead`는 `recordings/raw-<날짜시각>.jsonl`.
+- 정상 메시지는 원본 그대로 녹화한다(replay용). 모든 레코드를 환경별로 `recordings/raw-<날짜시각>-<환경>.jsonl`에.
 - `/ingest` 약속(27_ §3, 대시보드 2차 답변서 D1~D3, `schema/SCHEMA.md` 2절):
   - 헤더 `X-Env`를 환경으로 저장한다(없으면 `unknown`). 토큰은 쓰지 않는다(HTTPS + 보안 그룹 IP 제한).
   - **원본 녹화와 InfluxDB 저장이 끝난 뒤에** 답한다. `200 {"accepted","rejected","duplicates"}`(틀린 줄은 거부 로그로 보내고 나머지는 저장), 본문을 못 읽으면 `400`, 상한(1 MiB)을 넘으면 `413`, InfluxDB 일시 장애면 `503`(그 요청은 아무것도 반영하지 않음 — 전송기가 다시 보냄).
@@ -244,15 +248,15 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 |---|---|
 | 요약 — 지금 | 열린 경보(공격·이상 유형·판정 보류·상태 불명), 최고 심각도, 수집 상태(마지막 수신 뒤), 분석 엔진 세션·재시작 |
 | 상시 KPM2 | 셀별 3초 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 경보 구간·gap·칸 일부 없음·세션 시작 주석 |
-| 경보 목록 | 경보 하나 = 한 행(시작·셀·단계·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 행을 누르면 경보 상세로. 룰별 경보 수 |
-| 경보 상세 | 변수 `alert_id`. 판정 요약, 판정 근거 값(cond·candidates·conditions·values·params·refs), 후보 공격, 걸린 UE(`alert_ue`), 근거 KPM2 100 ms(1단계), 근거 KPM1 UE별 흐름·메시지(2~4단계) |
+| 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 행을 누르면 경보 상세로. 룰별 경보 수 |
+| 경보 상세 | 변수 `alert_id`. 판정 요약, 판정 근거 값(cond·candidates·conditions·values·params·refs), 후보 공격, 걸린 UE(`alert_ue`), 근거 KPM2 100 ms(셀 지표 경보), 근거 KPM1 UE별 흐름·메시지(UE 메시지 경보) |
 
-변수: `source`, `cell`, `alert_id`. 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(27_ §7).
+변수: `source`, `cell`, `alert_id`. 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(27_ §7). 화면에는 단계(1~4)를 표시하지 않는다(11/13 — 열·제목에서 뺌, 판정 기준에만 씀). 공격 이름은 두 대시보드 모두 짧은 이름(`grafana/build.py` `short_rule_name` — '#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)' → 'UE 컨텍스트 고갈').
 
-Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석). `range`의 start와 stop은 같은 기준으로 준다 — 화면 시간 범위(`v.timeRangeStart`~`v.timeRangeStop`)끼리, 또는 지금 기준(`-5m`~`now()`)끼리. 섞으면 지난 범위를 골랐을 때 start > stop이 되어 `cannot query an empty range`로 패널이 깨진다(`tests/test_dashboards.py`가 검사).
+Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석). **정렬은 `map` 앞에서, 원래 열로 한다** — `map`으로 만든 열로 `sort`하면 줄이 빠진다(관제 경보 목록에서 해제된 경보가 빠졌음, M11). `range`의 start와 stop은 같은 기준으로 준다 — 화면 시간 범위(`v.timeRangeStart`~`v.timeRangeStop`)끼리, 또는 지금 기준(`-5m`~`now()`)끼리. 섞으면 지난 범위를 골랐을 때 start > stop이 되어 `cannot query an empty range`로 패널이 깨진다(`tests/test_dashboards.py`가 검사).
 
 ### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
-`docs/dashboard-design.md` 3절. 고른 시간 범위(실험 구간)에 시작한 경보로: 종류별 경보 수, 단계 비교(1~4단계 = `${source}` 대 1단계만 = 변수 `kpm_only`, 기본 `replay-kpm-only` — 룰별 막대와 '1단계만으로는 못 잡은 경보' 수, 재생 결과가 없으면 '재생 없음'), 경보 길이 분포, 룰 × 단계 × 종류 표, 경보가 어떻게 끝났나(해제·강제 종료 사유·끝이 안 옴), 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움·일부만 측정된 지표. 탐지율·오탐·탐지 지연·수집 오버헤드는 파이프라인 완성 뒤(27_ §9) — 자리만 둔다.
+`docs/dashboard-design.md` 3절. 고른 시간 범위(실험 구간)에 시작한 경보로: 종류별 경보 수, 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표, 경보가 어떻게 끝났나(해제·강제 종료 사유·끝이 안 옴), 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움·일부만 측정된 지표. **CU 자원**(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), 부하와 함께(CPU % + RRC 연결 시도, 오른쪽 범례 표에 평균·최대). 변수: `source`, `cell`. 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴다(11/13). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
 
 ## 10. 평가 (보류)
 
@@ -311,4 +315,5 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
 | M7 | AWS 배포 · CI/CD. AWS에는 대시보드 스택(InfluxDB + Grafana + collector)만 올리고, 테스트베드 실시간 경로(eBPF → 탐지 엔진)는 로컬에 둔다 | CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과. AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시. CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 |
 | M8 | 탐지 엔진 연동 1 — 스키마 v0.3(27_ 레코드 6종), collector `POST /ingest`·`X-Env`·중복 제거·InfluxDB 저장 | 탐지 쪽 샘플 32개 전 줄 스키마 통과, `/ingest`로 넣어 InfluxDB 저장(타입 충돌·덮어쓰기 없음), 재전송 중복 제거·503 재시도 테스트 통과 |
 | M9 | 탐지 엔진 연동 2 — AWS 앞단 TLS(자체 서명 인증서, IP SAN), 443·보안 그룹, 탐지 쪽 전송기와 연동 시험 | 탐지 쪽 전송기가 EC2 `https://<IP>/ingest`로 보낸 레코드가 InfluxDB에 저장됨 |
+| M11 | 수집 오버헤드 — 탐지 쪽 `overhead` 형식(11/13)으로 스키마 v0.5, collector 저장(`overhead`·`overhead_link`), replay, 성능 대시보드 CU 자원 줄 | 새 형식이 스키마·`/ingest`·InfluxDB(실제 InfluxDB 통합 테스트)를 통과하고, CU 자원 줄이 실제 Grafana에서 표시됨 |
 | M10 | 대시보드 재구성 — 관제(상시 KPM2·경보 목록·경보 상세: 근거 KPM2 그래프·KPM1 타임라인)·성능 대시보드를 탐지 엔진 레코드로. replay를 새 형식으로 바꾸고 mock·evaluator·처음 메시지(`metric`·`detection`·`attack_run`)·옛 대시보드를 지운다. 평가는 27_ §9에 따라 탐지 쪽과 정한 뒤 | 27_ §7 '화면과 레코드'의 화면이 샘플·replay 데이터로 표시됨 |

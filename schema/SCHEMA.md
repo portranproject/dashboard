@@ -86,7 +86,7 @@ curl -s -X POST http://127.0.0.1:8088/ingest -H 'Content-Type: application/x-ndj
 경보 하나 = (룰, 셀) 하나. 생애는 `raise` → (`update`) → `clear`/`end`. 1단계 `raise` 예:
 
 ```json
-{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0},"params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
+{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0,"sigma":0.0},"params":{"z":3.0,"theta":0.5,"f_abs_frac":0.1,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
 ```
 
 | 검사 | 내용 |

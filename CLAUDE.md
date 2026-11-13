@@ -166,7 +166,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `f1_evt` | DU·CU 재시작 | 위와 같음 | §4.3 |
 
 ```json
-{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0},"params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
+{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0,"sigma":0.0},"params":{"z":3.0,"theta":0.5,"f_abs_frac":0.1,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
 ```
 
 - **KPM2 = TeleRAN Table II**(셀 카운터): `kpm2`의 `cc`·`si` 키가 Table II 14개 이름 그대로다(+ 탐지 쪽 확장 `ext` 3개). **KPM1 = Table I**(UE별, 팀 용어 eKPM): `ue_evt` 한 줄 = UE 메시지 하나. **상시로는 오지 않고** 경보 근거(`evidence.raw`)로만 온다. 탐지 엔진이 이것으로 2~4단계를 판정하고, 대시보드는 판정 결과(`alert`)와 근거(`evidence`)를 보여 준다. `ue_evt` 형식은 `schema/SCHEMA.md` 3.7절(타임라인 필드 7개만 검사), Table I·II 대응표는 4절.

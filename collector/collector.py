@@ -8,9 +8,8 @@
 
 검증에 실패한 메시지는 버리지 않고 recordings/rejected.jsonl에 사유와 함께 남긴다.
 검증을 통과한 메시지는 받은 그대로 녹화한다(replay용).
-  - 탐지 엔진 레코드(alert·evidence·gap·kpm2·hello·f1_evt): recordings/raw-<날짜시각>-<환경>.jsonl
+  - 모든 레코드(alert·evidence·gap·kpm2·hello·f1_evt·overhead): recordings/raw-<날짜시각>-<환경>.jsonl
     환경은 /ingest의 X-Env 헤더, UDP·파일 입력은 --env. 다시 보낸 줄(같은 중복 키)은 한 번만 저장한다.
-  - overhead(형식 미정, R5): recordings/raw-<날짜시각>.jsonl
 """
 from __future__ import annotations
 
@@ -32,7 +31,7 @@ from common.config import env_int, influx_settings, load_env
 from common.schema import validation_errors
 from common.transport import UdpSource, open_source, parse_address
 
-from .influx_writer import NEW_RECORD_TYPES, InfluxWriter, WriteError, alert_ue_points, session_point, to_point
+from .influx_writer import InfluxWriter, WriteError, alert_ue_points, overhead_link_points, session_point, to_point
 from .ingest import DEFAULT_ENV, BoundedDict, IngestRequest, IngestSource, dedup_key, parse_env
 
 log = logging.getLogger("collector")
@@ -99,13 +98,11 @@ class Collector:
 
     def __post_init__(self):
         self.recordings_dir = Path(self.recordings_dir)
-        self.raw_path = self.recordings_dir / f"raw-{self.started_at:%Y%m%d-%H%M%S}.jsonl"
         self.rejected_path = self.recordings_dir / "rejected.jsonl"
         self.stats = Stats()
         self._last_logged = Stats()
         self.pending: list[_Pending] = []
         self.in_outage = False
-        self._raw_fp = None
         self._rejected_fp = None
         self._env_fps: dict[str, object] = {}
         # 다시 보낸 줄을 거르는 키 (27_ §3). 메모리에만 있어 재시작하면 비지만,
@@ -279,6 +276,8 @@ class Collector:
             if session is None:
                 staged.awaiting.append((key, msg))
             return [to_point(msg, env, session=session), *alert_ue_points(msg, env)]
+        if t == "overhead":
+            return [to_point(msg, env), *overhead_link_points(msg, env)]
         return [to_point(msg, env, received_ns=received_ns)]
 
     def _apply(self, staged: _Staged) -> None:
@@ -297,7 +296,7 @@ class Collector:
         t = msg["type"]
         if t == "gap" and msg["t_from"] > msg["t_to"]:
             problem = "t_from이 t_to보다 늦음"
-        elif t == "kpm2" and msg["t_start_ms"] >= msg["t_end_ms"]:
+        elif t in ("kpm2", "overhead") and msg["t_start_ms"] >= msg["t_end_ms"]:
             problem = "t_start_ms가 t_end_ms보다 늦거나 같음"
         else:
             return
@@ -307,16 +306,10 @@ class Collector:
             log.warning("시각 순서 경고 (%s, %s): %s — 저장은 함", origin, ident, problem)
 
     def _write_raw(self, line: str, msg: dict, env: str) -> None:
-        if msg["type"] in NEW_RECORD_TYPES:
-            fp = self._env_fps.get(env)
-            if fp is None:
-                self.recordings_dir.mkdir(parents=True, exist_ok=True)
-                fp = self._env_fps[env] = self.env_raw_path(env).open("a", encoding="utf-8", newline="\n")
-        else:
-            if self._raw_fp is None:
-                self.recordings_dir.mkdir(parents=True, exist_ok=True)
-                self._raw_fp = self.raw_path.open("a", encoding="utf-8", newline="\n")
-            fp = self._raw_fp
+        fp = self._env_fps.get(env)
+        if fp is None:
+            self.recordings_dir.mkdir(parents=True, exist_ok=True)
+            fp = self._env_fps[env] = self.env_raw_path(env).open("a", encoding="utf-8", newline="\n")
         fp.write(line + "\n")
 
     def _reject(self, line: str, origin: str, reasons: list[str]) -> None:
@@ -330,7 +323,7 @@ class Collector:
         self._rejected_fp.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _files(self) -> list:
-        return [fp for fp in (self._raw_fp, self._rejected_fp, *self._env_fps.values()) if fp is not None]
+        return [fp for fp in (self._rejected_fp, *self._env_fps.values()) if fp is not None]
 
     def _flush_files(self) -> None:
         for fp in self._files():
@@ -549,8 +542,7 @@ def main(argv: list[str] | None = None) -> int:
     collector = Collector(writer, Path(args.recordings), batch_size=env_int("COLLECTOR_BATCH_SIZE"),
                           max_pending=env_int("COLLECTOR_MAX_PENDING"), default_env=env,
                           dedup_max_keys=env_int("COLLECTOR_DEDUP_MAX_KEYS"))
-    log.info("녹화 %s (탐지 엔진 레코드는 %s), 거부 로그 %s",
-             collector.raw_path, collector.env_raw_path("<환경>").name, collector.rejected_path)
+    log.info("녹화 %s, 거부 로그 %s", collector.env_raw_path("<환경>"), collector.rejected_path)
 
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -565,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
             writer.close()
     if collector.pending:
         log.warning("InfluxDB에 못 쓴 %d건은 raw 녹화(%s)에 있습니다. 복구 후 replay로 다시 넣으세요.",
-                    len(collector.pending), collector.raw_path)
+                    len(collector.pending), collector.env_raw_path("<환경>"))
     return 0
 
 

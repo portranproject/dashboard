@@ -240,7 +240,10 @@ def test_dedup_key():
     assert dedup_key(e, "p4") != dedup_key(example("evidence", ue=[1, 3, 2]), "p4")
     k = example("kpm2")
     assert dedup_key(k, "p4") != dedup_key(example("kpm2", agg_ms=5000), "p4")  # 주기를 바꾼 칸은 따로 저장
-    assert dedup_key(example("overhead"), "p4") is None  # overhead는 거르지 않음
+    o = example("overhead")
+    assert dedup_key(o, "p4") == dedup_key(example("overhead", cpu={}), "p4")    # (session, seq)만 본다
+    assert dedup_key(o, "p4") != dedup_key(example("overhead", seq=38), "p4")
+    assert dedup_key(o, "p4") != dedup_key(example("hello", session=o["session"], seq=o["seq"]), "p4")  # 종류가 다르면 다른 줄
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -261,7 +264,7 @@ def test_request_stores_sample_and_resend_is_all_duplicates(tmp_path):
     assert c.handle_request(body_of(*lines), "lab", "test") == (200, {"accepted": 667, "rejected": 0, "duplicates": 0})
     assert len(w.points) == 667
     assert c.env_raw_path("lab").read_text(encoding="utf-8").splitlines() == lines  # 받은 그대로 녹화
-    assert not c.raw_path.exists() and not c.rejected_path.exists()
+    assert [f.name for f in c.recordings_dir.iterdir()] == [c.env_raw_path("lab").name]  # 거부 로그 없음
 
     assert c.handle_request(body_of(*lines), "lab", "test") == (200, {"accepted": 0, "rejected": 0, "duplicates": 667})
     assert len(w.points) == 667
@@ -406,13 +409,36 @@ def test_udp_or_file_input_uses_default_env_and_dedups(tmp_path):
     lines = sample_lines("S20_L3-20_CONNECTED_high_evidence.jsonl")
     for line in lines + lines[:2]:
         c.handle(line.encode("utf-8"), "file")
-    c.handle(json.dumps(example("overhead")).encode("utf-8"), "udp")
+    overhead = json.dumps(example("overhead"))
+    c.handle(overhead.encode("utf-8"), "udp")
+    c.handle(overhead.encode("utf-8"), "udp")  # overhead도 (session, seq)로 거른다
     c.flush()
     c.close()
-    assert (c.stats.received, c.stats.stored, c.stats.duplicates) == (8, 6, 2)
-    assert c.env_raw_path("sample").read_text(encoding="utf-8").splitlines() == lines
-    assert len(c.raw_path.read_text(encoding="utf-8").splitlines()) == 1  # overhead는 원래 녹화 파일
+    assert (c.stats.received, c.stats.stored, c.stats.duplicates) == (9, 6, 3)
+    assert c.env_raw_path("sample").read_text(encoding="utf-8").splitlines() == lines + [overhead]
+    assert sum(1 for l in w.points if l.startswith("overhead_link,")) == 1
     assert sum(1 for l in w.points if l.startswith("alert,") and 'session="' in l) == 1
+
+
+def test_overhead_sample_from_detection_side(tmp_path):
+    """탐지 쪽 실제 overhead 출력 30줄(11/13, tests/data/overhead/): 3초 구간이 3초 경계에 맞아 이어지고, 링크 2칸(f1·n2).
+    계측기 코어 수가 0(정수)과 0.011(실수)로 섞여 와도 InfluxDB에는 늘 실수로 쓴다(D165)."""
+    path = Path(__file__).resolve().parent / "data" / "overhead" / "overhead-sample-3s-30.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    msgs = [json.loads(l) for l in lines]
+    assert all(m["t_end_ms"] - m["t_start_ms"] == 3000 and m["t_start_ms"] % 3000 == 0 for m in msgs)
+    assert all(a["t_end_ms"] == b["t_start_ms"] for a, b in zip(msgs, msgs[1:]))
+    assert {type(m["cpu"]["process_cores"]) for m in msgs} == {int, float}
+
+    w = FakeWriter()
+    c = make_collector(tmp_path, w)
+    assert c.handle_request(body_of(*lines), "p4", "test") == (200, {"accepted": 30, "rejected": 0, "duplicates": 0})
+    assert c.handle_request(body_of(*lines), "p4", "test") == (200, {"accepted": 0, "rejected": 0, "duplicates": 30})
+    overhead = [l for l in w.points if l.startswith("overhead,")]
+    links = [l for l in w.points if l.startswith("overhead_link,")]
+    assert (len(overhead), len(links)) == (30, 60)
+    assert all("process_cores=" in l and "process_cores=0i" not in l for l in overhead)
+    assert sum("role=f1" in l for l in links) == 30 and sum("role=n2" in l for l in links) == 30
 
 
 def test_time_order_warnings_for_new_records(tmp_path, caplog):

@@ -43,7 +43,7 @@ def parse_env(value: str | None) -> str | None:
 
 
 def dedup_key(msg: dict, env: str) -> bytes | None:
-    """다시 보낸 줄을 거르는 키 (27_ §3 '중복 제거 키', 모두 앞에 환경). 옛 메시지는 None(거르지 않음).
+    """다시 보낸 줄을 거르는 키 (27_ §3 '중복 제거 키', 모두 앞에 환경). 키가 없는 종류는 None(거르지 않음).
     메모리를 아끼려고 16바이트 해시로 줄인다."""
     t = msg["type"]
     if t == "alert":
@@ -54,7 +54,7 @@ def dedup_key(msg: dict, env: str) -> bytes | None:
         parts = [msg["alert_id"], msg["t_from"]]
     elif t == "kpm2":
         parts = [msg["session"], msg["cell_id"], msg["agg_ms"], msg["t_start_ms"]]
-    elif t in ("hello", "f1_evt"):
+    elif t in ("hello", "f1_evt", "overhead"):  # 같은 번호열(session·seq)을 쓴다
         parts = [msg["session"], msg["seq"]]
     else:
         return None

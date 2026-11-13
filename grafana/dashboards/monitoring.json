@@ -54,7 +54,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "Anno",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => contains(value: r.cell, set: ${cell:json}))\n  |> map(fn: (r) => ({_time: r.start,\n      timeEnd: if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last,\n      text: \"경보 \" + r.rule + \" — \" + r.status + \" (단계 \" + r.stage + \", \" + r.class + \", 셀 \" + r.cell + \")\", tags: r.rule}))"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => contains(value: r.cell, set: ${cell:json}))\n  |> map(fn: (r) => ({_time: r.start,\n      timeEnd: if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last,\n      text: \"경보 \" + r.rule + \" — \" + r.status + \" (\" + r.class + \", 셀 \" + r.cell + \")\", tags: r.rule}))"
         },
         "mappings": {
           "time": {
@@ -841,7 +841,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      단계: r.stage,\n      룰: r.rule,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\" else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))\n  |> sort(columns: [\"시작\"], desc: true)\n  |> limit(n: 300)"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// 정렬은 map 앞에서 한다 — map으로 만든 열(\"시작\")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> sort(columns: [\"start\"], desc: true)\n  |> limit(n: 300)\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      룰: r.rule,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\" else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))"
         }
       ],
       "fieldConfig": {
@@ -892,18 +892,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "단계"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 50
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "룰"
             },
             "properties": [
@@ -926,115 +914,115 @@
                     "type": "value",
                     "options": {
                       "L3-01-V": {
-                        "text": "#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)",
+                        "text": "UE 컨텍스트 고갈",
                         "index": 0
                       },
                       "L3-01-O": {
-                        "text": "#1 인증 단계 고착 (Kim'19, 원형)",
+                        "text": "인증 단계 고착",
                         "index": 1
                       },
                       "L3-20": {
-                        "text": "#20 Blind DoS (S-TMSI 재사용, CONNECTED형)",
+                        "text": "Blind DoS",
                         "index": 2
                       },
                       "L3-21": {
-                        "text": "#21 상향 DoS — 위조 자격증명 (Uplink DoS)",
+                        "text": "상향 DoS",
                         "index": 3
                       },
                       "L3-24": {
-                        "text": "#24 하향 IMSI 추출 (Downlink IMSI Extractor)",
+                        "text": "하향 IMSI 추출",
                         "index": 4
                       },
                       "L3-14": {
-                        "text": "#14 UE 능력 탈취 (Capability Hijacking)",
+                        "text": "UE 능력 탈취",
                         "index": 5
                       },
                       "L3-06": {
-                        "text": "#6 NAS 카운터 비동기화 (desync 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 6
                       },
                       "AN-01": {
-                        "text": "이상 유형 — 인증 동기 실패 재인증",
+                        "text": "인증 동기 실패 재인증",
                         "index": 7
                       },
                       "AN-02": {
-                        "text": "이상 유형 — 식별 요청 증가",
+                        "text": "식별 요청 증가",
                         "index": 8
                       },
                       "AN-04": {
-                        "text": "이상 유형 — 같은 UE의 짧은 연결 반복",
+                        "text": "같은 UE의 짧은 연결 반복",
                         "index": 9
                       },
                       "AN-06a": {
-                        "text": "이상 유형 — 보안 수립 뒤 재인증·SMC 재등장",
+                        "text": "보안 수립 뒤 재인증·SMC 재등장",
                         "index": 10
                       },
                       "AN-07": {
-                        "text": "이상 유형 — 같은 S-TMSI의 Setup 반복·Complete 없음",
+                        "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
                         "index": 11
                       },
                       "AN-08": {
-                        "text": "이상 유형 — 기존 UE들의 재등록 급증",
+                        "text": "기존 UE들의 재등록 급증",
                         "index": 12
                       },
                       "L3-11": {
-                        "text": "#11 RRC 거절·해제 투옥 (중간자 변형)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 13
                       },
                       "L3-11-V1": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 1)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 14
                       },
                       "L3-11-V2": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 2)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 15
                       },
                       "L3-19-Va": {
-                        "text": "#19 디바이스 강제 차단 (새 연결형)",
+                        "text": "디바이스 강제 차단",
                         "index": 16
                       },
                       "L3-23-O": {
-                        "text": "#23 원격 등록 해제 (원형)",
+                        "text": "원격 등록 해제",
                         "index": 17
                       },
                       "L3-28-V": {
-                        "text": "#28 모바일 망 매핑 MNmap (중간자 변형)",
+                        "text": "모바일 망 매핑 MNmap",
                         "index": 18
                       },
                       "L3-07-OV": {
-                        "text": "#7 인증 동기 실패 공격 (원형·변형)",
+                        "text": "인증 동기 실패 공격",
                         "index": 19
                       },
                       "L3-25-OV": {
-                        "text": "#25 상향 IMSI 추출 (원형·변형)",
+                        "text": "상향 IMSI 추출",
                         "index": 20
                       },
                       "L3-02-Oa": {
-                        "text": "#2 배터리 소진·룰라비 (페이징형)",
+                        "text": "배터리 소진·룰라비",
                         "index": 21
                       },
                       "L3-34-OV": {
-                        "text": "#34 TORPEDO (페이징 시점 탐침)",
+                        "text": "TORPEDO",
                         "index": 22
                       },
                       "L3-12-V": {
-                        "text": "#12 은밀 강제분리 (5G 변형)",
+                        "text": "은밀 강제분리",
                         "index": 23
                       },
                       "L3-33-V": {
-                        "text": "#33 TMSI·페이징·RNTI 노출 (주입 변형)",
+                        "text": "TMSI·페이징·RNTI 노출",
                         "index": 24
                       },
                       "L3-06-O1": {
-                        "text": "#6 NAS 카운터 비동기화 (reset 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 25
                       },
                       "L3-17-OV": {
-                        "text": "#17 SIB TAC 조작 (원형·변형)",
+                        "text": "SIB TAC 조작",
                         "index": 26
                       },
                       "L3-26-O": {
-                        "text": "#26 IMSI 캐처·가짜 기지국 (원형)",
+                        "text": "IMSI 캐처·가짜 기지국",
                         "index": 27
                       }
                     }
@@ -1246,7 +1234,29 @@
             "desc": true
           }
         ]
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "시작": 0,
+              "셀": 1,
+              "룰": 2,
+              "공격": 3,
+              "종류": 4,
+              "심각도": 5,
+              "UE 수": 6,
+              "대표 값": 7,
+              "상태": 8,
+              "길이(초)": 9,
+              "alert_id": 10
+            }
+          }
+        }
+      ]
     },
     {
       "id": 11,
@@ -1286,115 +1296,115 @@
               "type": "value",
               "options": {
                 "L3-01-V": {
-                  "text": "#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)",
+                  "text": "UE 컨텍스트 고갈",
                   "index": 0
                 },
                 "L3-01-O": {
-                  "text": "#1 인증 단계 고착 (Kim'19, 원형)",
+                  "text": "인증 단계 고착",
                   "index": 1
                 },
                 "L3-20": {
-                  "text": "#20 Blind DoS (S-TMSI 재사용, CONNECTED형)",
+                  "text": "Blind DoS",
                   "index": 2
                 },
                 "L3-21": {
-                  "text": "#21 상향 DoS — 위조 자격증명 (Uplink DoS)",
+                  "text": "상향 DoS",
                   "index": 3
                 },
                 "L3-24": {
-                  "text": "#24 하향 IMSI 추출 (Downlink IMSI Extractor)",
+                  "text": "하향 IMSI 추출",
                   "index": 4
                 },
                 "L3-14": {
-                  "text": "#14 UE 능력 탈취 (Capability Hijacking)",
+                  "text": "UE 능력 탈취",
                   "index": 5
                 },
                 "L3-06": {
-                  "text": "#6 NAS 카운터 비동기화 (desync 원형)",
+                  "text": "NAS 카운터 비동기화",
                   "index": 6
                 },
                 "AN-01": {
-                  "text": "이상 유형 — 인증 동기 실패 재인증",
+                  "text": "인증 동기 실패 재인증",
                   "index": 7
                 },
                 "AN-02": {
-                  "text": "이상 유형 — 식별 요청 증가",
+                  "text": "식별 요청 증가",
                   "index": 8
                 },
                 "AN-04": {
-                  "text": "이상 유형 — 같은 UE의 짧은 연결 반복",
+                  "text": "같은 UE의 짧은 연결 반복",
                   "index": 9
                 },
                 "AN-06a": {
-                  "text": "이상 유형 — 보안 수립 뒤 재인증·SMC 재등장",
+                  "text": "보안 수립 뒤 재인증·SMC 재등장",
                   "index": 10
                 },
                 "AN-07": {
-                  "text": "이상 유형 — 같은 S-TMSI의 Setup 반복·Complete 없음",
+                  "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
                   "index": 11
                 },
                 "AN-08": {
-                  "text": "이상 유형 — 기존 UE들의 재등록 급증",
+                  "text": "기존 UE들의 재등록 급증",
                   "index": 12
                 },
                 "L3-11": {
-                  "text": "#11 RRC 거절·해제 투옥 (중간자 변형)",
+                  "text": "RRC 거절·해제 투옥",
                   "index": 13
                 },
                 "L3-11-V1": {
-                  "text": "#11 RRC 거절·해제 투옥 (변형 경로 1)",
+                  "text": "RRC 거절·해제 투옥",
                   "index": 14
                 },
                 "L3-11-V2": {
-                  "text": "#11 RRC 거절·해제 투옥 (변형 경로 2)",
+                  "text": "RRC 거절·해제 투옥",
                   "index": 15
                 },
                 "L3-19-Va": {
-                  "text": "#19 디바이스 강제 차단 (새 연결형)",
+                  "text": "디바이스 강제 차단",
                   "index": 16
                 },
                 "L3-23-O": {
-                  "text": "#23 원격 등록 해제 (원형)",
+                  "text": "원격 등록 해제",
                   "index": 17
                 },
                 "L3-28-V": {
-                  "text": "#28 모바일 망 매핑 MNmap (중간자 변형)",
+                  "text": "모바일 망 매핑 MNmap",
                   "index": 18
                 },
                 "L3-07-OV": {
-                  "text": "#7 인증 동기 실패 공격 (원형·변형)",
+                  "text": "인증 동기 실패 공격",
                   "index": 19
                 },
                 "L3-25-OV": {
-                  "text": "#25 상향 IMSI 추출 (원형·변형)",
+                  "text": "상향 IMSI 추출",
                   "index": 20
                 },
                 "L3-02-Oa": {
-                  "text": "#2 배터리 소진·룰라비 (페이징형)",
+                  "text": "배터리 소진·룰라비",
                   "index": 21
                 },
                 "L3-34-OV": {
-                  "text": "#34 TORPEDO (페이징 시점 탐침)",
+                  "text": "TORPEDO",
                   "index": 22
                 },
                 "L3-12-V": {
-                  "text": "#12 은밀 강제분리 (5G 변형)",
+                  "text": "은밀 강제분리",
                   "index": 23
                 },
                 "L3-33-V": {
-                  "text": "#33 TMSI·페이징·RNTI 노출 (주입 변형)",
+                  "text": "TMSI·페이징·RNTI 노출",
                   "index": 24
                 },
                 "L3-06-O1": {
-                  "text": "#6 NAS 카운터 비동기화 (reset 원형)",
+                  "text": "NAS 카운터 비동기화",
                   "index": 25
                 },
                 "L3-17-OV": {
-                  "text": "#17 SIB TAC 조작 (원형·변형)",
+                  "text": "SIB TAC 조작",
                   "index": 26
                 },
                 "L3-26-O": {
-                  "text": "#26 IMSI 캐처·가짜 기지국 (원형)",
+                  "text": "IMSI 캐처·가짜 기지국",
                   "index": 27
                 }
               }
@@ -1434,7 +1444,7 @@
       "id": 13,
       "type": "table",
       "title": "판정 요약",
-      "description": "이 경보의 룰·공격·단계·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
+      "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -1452,7 +1462,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"mode\" or r._field == \"branch\" or r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 단계: r.stage, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity, 모드: r.mode,\n      갈래: if exists r.branch then r.branch else \"\",\n      세션: if exists r.session then r.session else \"\"}))"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"mode\" or r._field == \"branch\" or r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity, 모드: r.mode,\n      갈래: if exists r.branch then r.branch else \"\",\n      세션: if exists r.session then r.session else \"\"}))"
         }
       ],
       "fieldConfig": {
@@ -1478,115 +1488,115 @@
                     "type": "value",
                     "options": {
                       "L3-01-V": {
-                        "text": "#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)",
+                        "text": "UE 컨텍스트 고갈",
                         "index": 0
                       },
                       "L3-01-O": {
-                        "text": "#1 인증 단계 고착 (Kim'19, 원형)",
+                        "text": "인증 단계 고착",
                         "index": 1
                       },
                       "L3-20": {
-                        "text": "#20 Blind DoS (S-TMSI 재사용, CONNECTED형)",
+                        "text": "Blind DoS",
                         "index": 2
                       },
                       "L3-21": {
-                        "text": "#21 상향 DoS — 위조 자격증명 (Uplink DoS)",
+                        "text": "상향 DoS",
                         "index": 3
                       },
                       "L3-24": {
-                        "text": "#24 하향 IMSI 추출 (Downlink IMSI Extractor)",
+                        "text": "하향 IMSI 추출",
                         "index": 4
                       },
                       "L3-14": {
-                        "text": "#14 UE 능력 탈취 (Capability Hijacking)",
+                        "text": "UE 능력 탈취",
                         "index": 5
                       },
                       "L3-06": {
-                        "text": "#6 NAS 카운터 비동기화 (desync 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 6
                       },
                       "AN-01": {
-                        "text": "이상 유형 — 인증 동기 실패 재인증",
+                        "text": "인증 동기 실패 재인증",
                         "index": 7
                       },
                       "AN-02": {
-                        "text": "이상 유형 — 식별 요청 증가",
+                        "text": "식별 요청 증가",
                         "index": 8
                       },
                       "AN-04": {
-                        "text": "이상 유형 — 같은 UE의 짧은 연결 반복",
+                        "text": "같은 UE의 짧은 연결 반복",
                         "index": 9
                       },
                       "AN-06a": {
-                        "text": "이상 유형 — 보안 수립 뒤 재인증·SMC 재등장",
+                        "text": "보안 수립 뒤 재인증·SMC 재등장",
                         "index": 10
                       },
                       "AN-07": {
-                        "text": "이상 유형 — 같은 S-TMSI의 Setup 반복·Complete 없음",
+                        "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
                         "index": 11
                       },
                       "AN-08": {
-                        "text": "이상 유형 — 기존 UE들의 재등록 급증",
+                        "text": "기존 UE들의 재등록 급증",
                         "index": 12
                       },
                       "L3-11": {
-                        "text": "#11 RRC 거절·해제 투옥 (중간자 변형)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 13
                       },
                       "L3-11-V1": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 1)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 14
                       },
                       "L3-11-V2": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 2)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 15
                       },
                       "L3-19-Va": {
-                        "text": "#19 디바이스 강제 차단 (새 연결형)",
+                        "text": "디바이스 강제 차단",
                         "index": 16
                       },
                       "L3-23-O": {
-                        "text": "#23 원격 등록 해제 (원형)",
+                        "text": "원격 등록 해제",
                         "index": 17
                       },
                       "L3-28-V": {
-                        "text": "#28 모바일 망 매핑 MNmap (중간자 변형)",
+                        "text": "모바일 망 매핑 MNmap",
                         "index": 18
                       },
                       "L3-07-OV": {
-                        "text": "#7 인증 동기 실패 공격 (원형·변형)",
+                        "text": "인증 동기 실패 공격",
                         "index": 19
                       },
                       "L3-25-OV": {
-                        "text": "#25 상향 IMSI 추출 (원형·변형)",
+                        "text": "상향 IMSI 추출",
                         "index": 20
                       },
                       "L3-02-Oa": {
-                        "text": "#2 배터리 소진·룰라비 (페이징형)",
+                        "text": "배터리 소진·룰라비",
                         "index": 21
                       },
                       "L3-34-OV": {
-                        "text": "#34 TORPEDO (페이징 시점 탐침)",
+                        "text": "TORPEDO",
                         "index": 22
                       },
                       "L3-12-V": {
-                        "text": "#12 은밀 강제분리 (5G 변형)",
+                        "text": "은밀 강제분리",
                         "index": 23
                       },
                       "L3-33-V": {
-                        "text": "#33 TMSI·페이징·RNTI 노출 (주입 변형)",
+                        "text": "TMSI·페이징·RNTI 노출",
                         "index": 24
                       },
                       "L3-06-O1": {
-                        "text": "#6 NAS 카운터 비동기화 (reset 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 25
                       },
                       "L3-17-OV": {
-                        "text": "#17 SIB TAC 조작 (원형·변형)",
+                        "text": "SIB TAC 조작",
                         "index": 26
                       },
                       "L3-26-O": {
-                        "text": "#26 IMSI 캐처·가짜 기지국 (원형)",
+                        "text": "IMSI 캐처·가짜 기지국",
                         "index": 27
                       }
                     }
@@ -1772,115 +1782,115 @@
                     "type": "value",
                     "options": {
                       "L3-01-V": {
-                        "text": "#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)",
+                        "text": "UE 컨텍스트 고갈",
                         "index": 0
                       },
                       "L3-01-O": {
-                        "text": "#1 인증 단계 고착 (Kim'19, 원형)",
+                        "text": "인증 단계 고착",
                         "index": 1
                       },
                       "L3-20": {
-                        "text": "#20 Blind DoS (S-TMSI 재사용, CONNECTED형)",
+                        "text": "Blind DoS",
                         "index": 2
                       },
                       "L3-21": {
-                        "text": "#21 상향 DoS — 위조 자격증명 (Uplink DoS)",
+                        "text": "상향 DoS",
                         "index": 3
                       },
                       "L3-24": {
-                        "text": "#24 하향 IMSI 추출 (Downlink IMSI Extractor)",
+                        "text": "하향 IMSI 추출",
                         "index": 4
                       },
                       "L3-14": {
-                        "text": "#14 UE 능력 탈취 (Capability Hijacking)",
+                        "text": "UE 능력 탈취",
                         "index": 5
                       },
                       "L3-06": {
-                        "text": "#6 NAS 카운터 비동기화 (desync 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 6
                       },
                       "AN-01": {
-                        "text": "이상 유형 — 인증 동기 실패 재인증",
+                        "text": "인증 동기 실패 재인증",
                         "index": 7
                       },
                       "AN-02": {
-                        "text": "이상 유형 — 식별 요청 증가",
+                        "text": "식별 요청 증가",
                         "index": 8
                       },
                       "AN-04": {
-                        "text": "이상 유형 — 같은 UE의 짧은 연결 반복",
+                        "text": "같은 UE의 짧은 연결 반복",
                         "index": 9
                       },
                       "AN-06a": {
-                        "text": "이상 유형 — 보안 수립 뒤 재인증·SMC 재등장",
+                        "text": "보안 수립 뒤 재인증·SMC 재등장",
                         "index": 10
                       },
                       "AN-07": {
-                        "text": "이상 유형 — 같은 S-TMSI의 Setup 반복·Complete 없음",
+                        "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
                         "index": 11
                       },
                       "AN-08": {
-                        "text": "이상 유형 — 기존 UE들의 재등록 급증",
+                        "text": "기존 UE들의 재등록 급증",
                         "index": 12
                       },
                       "L3-11": {
-                        "text": "#11 RRC 거절·해제 투옥 (중간자 변형)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 13
                       },
                       "L3-11-V1": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 1)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 14
                       },
                       "L3-11-V2": {
-                        "text": "#11 RRC 거절·해제 투옥 (변형 경로 2)",
+                        "text": "RRC 거절·해제 투옥",
                         "index": 15
                       },
                       "L3-19-Va": {
-                        "text": "#19 디바이스 강제 차단 (새 연결형)",
+                        "text": "디바이스 강제 차단",
                         "index": 16
                       },
                       "L3-23-O": {
-                        "text": "#23 원격 등록 해제 (원형)",
+                        "text": "원격 등록 해제",
                         "index": 17
                       },
                       "L3-28-V": {
-                        "text": "#28 모바일 망 매핑 MNmap (중간자 변형)",
+                        "text": "모바일 망 매핑 MNmap",
                         "index": 18
                       },
                       "L3-07-OV": {
-                        "text": "#7 인증 동기 실패 공격 (원형·변형)",
+                        "text": "인증 동기 실패 공격",
                         "index": 19
                       },
                       "L3-25-OV": {
-                        "text": "#25 상향 IMSI 추출 (원형·변형)",
+                        "text": "상향 IMSI 추출",
                         "index": 20
                       },
                       "L3-02-Oa": {
-                        "text": "#2 배터리 소진·룰라비 (페이징형)",
+                        "text": "배터리 소진·룰라비",
                         "index": 21
                       },
                       "L3-34-OV": {
-                        "text": "#34 TORPEDO (페이징 시점 탐침)",
+                        "text": "TORPEDO",
                         "index": 22
                       },
                       "L3-12-V": {
-                        "text": "#12 은밀 강제분리 (5G 변형)",
+                        "text": "은밀 강제분리",
                         "index": 23
                       },
                       "L3-33-V": {
-                        "text": "#33 TMSI·페이징·RNTI 노출 (주입 변형)",
+                        "text": "TMSI·페이징·RNTI 노출",
                         "index": 24
                       },
                       "L3-06-O1": {
-                        "text": "#6 NAS 카운터 비동기화 (reset 원형)",
+                        "text": "NAS 카운터 비동기화",
                         "index": 25
                       },
                       "L3-17-OV": {
-                        "text": "#17 SIB TAC 조작 (원형·변형)",
+                        "text": "SIB TAC 조작",
                         "index": 26
                       },
                       "L3-26-O": {
-                        "text": "#26 IMSI 캐처·가짜 기지국 (원형)",
+                        "text": "IMSI 캐처·가짜 기지국",
                         "index": 27
                       }
                     }
@@ -1914,7 +1924,7 @@
     {
       "id": 16,
       "type": "table",
-      "title": "걸린 UE (2~4단계)",
+      "title": "걸린 UE",
       "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 불확실: mid_join(연결 중간부터 봄)·loss(유실)·late. Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
       "datasource": {
         "type": "influxdb",
@@ -1989,7 +1999,7 @@
     {
       "id": 17,
       "type": "timeseries",
-      "title": "근거 KPM2 — 100 ms 칸 (1단계 경보)",
+      "title": "근거 KPM2 — 100 ms 칸",
       "description": "1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
       "datasource": {
         "type": "influxdb",
@@ -2087,7 +2097,7 @@
     {
       "id": 18,
       "type": "state-timeline",
-      "title": "근거 KPM1 — UE별 메시지 흐름 (2~4단계 경보)",
+      "title": "근거 KPM1 — UE별 메시지 흐름",
       "description": "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). 자세한 값은 아래 표",
       "datasource": {
         "type": "influxdb",
@@ -2138,7 +2148,7 @@
     {
       "id": 19,
       "type": "table",
-      "title": "근거 KPM1 — 메시지 (2~4단계 경보)",
+      "title": "근거 KPM1 — 메시지",
       "description": "근거 메시지 하나 = 한 행. pre = 그 UE가 경보에 처음 실릴 때의 최근 메시지(최대 16줄), active = 경보 중 새 메시지. 원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값, 27_ §4.2)",
       "datasource": {
         "type": "influxdb",
@@ -2157,7 +2167,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({시각: r._time, UE: \"UE \" + string(v: r.uid) + \" (du_ue_id \" + string(v: r.du_ue_id) + \")\",\n      방향: if r.dir == \"UL\" then \"↑ UL\" else \"↓ DL\", 프로토콜: r.proto, 메시지: r.msg, 단계: r.phase, 원본: r.raw_json}))\n  |> limit(n: 1000)"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({시각: r._time, UE: \"UE \" + string(v: r.uid) + \" (du_ue_id \" + string(v: r.du_ue_id) + \")\",\n      방향: if r.dir == \"UL\" then \"↑ UL\" else \"↓ DL\", 프로토콜: r.proto, 메시지: r.msg, 구간: r.phase, 원본: r.raw_json}))\n  |> limit(n: 1000)"
         }
       ],
       "fieldConfig": {
@@ -2214,7 +2224,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "단계"
+              "options": "구간"
             },
             "properties": [
               {

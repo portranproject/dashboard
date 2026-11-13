@@ -35,7 +35,7 @@ services:
       INFLUX_URL: http://influxdb:8086
       COLLECTOR_UDP_PORT: ${COLLECTOR_UDP_PORT:-9999}
       COLLECTOR_HTTP_PORT: ${COLLECTOR_HTTP_PORT:-8088}
-    # 탐지 엔진 전송기는 ingest(nginx)를 거쳐 HTTP(POST /ingest), replay(tools)는 HTTP로 바로. UDP는 overhead(R5)용
+    # 탐지 엔진 전송기는 ingest(nginx)를 거쳐 HTTP(POST /ingest), replay(tools)는 HTTP로 바로. UDP는 시험용(CI)
     command: ["python", "-m", "collector.collector",
               "--in", "udp://0.0.0.0:${COLLECTOR_UDP_PORT:-9999}",
               "--in", "http://0.0.0.0:${COLLECTOR_HTTP_PORT:-8088}"]

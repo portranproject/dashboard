@@ -2116,7 +2116,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> filter(fn: (r) => r._field == \"msg\" or r._field == \"dir\" or r._field == \"uid\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, _value: (if r.dir == \"UL\" then \"↑ \" else \"↓ \") + r.msg, ue: \"UE \" + string(v: r.uid)}))\n  |> group(columns: [\"ue\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"date\"\nmsgs = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> filter(fn: (r) => r._field == \"msg\" or r._field == \"dir\" or r._field == \"uid\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, _value: (if r.dir == \"UL\" then \"↑ \" else \"↓ \") + r.msg, ue: \"UE \" + string(v: r.uid)}))\n  |> group(columns: [\"ue\"])\n  |> sort(columns: [\"_time\"])\nends = msgs\n  |> last()\n  |> map(fn: (r) => ({_time: date.add(d: 1s, to: r._time), _value: \"\", ue: r.ue}))\nunion(tables: [msgs, ends])\n  |> group(columns: [\"ue\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -2128,7 +2128,20 @@
           "custom": {
             "fillOpacity": 80,
             "lineWidth": 1
-          }
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "empty",
+                "result": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 0
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },

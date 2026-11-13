@@ -30,6 +30,8 @@ CELL_LIMIT = 96  # 셀 UE 컨텍스트 한도 (27_ §5.3, ext.UeCtxMax ≥ 90%�
 # 상시 KPM2 선은 점 사이가 이보다 길게 비면 끊는다(3초 묶음 2칸). 이으면 받지 않은 구간에
 # 값이 서서히 변한 것처럼 보인다.
 KPM2_LINE_BREAK_MS = 2 * 3000
+# 근거 KPM1 타임라인에서 UE의 마지막 메시지를 이만큼만 그린다(그 뒤는 빈칸)
+TIMELINE_END_S = 1
 
 
 # --------------------------------------------------------------------------- 공통 조각
@@ -578,9 +580,11 @@ from(bucket: v.defaultBucket)
                     options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
                              "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
 
+    # 상태 타임라인은 값을 다음 값이 올 때까지 늘여 그린다 — UE의 마지막 메시지는 화면 끝(지금)까지 이어져
+    # 24분짜리 상태처럼 보였다(11/13). 마지막 메시지 1초 뒤에 빈 값을 끼워 거기서 끝낸다(빈 값은 투명)
     timeline = f'''
 import "date"
-from(bucket: v.defaultBucket)
+msgs = from(bucket: v.defaultBucket)
   |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => r._measurement == "evidence" and {ENV} and r.alert_id == "${{alert_id}}" and r.raw_type == "ue_evt")
   |> filter(fn: (r) => r._field == "msg" or r._field == "dir" or r._field == "uid")
@@ -588,12 +592,21 @@ from(bucket: v.defaultBucket)
   |> map(fn: (r) => ({{_time: r._time, _value: (if r.dir == "UL" then "↑ " else "↓ ") + r.msg, ue: "UE " + string(v: r.uid)}}))
   |> group(columns: ["ue"])
   |> sort(columns: ["_time"])
+ends = msgs
+  |> last()
+  |> map(fn: (r) => ({{_time: date.add(d: {TIMELINE_END_S}s, to: r._time), _value: "", ue: r.ue}}))
+union(tables: [msgs, ends])
+  |> group(columns: ["ue"])
+  |> sort(columns: ["_time"])
 '''
     tl = b.add("state-timeline", "근거 KPM1 — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
                "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
                "자세한 값은 아래 표",
                field_config={"defaults": {"displayName": "${__field.labels.ue}", "color": {"mode": "palette-classic"},
-                                          "custom": {"fillOpacity": 80, "lineWidth": 1}}, "overrides": []},
+                                          "custom": {"fillOpacity": 80, "lineWidth": 1},
+                                          "mappings": [{"type": "special", "options": {
+                                              "match": "empty", "result": {"color": "transparent", "text": " ", "index": 0}}}]},
+                               "overrides": []},
                options={"showValue": "always", "rowHeight": 0.8, "mergeValues": False, "alignValue": "left",
                         "legend": {"showLegend": False}, "tooltip": {"mode": "single"}}, new_line=True)
 

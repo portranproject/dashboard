@@ -13,9 +13,18 @@
 | M7 AWS 배포 · CI/CD | 완료 (PR #11~#17, 첫 자동 배포 성공) | 2026-10-28 |
 | M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
 | M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 완료 (PR #22·#24, 배포 #23·#25, 탐지 쪽 전송기 연동 시험 통과) | 2026-11-09 |
-| M10 대시보드 재구성 · 옛 메시지 삭제 | 진행 중 (PR #27~#38, 배포 #28·#30·#32·#34·#36·#38 — replay·관제·성능(탐지 성과) 대시보드·정리 배포 완료. 남은 것: 수집 오버헤드(R5)·단계 비교 데이터, 탐지 쪽 대기) | |
+| M10 대시보드 재구성 · 옛 메시지 삭제 | 완료 (PR #27~#38, 배포 #28·#30·#32·#34·#36·#38 — replay·관제·성능(탐지 성과) 대시보드·정리. 남았던 수집 오버헤드는 M11로, 단계 비교는 없앰(D173)) | 2026-11-13 |
 | M11 수집 오버헤드 — 스키마 v0.5 · collector · 성능 대시보드 CU 자원 | 완료 (PR #40, 배포 #41) | 2026-11-13 |
-| M12 Slack 알림 — Grafana Alerting (공격 경보·수집 멈춤) | 진행 중 (브랜치 `feat/dashboard-M12` — 구현·확인 끝, PR 전) | |
+| M12 Slack 알림 — Grafana Alerting (공격 경보·수집 멈춤) | 완료 (PR #42, 배포 #43) | 2026-11-13 |
+
+**2026-11-13 요약** — 하루에 #39~#43을 배포했다.
+- 탐지 쪽 `L3-01-V` 필드 변경(11/12) 반영: 코드 그대로, 명세 사본·예시·테스트(#39, D162)
+- **M11 수집 오버헤드**(#40·#41): 탐지 쪽 `overhead` 형식으로 스키마 v0.5, `overhead`·`overhead_link` 저장, replay, 성능 대시보드 CU 자원 줄(Beszel식). 실제 샘플 30줄로 확인
+- 사용자 화면 확인 뒤 대시보드 정리: 단계 비교·자리 표시 삭제, 짧은 공격 이름, 단계(1~4) 표시 삭제, 링크 범례, 범례 표
+- **버그 수정**: 관제 경보 목록에서 해제된 경보가 빠지던 것(#28 이후 AWS에도 있었음, D176)
+- **M12 Slack 알림**(#42·#43): AWS 공격 경보 발생·끝, 수집 멈춤. README 맨 위 그림을 Mermaid로
+- 관제 KPM1 메시지 흐름에서 마지막 메시지가 화면 끝까지 늘어나 보이던 것을 고침(D186), Slack Webhook이 비면 Grafana가 안 뜨는 것을 막는 테스트(D187)
+- 브랜치 정리: 원격·로컬 모두 `main`·`dev`만(병합된 `docs/l3-01-v-1112`·`feat/dashboard-M11`·`feat/dashboard-M12` 삭제)
 
 ---
 
@@ -992,7 +1001,7 @@ M9 완료 조건(CLAUDE.md 13절 "탐지 쪽 전송기가 EC2 `https://<IP>/inge
 
 ---
 
-## M10 — 대시보드 재구성 · 처음 메시지·mock·evaluator 삭제 (2026-11-09~, 브랜치 `feat/dashboard-M10` 외 — 병합 뒤 삭제, 진행 중)
+## M10 — 대시보드 재구성 · 처음 메시지·mock·evaluator 삭제 (2026-11-09~11-13, 브랜치 `feat/dashboard-M10` 외 — 병합 뒤 삭제, 완료)
 
 목표(CLAUDE.md 13절): 관제·성능 대시보드를 탐지 엔진 레코드로 다시 만들고, replay를 새 형식으로 바꾸고, mock·evaluator·처음 메시지(`metric`·`detection`·`attack_run`)·옛 대시보드를 지운다. 설계는 `docs/dashboard-design.md`.
 
@@ -1196,6 +1205,8 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | D183 | 조회 실패는 마지막 상태 유지(`execErrState: KeepLast`), 결과 없음은 정상(`noDataState: OK`), 같은 알림 다시 보내기 24시간 | InfluxDB가 잠깐 죽거나 오래 열린 경보로 Slack에 오류·반복 알림이 쏟아지지 않게 | 불필요 |
 | D184 | Webhook 주소는 `.env` → Grafana 환경변수 → provisioning `${SLACK_WEBHOOK_URL}`. 비어 있으면 `http://127.0.0.1:9/…`(연결 거부)로 | 비밀 값을 저장소에 두지 않는다. 비어 있어도 Grafana가 뜨고(잘못된 연락처로 provisioning이 실패하지 않게) Slack 서버로도 나가지 않는다 | 불필요 |
 | D185 | 메시지 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.CommonAnnotations`·`.ExternalURL`), `.Values`는 `{{ with .Values }}` 안에서만 | provisioning 파일은 환경변수를 바꿔 넣는다. 조회 결과가 없을 때(NoData) `.Values.B`를 꺼내면 템플릿이 깨졌다(임시 Grafana에서 확인) | 불필요 |
+| D186 | 관제 "근거 KPM1 — UE별 메시지 흐름"은 UE마다 마지막 메시지 1초 뒤(`TIMELINE_END_S`)에 빈 값을 끼워 거기서 끝낸다(빈 값은 투명) | 상태 타임라인은 값을 다음 값이 올 때까지 늘여 그려서, 마지막 메시지(예: `UEContextReleaseComplete`)가 화면 끝(지금)까지 24분짜리 상태처럼 보였다(사용자 AWS 화면 11/13, Blind DoS 경보 해제 뒤). 임시 Grafana에서 샘플 S24로 마지막 메시지 뒤가 빈칸인 것 확인 | 불필요 |
+| D187 | Grafana에 `SLACK_WEBHOOK_URL`이 비어서 가지 않게 compose 기본값을 지키는 테스트 | 값이 비면 Slack 연락처 검사(`recipient must be specified`)에 걸려 **Grafana가 아예 뜨지 않는다**(11/13 임시 Grafana에서 확인). compose는 비어 있을 때 `http://127.0.0.1:9/…`를 넘겨 괜찮지만, 이 기본값이 빠지면 배포 헬스 체크가 실패한다 | 불필요 |
 
 ### 확인 결과
 
@@ -1205,10 +1216,19 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | 임시 스택에서 실제 알림 | 임시 InfluxDB·Grafana 12.4.13 + 가짜 Slack 수신기(같은 네트워크의 작은 HTTP 서버)로: ① AWS에 6분 전 상시 KPM2 한 줄 → "⚠️ 수집 멈춤 … 마지막 수신 370초 전" ② 샘플 T10 경보 raise → "🚨 UE 컨텍스트 고갈 · 셀 1 · medium · 시작 2026-11-13 17:23:18 + 경보 상세 링크", 수집 멈춤은 조용히 끝남 ③ T10 clear → "✅ … 해제" ④ 샘플 T07(`end` session_reset) → "✅ … 강제 종료". 환경변수 Webhook 주소가 들어가고 JSON provisioning이 읽힘 |
 | 고친 것 | 조회 결과 없을 때 템플릿 오류(→ `with`), 링크의 `//`(→ `ExternalURL`은 `/`로 끝남) |
 
-확인하지 못한 것: 실제 Slack 채널(Webhook은 사용자가 만들어 서버에 넣음), AWS 배포 뒤 실측 경보.
+확인하지 못한 것: 실제 Slack 채널로 온 메시지(Webhook은 사용자가 만들어 서버에 넣음), AWS 배포 뒤 실측 경보.
+
+### 환경 메모
+
+- **Slack 알림을 놓치지 않으려면**: Webhook 메시지는 멘션이 아니라서 Slack 기본 설정으로는 푸시가 오지 않는다. 각자 알림 채널 → 알림 설정 → **모든 새 메시지**. 이메일로는 오지 않는다(Slack 이메일 알림은 멘션·DM만). 이메일이 필요하면 ① 메시지에 `@channel` 멘션 ② Grafana 이메일 연락처(SMTP 설정 필요) 가운데 정한다.
+- **Grafana가 안 뜰 때(로그에 `failed to validate integration "PortRAN Slack" … recipient must be specified`)**: Grafana에 `SLACK_WEBHOOK_URL`이 비어서 갔다. compose로 띄우면 기본값이 들어가니, compose 밖에서 Grafana를 띄울 때는 이 값을 꼭 준다(D187).
+- **알림이 안 올 때**: ① 서버 `.env`를 고친 뒤 `docker compose up -d grafana`를 했는지(`.env`만 바꾸면 CD가 모른다) ② Contact points의 Test ③ 데이터 출처가 AWS(p4)인지(재생·샘플은 알리지 않음) ④ Grafana → Alerting → Alert rules에서 규칙 상태·오류.
 
 ### 남은 일
 
-- [ ] PR(`feat/dashboard-M12` → `dev`) → `main` 배포
-- [ ] (사용자) Slack Incoming Webhook 만들어 서버 `.env`에 `SLACK_WEBHOOK_URL`·`GRAFANA_ROOT_URL=http://3.39.170.31:3000` → `docker compose up -d grafana` → Contact points에서 Test(`docs/deploy.md` 11절)
+- [x] PR(`feat/dashboard-M12` → `dev`, #42) → `main` 배포(#43, 2026-11-13)
+- [x] (사용자) Slack 워크스페이스 `portran`, 알림 채널, Slack 앱 `PortRAN-Alarm`의 Incoming Webhook 만듦(11/13). 앱은 api.slack.com/apps → Create New App → **Pick features**(화면이 바뀌어 'From scratch'가 둘로 나뉨) → Incoming Webhooks On → Add New Webhook
+- [ ] 서버 `.env`에 `SLACK_WEBHOOK_URL`·`GRAFANA_ROOT_URL=http://3.39.170.31:3000` → `docker compose up -d grafana` → Contact points → `PortRAN Slack` → Test로 채널에 시험 메시지가 오는지(`docs/deploy.md` 11절) — 사용자 확인 전
+- [ ] 다음 AWS 공격 실험 때 실제 알림(🚨·✅·⚠️)이 오는지
+- [ ] 팀원 초대·채널 알림 설정('모든 새 메시지') — 각자
 - [ ] On-Premise를 받기 시작하면 알림 출처에 `lab` 더하기

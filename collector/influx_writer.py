@@ -1,6 +1,6 @@
 """메시지 → InfluxDB Point 변환과 쓰기. 매핑 기준은 CLAUDE.md 6절.
 
-탐지 엔진 레코드(alert·evidence·gap·kpm2·hello·f1_evt)는 시각이 ms라서 ns로 바꿔 쓴다(쓰기 precision은 ns 하나).
+레코드(alert·evidence·gap·kpm2·hello·f1_evt·overhead)는 시각이 ms라서 ns로 바꿔 쓴다(쓰기 precision은 ns 하나).
 같은 series·같은 시각의 점은 InfluxDB가 덮어쓰므로, 서로 다른 레코드가 겹치지 않도록 series 키와 시각을 정한다.
 그래서 같은 줄을 다시 써도(전송기 재전송, collector 재시작 뒤) 결과가 그대로다.
 """
@@ -201,10 +201,59 @@ def _new_record_point(msg: dict, env: str, session: str | None, received_ns: int
                 p.field(f"{key}_json", _json(msg[key]))
         return p
 
+    if t == "overhead":
+        # 노드·계측기 자원 (SCHEMA.md 6절). 코어 수는 0도 유효한 측정값이라 늘 실수로, 못 읽은 값(null)은 뺀다
+        p = _overhead_base("overhead", msg, env)
+        if isinstance(msg.get("process_scope"), str):
+            p.field("process_scope", msg["process_scope"])
+        cpu = msg["cpu"] if isinstance(msg.get("cpu"), dict) else {}
+        memory = msg["memory"] if isinstance(msg.get("memory"), dict) else {}
+        if _is_int(cpu.get("count")):
+            p.field("cpu_count", cpu["count"])
+        for key in ("node_busy_cores", "process_cores"):
+            if _is_number(cpu.get(key)):
+                p.field(key, float(cpu[key]))
+        for key, field_name in (("total_bytes", "mem_total_bytes"), ("used_bytes", "mem_used_bytes"),
+                                ("process_rss_bytes", "process_rss_bytes")):
+            if _is_int(memory.get(key)):
+                p.field(field_name, memory[key])
+        return p
+
     raise ValueError(f"알 수 없는 메시지 type: {t!r}")
 
 
-NEW_RECORD_TYPES = frozenset({"alert", "evidence", "gap", "kpm2", "hello", "f1_evt"})
+NEW_RECORD_TYPES = frozenset({"alert", "evidence", "gap", "kpm2", "hello", "f1_evt", "overhead"})
+
+
+def _overhead_base(measurement: str, msg: dict, env: str) -> Point:
+    """overhead·overhead_link 공통: 시각 = 구간 시작(kpm2와 같은 3초 칸), series = 환경·세션·노드."""
+    p = (Point(measurement).time(msg["t_start_ms"] * MS, WritePrecision.NS)
+         .tag("env", env).tag("session", msg["session"])
+         .field("t_end_ms", msg["t_end_ms"]).field("seq", msg["seq"]))
+    if isinstance(msg.get("node_id"), str) and msg["node_id"]:
+        p.tag("node", msg["node_id"])
+    return p
+
+
+def overhead_link_points(msg: dict, env: str) -> list[Point]:
+    """overhead의 link[] 한 칸(NIC 하나) = 점 하나(measurement overhead_link). 값은 구간 증가분 그대로.
+    값이 없는 방향(null·빈 객체·키 없음)은 필드를 뺀다 — 점에는 늘 t_end_ms·seq가 있다."""
+    if msg["type"] != "overhead" or not isinstance(msg.get("link"), list):
+        return []
+    points = []
+    for link in msg["link"]:
+        if not isinstance(link, dict) or not isinstance(link.get("interface_name"), str):
+            continue
+        p = _overhead_base("overhead_link", msg, env).tag("iface", link["interface_name"])
+        if isinstance(link.get("role"), str) and link["role"]:
+            p.tag("role", link["role"])
+        for direction in ("ingress", "egress"):
+            counts = link.get(direction) if isinstance(link.get(direction), dict) else {}
+            for key, name in (("sctp_packet_count", "sctp_packets"), ("wire_byte_count", "wire_bytes")):
+                if _is_int(counts.get(key)):
+                    p.field(f"{direction}_{name}", counts[key])
+        points.append(p)
+    return points
 
 
 def _joined(value: Any, sep: str = ",") -> str | None:
@@ -251,17 +300,11 @@ def to_point(msg: dict, env: str = "unknown", session: str | None = None, receiv
     """스키마 검증을 통과한 메시지를 Point로. 숫자 필드는 타입을 고정한다
     (InfluxDB는 같은 필드에 정수·실수가 섞이면 쓰기를 거부하므로).
 
-    overhead 말고는 모두 탐지 엔진 레코드다. env·session·received_ns는 탐지 엔진 레코드에만 쓴다: env = X-Env, session = 그 경보의 세션(alert·gap),
-    received_ns = 받은 시각(시각 필드가 없는 hello, 시각을 모르는 evidence)."""
+    env = X-Env, session = 그 경보의 세션(alert·gap), received_ns = 받은 시각(시각 필드가 없는 hello, 시각을 모르는 evidence).
+    overhead의 link[]는 overhead_link_points가 따로 만든다."""
     t = msg["type"]
     if t in NEW_RECORD_TYPES:
         return _new_record_point(msg, env, session, received_ns)
-
-    if t == "overhead":
-        return (Point("overhead").time(msg["ts"], WritePrecision.NS)
-                .tag("node", msg["node"]).tag("ebpf_on", "true" if msg["ebpf_on"] else "false")
-                .field("cpu_pct", float(msg["cpu_pct"])).field("mem_mb", float(msg["mem_mb"])))
-
     raise ValueError(f"알 수 없는 메시지 type: {t!r}")
 
 

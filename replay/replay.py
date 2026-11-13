@@ -15,7 +15,7 @@
 시각을 적을 때 시간대가 없으면 한국 시각(KST)이다 — Grafana 화면의 시각 그대로 쓰면 된다(서버·컨테이너 시계는 UTC).
 
 레코드는 파일 순서대로 보내되 보내는 시각이 거꾸로 가지 않게 한다(예: 경보 raise 직후에 그 경보의 pre 근거).
-여러 파일은 하나씩 이어서 재생한다(--gap-sec 간격). overhead는 재생하지 않는다.
+여러 파일은 하나씩 이어서 재생한다(--gap-sec 간격). 수집 오버헤드(overhead)도 kpm2처럼 시각을 옮겨 재생한다.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from collector.ingest import parse_env
 
 MS_PER_S = 1000
 MAX_SKIP_DETAILS = 5
-NEW_RECORD_TYPES = ("alert", "evidence", "gap", "kpm2", "hello", "f1_evt")
+NEW_RECORD_TYPES = ("alert", "evidence", "gap", "kpm2", "hello", "f1_evt", "overhead")
 DEFAULT_ALIGN_MS = 3000  # 27_ §4.1 상시 kpm2 기본 칸 길이
 KST = timezone(timedelta(hours=9), "KST")  # 시간대 없이 적은 시각의 기준(Grafana 화면 시각). 서머타임 없음
 ALERT_PATH_TYPES = ("alert", "evidence", "gap")
@@ -57,7 +57,7 @@ def _reject_constant(name: str):
 # --------------------------------------------------------------------------- 읽기·시각
 
 def load(path: Path) -> tuple[list[dict], int]:
-    """파일 순서 그대로 읽는다. 읽을 수 없거나 스키마에 맞지 않는 줄, overhead는 건너뛰고 그 수를 돌려준다."""
+    """파일 순서 그대로 읽는다. 읽을 수 없거나 스키마에 맞지 않는 줄은 건너뛰고 그 수를 돌려준다."""
     records, skipped = [], 0
     with path.open(encoding="utf-8") as fp:
         for lineno, line in enumerate(fp, 1):
@@ -84,7 +84,7 @@ def _int(value) -> int | None:
 
 
 def record_time(msg: dict) -> int | None:
-    """레코드가 나가는 시각(ms). 경보·재시작은 그 시각, 근거는 원본 줄 시각, 묶은 kpm2는 칸이 닫히는 끝, gap은 끊김이 끝난 때.
+    """레코드가 나가는 시각(ms). 경보·재시작은 그 시각, 근거는 원본 줄 시각, 묶은 kpm2·overhead는 구간이 닫히는 끝, gap은 끊김이 끝난 때.
     hello처럼 시각이 없으면 None(앞 레코드와 같이 나감)."""
     t = msg["type"]
     if t == "alert":
@@ -94,7 +94,7 @@ def record_time(msg: dict) -> int | None:
         return _int(raw.get("t_ms")) or _int(raw.get("t_start_ms"))
     if t == "gap":
         return msg["t_to"]
-    if t == "kpm2":
+    if t in ("kpm2", "overhead"):
         return msg["t_end_ms"]
     if t == "f1_evt":
         return msg["t_ms"]
@@ -176,7 +176,7 @@ def shift_record(msg: dict, delta_ms: int, tag: str) -> dict:
     elif t == "gap":
         shift(m, "t_from", "t_to")
         retag(m, "alert_id")
-    elif t == "kpm2":
+    elif t in ("kpm2", "overhead"):
         shift(m, "t_start_ms", "t_end_ms")
         retag(m, "session")
     elif t == "f1_evt":

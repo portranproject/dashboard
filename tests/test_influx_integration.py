@@ -34,7 +34,7 @@ def temp_bucket():
 
 
 def test_detection_samples_to_influx(temp_bucket, tmp_path):
-    """탐지 쪽 샘플 32개 + SCHEMA.md의 kpm2·hello·f1_evt 예시를 /ingest 요청처럼 넣는다.
+    """탐지 쪽 샘플 32개 + SCHEMA.md의 kpm2·hello·f1_evt·overhead 예시를 /ingest 요청처럼 넣는다.
     InfluxDB가 필드 타입 충돌로 거부하거나(27_ §7.1), 다른 레코드끼리 같은 점에 덮어쓰면 실패한다."""
     import json
     import re
@@ -43,7 +43,7 @@ def test_detection_samples_to_influx(temp_bucket, tmp_path):
     client, settings = temp_bucket
     repo = Path(__file__).resolve().parent.parent
     examples = [json.loads(b) for b in re.findall(r"```json\n(.*?)```", (repo / "schema" / "SCHEMA.md").read_text(encoding="utf-8"), re.S)]
-    extra = [m for m in examples if m["type"] in ("kpm2", "hello", "f1_evt")]
+    extra = [m for m in examples if m["type"] in ("kpm2", "hello", "f1_evt", "overhead")]
 
     writer = InfluxWriter(settings, timeout_ms=5000)
     collector = Collector(writer, tmp_path / "rec", batch_size=500, max_pending=100_000)
@@ -57,11 +57,19 @@ def test_detection_samples_to_influx(temp_bucket, tmp_path):
             msg = json.loads(line)
             expected[msg["type"]] += 1
     body = "".join(json.dumps(m) + "\n" for m in extra).encode("utf-8")
-    assert collector.handle_request(body, "itest", "test")[1]["accepted"] == 3
+    assert collector.handle_request(body, "itest", "test")[1]["accepted"] == 4
     expected.update(m["type"] for m in extra)
-    # overhead는 UDP·파일 입력처럼 handle → flush(배치)로 쓴다
+    expected["overhead_link"] += sum(len(m.get("link", [])) for m in extra if m["type"] == "overhead")
+    # 탐지 쪽 실제 overhead 30줄 — 계측기 코어 수가 정수 0과 실수로 섞여 와도 타입 충돌이 없어야 한다
+    sample = (repo / "tests" / "data" / "overhead" / "overhead-sample-3s-30.jsonl").read_bytes()
+    assert collector.handle_request(sample, "itest", "test")[1] == {"accepted": 30, "rejected": 0, "duplicates": 0}
+    expected["overhead"] += 30
+    expected["overhead_link"] += 60
+    # UDP·파일 입력처럼 handle → flush(배치)로도 쓴다(다음 구간의 overhead)
     overhead = next(m for m in examples if m["type"] == "overhead")
-    collector.handle(json.dumps(overhead).encode("utf-8"), "test")
+    later = {**overhead, "seq": overhead["seq"] + 1, "t_start_ms": overhead["t_end_ms"],
+             "t_end_ms": overhead["t_end_ms"] + 3000, "link": []}
+    collector.handle(json.dumps(later).encode("utf-8"), "test")
     collector.flush()
     assert collector.pending == []
     expected["overhead"] += 1
@@ -69,7 +77,7 @@ def test_detection_samples_to_influx(temp_bucket, tmp_path):
     writer.close()
 
     one_field = {"alert": "severity", "evidence": "seq", "gap": "t_to", "kpm2": "n", "hello": "seq", "f1_evt": "msg",
-                 "overhead": "cpu_pct"}
+                 "overhead": "seq", "overhead_link": "seq"}
     flux = f"""
     from(bucket: "{settings.bucket}")
       |> range(start: 2001-01-01T00:00:00Z, stop: now())

@@ -93,7 +93,12 @@ jobs:
             python -m replay.replay "tests/data/detection/S20_L3-20_반복_UPDATE_evidence.jsonl" --env ci-replay --speed 0
           docker compose run --rm -T tools python - <<'EOF'
           import json, socket, time
-          msg = {"type": "overhead", "ts": time.time_ns(), "node": "cu", "ebpf_on": True, "cpu_pct": 1.5, "mem_mb": 100}
+          now = time.time_ns() // 1_000_000
+          msg = {"type": "overhead", "ver": 1, "session": "ci", "seq": 1, "node_id": "cu", "t_start_ms": now - 3000,
+                 "t_end_ms": now, "cpu": {"count": 4, "node_busy_cores": 0.5, "process_cores": 0.1},
+                 "memory": {"total_bytes": 8 << 30, "used_bytes": 4 << 30, "process_rss_bytes": 300 << 20},
+                 "link": [{"interface_name": "ens5", "role": "f1", "ingress": {"sctp_packet_count": 3, "wire_byte_count": 900},
+                           "egress": {"sctp_packet_count": 3, "wire_byte_count": 800}}]}
           socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(json.dumps(msg).encode(), ("collector", 9999))
           EOF
           sleep 3  # collector는 UDP 입력을 1초마다 배치로 쓴다
@@ -109,9 +114,10 @@ jobs:
                   return sum(r.get_value() for t in tables for r in t.records)
               alerts = count('r._measurement == "alert" and r._field == "severity" and r.env == "ci-replay"')
               ues = count('r._measurement == "alert_ue" and r._field == "uid" and r.env == "ci-replay"')
-              overhead = count('r._measurement == "overhead" and r._field == "cpu_pct"')
-          print(f"InfluxDB: 재생 경보 {alerts}건, 걸린 UE {ues}건, overhead {overhead}건")
-          assert (alerts, ues, overhead) == (3, 3, 1)
+              overhead = count('r._measurement == "overhead" and r._field == "node_busy_cores"')
+              links = count('r._measurement == "overhead_link" and r._field == "ingress_wire_bytes"')
+          print(f"InfluxDB: 재생 경보 {alerts}건, 걸린 UE {ues}건, overhead {overhead}건, 링크 {links}건")
+          assert (alerts, ues, overhead, links) == (3, 3, 1, 1)
           EOF
           docker compose logs --no-color collector | tail -5
 

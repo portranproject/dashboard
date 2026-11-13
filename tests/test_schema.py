@@ -42,7 +42,14 @@ def test_detection_samples_exist():
     assert len(DETECTION_SAMPLES) == 32  # 탐지 쪽이 11/05에 보낸 경보 경로 샘플 (reference/detection/ 분석표)
 
 
-@pytest.mark.parametrize("path", DETECTION_SAMPLES, ids=lambda p: p.stem)
+OVERHEAD_SAMPLES = sorted((REPO_ROOT / "tests" / "data" / "overhead").glob("*.jsonl"))
+
+
+def test_overhead_samples_exist():
+    assert [p.name for p in OVERHEAD_SAMPLES] == ["overhead-sample-3s-30.jsonl"]  # 탐지 쪽 실제 출력(11/13)
+
+
+@pytest.mark.parametrize("path", DETECTION_SAMPLES + OVERHEAD_SAMPLES, ids=lambda p: p.stem)
 def test_detection_sample_lines_pass(path):
     for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         assert validation_errors(json.loads(line)) == [], f"{path.name}:{i}"
@@ -78,8 +85,24 @@ def test_new_records_accept_unknown_fields_and_nulls():
     assert is_valid(mutated("alert", lambda m: m.update(ues=[alert_ue], ues_total=1)))
 
 
-def test_overhead_allows_multicore_total():
-    assert is_valid(mutated("overhead", lambda m: m.update(cpu_pct=250.0)))  # 멀티코어 합산
+def test_overhead_accepts_nulls_empty_links_and_unknown_fields():
+    """overhead(11/13 탐지 쪽 형식, SCHEMA.md 6절): 못 읽은 값은 null, link 방향은 빈 객체일 수도, node_id는 없을 수도."""
+    assert is_valid(mutated("overhead", lambda m: m.update(new_section={"x": 1})))
+    assert is_valid(mutated("overhead", lambda m: m.pop("node_id")))
+    assert is_valid(mutated("overhead", lambda m: m["cpu"].update(process_cores=None, node_busy_cores=None)))
+    assert is_valid(mutated("overhead", lambda m: m["cpu"].update(node_busy_cores=3.9, process_cores=0)))  # 0은 측정값
+    assert is_valid(mutated("overhead", lambda m: m["memory"].update(process_rss_bytes=None)))
+    assert is_valid(mutated("overhead", lambda m: m.update(link=[{"interface_name": "br-6afe", "role": "n2",
+                                                                  "ingress": {}, "egress": {}}])))
+    assert is_valid(mutated("overhead", lambda m: m.update(link=[{"interface_name": "ens5", "role": "f1+n2", "ingress": {
+        "sctp_packet_count": None, "wire_byte_count": None}}])))  # 첫 구간
+    assert is_valid(mutated("overhead", lambda m: m.pop("link")))
+
+
+def test_old_overhead_format_is_rejected():
+    """v0.4까지의 overhead(ns ts·node·ebpf_on·cpu_pct·mem_mb)는 v0.5에서 받지 않는다."""
+    old = {"type": "overhead", "ts": 1763280000000000000, "node": "cu", "ebpf_on": True, "cpu_pct": 23.4, "mem_mb": 512}
+    assert not is_valid(old)
 
 
 INVALID = {
@@ -89,22 +112,26 @@ INVALID = {
     "removed old type metric": ("overhead", lambda m: m.update(type="metric")),  # 옛 메시지는 M10에서 지움
     "not an object": (None, None),
     # 숫자
-    "value NaN": ("overhead", lambda m: m.update(cpu_pct=float("nan"))),
-    "value Infinity": ("overhead", lambda m: m.update(cpu_pct=float("inf"))),
-    "value as bool": ("overhead", lambda m: m.update(cpu_pct=True)),
-    # overhead 시각 (ns)
-    "ts in seconds": ("overhead", lambda m: m.update(ts=1763280000)),
-    "ts in ms": ("overhead", lambda m: m.update(ts=1763280000123)),
-    "ts as float": ("overhead", lambda m: m.update(ts=1763280000123456789.0)),
-    "ts as string": ("overhead", lambda m: m.update(ts="1763280000123456789")),
-    "negative ts": ("overhead", lambda m: m.update(ts=-1)),
-    "ts as bool": ("overhead", lambda m: m.update(ts=True)),
-    # overhead
-    "overhead ebpf_on as string": ("overhead", lambda m: m.update(ebpf_on="true")),
-    "overhead negative cpu": ("overhead", lambda m: m.update(cpu_pct=-1)),
-    "overhead missing mem": ("overhead", lambda m: m.pop("mem_mb")),
-    "overhead bad node": ("overhead", lambda m: m.update(node="ru")),
-    "overhead unknown field": ("overhead", lambda m: m.update(extra=1)),  # overhead는 옛 규칙대로 모르는 필드 거부
+    "value NaN": ("overhead", lambda m: m["cpu"].update(node_busy_cores=float("nan"))),
+    "value Infinity": ("overhead", lambda m: m["cpu"].update(node_busy_cores=float("inf"))),
+    "value as bool": ("overhead", lambda m: m["cpu"].update(node_busy_cores=True)),
+    # overhead (SCHEMA.md 6절)
+    "overhead ver 2": ("overhead", lambda m: m.update(ver=2)),
+    "overhead missing ver": ("overhead", lambda m: m.pop("ver")),
+    "overhead missing session": ("overhead", lambda m: m.pop("session")),
+    "overhead missing seq": ("overhead", lambda m: m.pop("seq")),
+    "overhead missing cpu": ("overhead", lambda m: m.pop("cpu")),
+    "overhead missing memory": ("overhead", lambda m: m.pop("memory")),
+    "overhead t_start_ms in ns": ("overhead", lambda m: m.update(t_start_ms=m["t_start_ms"] * 1_000_000)),
+    "overhead t_end_ms in seconds": ("overhead", lambda m: m.update(t_end_ms=m["t_end_ms"] // 1000)),
+    "overhead cpu count 0": ("overhead", lambda m: m["cpu"].update(count=0)),
+    "overhead cpu count as float": ("overhead", lambda m: m["cpu"].update(count=4.0)),
+    "overhead negative cores": ("overhead", lambda m: m["cpu"].update(process_cores=-0.1)),
+    "overhead bytes as float": ("overhead", lambda m: m["memory"].update(used_bytes=1.0)),
+    "overhead negative bytes": ("overhead", lambda m: m["memory"].update(total_bytes=-1)),
+    "overhead link without interface_name": ("overhead", lambda m: m.update(link=[{"role": "f1"}])),
+    "overhead link not array": ("overhead", lambda m: m.update(link={"interface_name": "ens5"})),
+    "overhead negative packets": ("overhead", lambda m: m["link"][0]["ingress"].update(sctp_packet_count=-1)),
     # alert (27_ §5)
     "alert fmt 2": ("alert", lambda m: m.update(fmt=2)),
     "alert missing fmt": ("alert", lambda m: m.pop("fmt")),

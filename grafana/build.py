@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -33,8 +34,18 @@ KPM2_LINE_BREAK_MS = 2 * 3000
 
 # --------------------------------------------------------------------------- 공통 조각
 
+def short_rule_name(name: str) -> str:
+    """'#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)' → 'UE 컨텍스트 고갈'. 번호(#n)·괄호 설명·' — ' 뒤 부연을 빼고,
+    이상 유형은 앞의 '이상 유형 — '를 뺀다(ID가 AN-로 구분된다). 두 대시보드 모두 이 이름을 쓴다(사용자 요청 11/13)."""
+    name = name.removeprefix("이상 유형 — ")
+    name = re.sub(r"^#\d+\s+", "", name)
+    name = re.sub(r"\s*\([^)]*\)$", "", name)
+    return name.split(" — ")[0].strip()
+
+
 def rule_mappings() -> list[dict]:
-    names = {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]}
+    """룰·후보 ID → 짧은 공격 이름 값 매핑(원래 이름은 grafana/rule-names.json)."""
+    names = {k: short_rule_name(v) for k, v in {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]}.items()}
     return [{"type": "value", "options": {k: {"text": v, "index": i} for i, (k, v) in enumerate(names.items())}}]
 
 
@@ -370,12 +381,14 @@ from(bucket: v.defaultBucket)
 import "date"
 import "strings"
 {alert_summary("date.sub(d: 1h, from: v.timeRangeStart)", "date.sub(d: 1h, from: v.timeRangeStart)")}
+// 정렬은 map 앞에서 한다 — map으로 만든 열("시작")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)
 summary
   |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == "열림" or r.status == "상태 불명")
+  |> sort(columns: ["start"], desc: true)
+  |> limit(n: 300)
   |> map(fn: (r) => ({{
       시작: r.start,
       셀: r.cell,
-      단계: r.stage,
       룰: r.rule,
       공격: r.rule,
       종류: r.class,
@@ -385,8 +398,6 @@ summary
       상태: r.status,
       "길이(초)": float(v: int(v: if r.event == "raise" or r.event == "update" then now() else r.last) - int(v: r.start)) / 1000000000.0,
       alert_id: r.alert_id}}))
-  |> sort(columns: ["시작"], desc: true)
-  |> limit(n: 300)
 '''
     link = {"title": "이 경보 상세 보기",
             "url": "/d/portran-monitoring/?var-source=${source}&var-cell=${cell}&var-alert_id=${__data.fields.alert_id}&${__url_time_range}"}
@@ -398,7 +409,7 @@ summary
                                      "links": [link]},
                         "overrides": [
                             override("시작", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
-                            override("셀", ("custom.width", 50)), override("단계", ("custom.width", 50)),
+                            override("셀", ("custom.width", 50)),
                             override("룰", ("custom.width", 80)),
                             override("공격", ("mappings", rule_mappings()), ("custom.width", 270)),
                             override("종류", ("mappings", KIND_MAPPINGS), ("custom.cellOptions", {"type": "color-text"}),
@@ -411,7 +422,11 @@ summary
                             override("길이(초)", ("unit", "s"), ("decimals", 0), ("custom.width", 80)),
                             override("alert_id", ("custom.width", 260))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False},
-                   "sortBy": [{"displayName": "시작", "desc": True}]})
+                   "sortBy": [{"displayName": "시작", "desc": True}]},
+          transformations=[{"id": "organize", "options": {  # map의 열 순서는 정해져 있지 않다(이름순으로 섞여 나옴)
+              "excludeByName": {}, "renameByName": {},
+              "indexByName": {name: i for i, name in enumerate(
+                  ["시작", "셀", "룰", "공격", "종류", "심각도", "UE 수", "대표 값", "상태", "길이(초)", "alert_id"])}}}])
 
     per_rule = f'''
 from(bucket: v.defaultBucket)
@@ -445,13 +460,13 @@ from(bucket: v.defaultBucket)
   |> group()
   |> sort(columns: ["_time"])
   |> last(column: "_time")
-  |> map(fn: (r) => ({{룰: r.rule, 공격: r.rule, 단계: r.stage, 종류: r.kind, 셀: r.cell,
+  |> map(fn: (r) => ({{룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,
       "마지막 이벤트": r.event, 심각도: r.severity, 모드: r.mode,
       갈래: if exists r.branch then r.branch else "",
       세션: if exists r.session then r.session else ""}}))
 '''
     b.add("table", "판정 요약", 0, 24, 4, [target(summary)],
-          "이 경보의 룰·공격·단계·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). "
+          "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). "
           "갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("공격", ("mappings", rule_mappings()), ("custom.width", 300)),
@@ -527,7 +542,7 @@ from(bucket: v.defaultBucket)
       "UE 관측값": if exists r.values_json then r.values_json else "",
       이벤트: r.event}}))
 '''
-    b.add("table", "걸린 UE (2~4단계)", 0, 24, 8, [target(ues)],
+    b.add("table", "걸린 UE", 0, 24, 8, [target(ues)],
           "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 "
           "세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 불확실: mid_join(연결 중간부터 봄)·loss(유실)·late. "
           "Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
@@ -550,7 +565,7 @@ from(bucket: v.defaultBucket)
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
 '''
-    ev_bars = b.add("timeseries", "근거 KPM2 — 100 ms 칸 (1단계 경보)", 0, 24, 8, [target(ev_kpm2)],
+    ev_bars = b.add("timeseries", "근거 KPM2 — 100 ms 칸", 0, 24, 8, [target(ev_kpm2)],
                     "1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 "
                     "보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
                     field_config={"defaults": {"unit": "none", "min": 0, "displayName": "${__field.name}",
@@ -574,7 +589,7 @@ from(bucket: v.defaultBucket)
   |> group(columns: ["ue"])
   |> sort(columns: ["_time"])
 '''
-    tl = b.add("state-timeline", "근거 KPM1 — UE별 메시지 흐름 (2~4단계 경보)", 0, 24, 7, [target(timeline)],
+    tl = b.add("state-timeline", "근거 KPM1 — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
                "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
                "자세한 값은 아래 표",
                field_config={"defaults": {"displayName": "${__field.labels.ue}", "color": {"mode": "palette-classic"},
@@ -591,16 +606,16 @@ from(bucket: v.defaultBucket)
   |> group()
   |> sort(columns: ["_time"])
   |> map(fn: (r) => ({{시각: r._time, UE: "UE " + string(v: r.uid) + " (du_ue_id " + string(v: r.du_ue_id) + ")",
-      방향: if r.dir == "UL" then "↑ UL" else "↓ DL", 프로토콜: r.proto, 메시지: r.msg, 단계: r.phase, 원본: r.raw_json}}))
+      방향: if r.dir == "UL" then "↑ UL" else "↓ DL", 프로토콜: r.proto, 메시지: r.msg, 구간: r.phase, 원본: r.raw_json}}))
   |> limit(n: 1000)
 '''
-    b.add("table", "근거 KPM1 — 메시지 (2~4단계 경보)", 0, 24, 10, [target(messages)],
+    b.add("table", "근거 KPM1 — 메시지", 0, 24, 10, [target(messages)],
           "근거 메시지 하나 = 한 행. pre = 그 UE가 경보에 처음 실릴 때의 최근 메시지(최대 16줄), active = 경보 중 새 메시지. "
           "원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값, 27_ §4.2)",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
                         "overrides": [override("시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("방향", ("custom.width", 70)), override("프로토콜", ("custom.width", 70)),
-                                      override("단계", ("custom.width", 65)),
+                                      override("구간", ("custom.width", 65)),
                                       override("원본", ("custom.cellOptions", {"type": "json-view"}))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
 
@@ -634,7 +649,7 @@ summary
   |> filter(fn: (r) => contains(value: r.cell, set: ${{cell:json}}))
   |> map(fn: (r) => ({{_time: r.start,
       timeEnd: if r.status == "열림" then now() else if r.status == "상태 불명" then r.active else r.last,
-      text: "경보 " + r.rule + " — " + r.status + " (단계 " + r.stage + ", " + r.class + ", 셀 " + r.cell + ")", tags: r.rule}}))
+      text: "경보 " + r.rule + " — " + r.status + " (" + r.class + ", 셀 " + r.cell + ")", tags: r.rule}}))
 '''
     gaps = f'''
 from(bucket: v.defaultBucket)
@@ -691,10 +706,8 @@ from(bucket: v.defaultBucket)
 
 # --------------------------------------------------------------------------- 성능 (탐지 성과)
 
-KPM_ONLY_DEFAULT = "replay-kpm-only"  # 27_ §3 — 기록 파일을 1단계만으로 다시 재생한 결과(단계 비교용)
 CELL_FILTER = "contains(value: r.cell, set: ${cell:json})"
 END_REASONS = [("session_reset", "분석 엔진 재시작"), ("input_lost", "입력 끊김"), ("input_silent", "입력 멈춤")]
-NO_REPLAY = -1  # 단계 비교 대상 데이터가 없을 때 — 값 매핑으로 "재생 없음"
 TEXT_COLOR = {"mode": "fixed", "fixedColor": "text"}
 
 
@@ -702,13 +715,10 @@ def flux_str(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)  # Flux 문자열 이스케이프(\" \\)는 JSON과 같다
 
 
-def rule_name_dict(max_len: int = 30) -> str:
-    """룰 ID → 막대 그래프 이름. Grafana 막대 그래프가 긴 한글 이름의 폭을 작게 재서 왼쪽이 잘리므로 줄인다
-    (이상 유형은 ID가 AN-이라 앞의 '이상 유형 — '를 뺀다)."""
+def rule_name_dict() -> str:
+    """룰 ID → 짧은 공격 이름(Flux 사전). 막대 그래프는 이름 열을 그대로 축에 쓴다."""
     names = {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]}
-    short = {k: v.removeprefix("이상 유형 — ") for k, v in names.items()}
-    short = {k: v if len(v) <= max_len else v[:max_len - 1] + "…" for k, v in short.items()}
-    return "[" + ", ".join(f"{flux_str(k)}: {flux_str(v)}" for k, v in short.items()) + "]"
+    return "[" + ", ".join(f"{flux_str(k)}: {flux_str(short_rule_name(v))}" for k, v in names.items()) + "]"
 
 
 def alerts_in_range() -> str:
@@ -718,26 +728,247 @@ in_range = summary
   |> filter(fn: (r) => r.start >= v.timeRangeStart and {CELL_FILTER})"""
 
 
-def stage_counts() -> str:
-    """룰마다 raise 수: 데이터 출처(1~4단계) vs 단계 비교 대상(1단계만). counts 열: rule, full, kpm."""
-    return f"""count_raises = (env) => from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "alert" and r._field == "severity" and r.event == "raise" and r.env == env
-      and {CELL_FILTER})
-  |> group(columns: ["rule"])
-  |> count()
-full = count_raises(env: "${{source}}") |> map(fn: (r) => ({{rule: r.rule, s: "full", _value: r._value}}))
-kpm = count_raises(env: "${{kpm_only}}") |> map(fn: (r) => ({{rule: r.rule, s: "kpm", _value: r._value}}))
-counts = union(tables: [full, kpm])
-  |> group()
-  |> pivot(rowKey: ["rule"], columnKey: ["s"], valueColumn: "_value")
-  |> map(fn: (r) => ({{rule: r.rule, full: if exists r.full then r.full else 0, kpm: if exists r.kpm then r.kpm else 0}}))"""
-
-
 def stat_options(fields: str = "", values: bool = False) -> dict:
     return {"colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "justifyMode": "center",
             "reduceOptions": {"calcs": [] if values else ["lastNotNull"], "fields": fields, "values": values},
             "orientation": "vertical"}
+
+
+# --------------------------------------------------------------------------- 성능 — CU 자원 (수집 오버헤드, M11)
+
+OVERHEAD = 'r._measurement == "overhead"'
+OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
+
+
+def overhead_pivot(fields: list[str], measurement: str = "overhead") -> str:
+    """고른 시간 범위의 overhead 필드들을 시각(구간 시작)마다 한 행으로. 세션(series)마다 표가 나뉘어 있다."""
+    cond = " or ".join(f'r._field == "{f}"' for f in fields)
+    return f'''from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "{measurement}" and {ENV} and ({cond}))
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")'''
+
+
+def timeseries_defaults(unit: str, min_zero: bool = True, **custom) -> dict:
+    return {"unit": unit, **({"min": 0} if min_zero else {}), "displayName": "${__field.name}",
+            "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 25, "spanNulls": False,
+                       "insertNulls": KPM2_LINE_BREAK_MS, "showPoints": "never", **custom}}
+
+
+def add_overhead_rows(b: Board) -> None:
+    b.row("CU 자원 — 수집 오버헤드 (분석 엔진이 3초마다, 노드 전체와 분석 엔진 몫)")
+    node_info = f'''
+from(bucket: v.defaultBucket)
+  |> range(start: -30d)
+  |> filter(fn: (r) => {OVERHEAD} and {ENV} and (r._field == "cpu_count" or r._field == "mem_total_bytes"))
+  |> group(columns: ["node", "_field"])
+  |> last()
+  |> group(columns: ["node"])
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> map(fn: (r) => ({{_time: r._time, 노드: if exists r.node then r.node else "(node_id 없음)",
+      코어: if exists r.cpu_count then r.cpu_count else 0,
+      메모리: if exists r.mem_total_bytes then r.mem_total_bytes else 0,
+      "마지막 수신": float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}}))
+  |> group()
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 1)
+  |> drop(columns: ["_time"])
+'''
+    b.add("stat", "노드", 0, 8, 4, [target(node_info)],
+          "overhead를 보내는 노드(node_id, 11/13부터 cu로 통일)와 코어 수·전체 메모리(마지막 값). 마지막 수신 = 마지막 3초 구간이 "
+          f"시작한 뒤 지난 시간(데이터 시각 기준) — {OVERHEAD_STALE_S}초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
+          field_config={"defaults": {"color": TEXT_COLOR, "noValue": "overhead 없음"},
+                        "overrides": [override("메모리", ("unit", "bytes")),
+                                      override("마지막 수신", ("unit", "s"), ("decimals", 0),
+                                               ("color", {"mode": "thresholds"}),
+                                               ("thresholds", {"mode": "absolute", "steps": [
+                                                   {"color": "green", "value": None},
+                                                   {"color": "red", "value": OVERHEAD_STALE_S}]}))]},
+          options=stat_options("/.*/"),
+          transformations=[{"id": "organize", "options": {  # map의 열 순서는 정해져 있지 않다
+              "excludeByName": {}, "renameByName": {},
+              "indexByName": {name: i for i, name in enumerate(["노드", "코어", "메모리", "마지막 수신"])}}}])
+
+    summary = f'''
+import "array"
+cpu = {overhead_pivot(["node_busy_cores", "cpu_count"])}
+  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)
+  |> map(fn: (r) => ({{_time: r._time, _value: r.node_busy_cores / float(v: r.cpu_count) * 100.0}}))
+  |> group()
+mem = {overhead_pivot(["mem_used_bytes", "mem_total_bytes"])}
+  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.mem_total_bytes and r.mem_total_bytes > 0)
+  |> map(fn: (r) => ({{_time: r._time, _value: float(v: r.mem_used_bytes) / float(v: r.mem_total_bytes) * 100.0}}))
+  |> group()
+field = (name) => from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => {OVERHEAD} and {ENV} and r._field == name)
+  |> map(fn: (r) => ({{_time: r._time, _value: float(v: r._value)}}))
+  |> group()
+pick = (tables) => {{
+  found = tables |> findColumn(fn: (key) => true, column: "_value")
+  return if length(arr: found) > 0 then found[0] else -1.0
+}}
+array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pick(tables: cpu |> max()),
+  "최대 메모리": pick(tables: mem |> max()), "분석 엔진 평균": pick(tables: field(name: "process_cores") |> mean()),
+  "분석 엔진 최대 메모리": pick(tables: field(name: "process_rss_bytes") |> max())}}])
+'''
+    no_data = [{"type": "value", "options": {"-1": {"text": "없음", "index": 0}}}]
+    b.add("stat", "고른 시간 범위 요약", 8, 16, 4, [target(summary)],
+          "실험 구간 동안 노드 CPU 사용률(바쁜 코어 / 코어 수)의 평균·최대, 메모리 사용률(MemTotal − MemAvailable) 최대, "
+          "분석 엔진(계측기 프로세스, process_scope self) 평균 코어 수와 최대 메모리(RSS). 탐지 엔진·전송기는 노드 값에만 섞여 있다",
+          field_config={"defaults": {"color": TEXT_COLOR, "mappings": no_data},
+                        "overrides": [override("평균 CPU", ("unit", "percent"), ("decimals", 1)),
+                                      override("최대 CPU", ("unit", "percent"), ("decimals", 1)),
+                                      override("최대 메모리", ("unit", "percent"), ("decimals", 1)),
+                                      override("분석 엔진 평균", ("unit", "suffix: 코어"), ("decimals", 3)),
+                                      override("분석 엔진 최대 메모리", ("unit", "bytes"))]},
+          options=stat_options("/.*/"), new_line=True)
+
+    cpu_pct = f'''
+{overhead_pivot(["node_busy_cores", "cpu_count"])}
+  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)
+  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+      "CPU 사용률": r.node_busy_cores / float(v: r.cpu_count) * 100.0}}))
+  |> group(columns: ["node"])
+  |> sort(columns: ["_time"])
+'''
+    b.add("timeseries", "CPU 사용률 (노드 전체)", 0, 12, 8, [target(cpu_pct)],
+          "구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다",
+          field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
+                                     "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": False},
+                   "tooltip": {"mode": "multi", "sort": "none"}})
+
+    cpu_split = f'''
+{overhead_pivot(["node_busy_cores", "process_cores", "cpu_count"])}
+  |> filter(fn: (r) => exists r.node_busy_cores and exists r.process_cores)
+  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+      "분석 엔진": r.process_cores,
+      "그 밖 (탐지 엔진·전송기·CU 등)": if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0,
+      "코어 수": if exists r.cpu_count then float(v: r.cpu_count) else 0.0}}))
+  |> group(columns: ["node"])
+  |> sort(columns: ["_time"])
+'''
+    b.add("timeseries", "CPU 내역 (코어 수, 쌓기)", 12, 12, 8, [target(cpu_split)],
+          "노드가 쓴 코어를 분석 엔진(계측기 프로세스)과 그 밖으로 나눠 쌓았다. 점선 = 노드 코어 수(위쪽 한계). "
+          "커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽(그 밖)에 잡힌다",
+          field_config={"defaults": timeseries_defaults("none", stacking={"mode": "normal", "group": "A"}),
+                        "overrides": [
+                            override("분석 엔진", ("color", {"mode": "fixed", "fixedColor": "orange"})),
+                            override("그 밖 (탐지 엔진·전송기·CU 등)", ("color", {"mode": "fixed", "fixedColor": "blue"})),
+                            override("코어 수", ("color", {"mode": "fixed", "fixedColor": "text"}),
+                                     ("custom.stacking", {"mode": "none", "group": "B"}), ("custom.fillOpacity", 0),
+                                     ("custom.lineStyle", {"fill": "dash", "dash": [6, 4]}))]},
+          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
+
+    mem_use = f'''
+{overhead_pivot(["mem_used_bytes", "mem_total_bytes"])}
+  |> filter(fn: (r) => exists r.mem_used_bytes)
+  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+      "사용 중": float(v: r.mem_used_bytes),
+      "전체": if exists r.mem_total_bytes then float(v: r.mem_total_bytes) else 0.0}}))
+  |> group(columns: ["node"])
+  |> sort(columns: ["_time"])
+'''
+    b.add("timeseries", "메모리 사용량 (노드 전체)", 0, 12, 8, [target(mem_use)],
+          "사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 점선 = 전체 메모리",
+          field_config={"defaults": {**timeseries_defaults("bytes"), "color": {"mode": "fixed", "fixedColor": "green"}},
+                        "overrides": [override("전체", ("color", {"mode": "fixed", "fixedColor": "text"}),
+                                               ("custom.fillOpacity", 0),
+                                               ("custom.lineStyle", {"fill": "dash", "dash": [6, 4]}))]},
+          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                   "tooltip": {"mode": "multi", "sort": "none"}})
+
+    mem_split = f'''
+{overhead_pivot(["mem_used_bytes", "process_rss_bytes"])}
+  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.process_rss_bytes)
+  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+      "분석 엔진 (RSS)": float(v: r.process_rss_bytes),
+      "그 밖": if r.mem_used_bytes > r.process_rss_bytes then float(v: r.mem_used_bytes - r.process_rss_bytes) else 0.0}}))
+  |> group(columns: ["node"])
+  |> sort(columns: ["_time"])
+'''
+    b.add("timeseries", "메모리 내역 (쌓기)", 12, 12, 8, [target(mem_split)],
+          "노드 사용 메모리를 분석 엔진(계측기 프로세스 resident)과 그 밖으로 나눠 쌓았다",
+          field_config={"defaults": timeseries_defaults("bytes", stacking={"mode": "normal", "group": "A"}),
+                        "overrides": [
+                            override("분석 엔진 (RSS)", ("color", {"mode": "fixed", "fixedColor": "orange"})),
+                            override("그 밖", ("color", {"mode": "fixed", "fixedColor": "green"}))]},
+          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
+
+    # 링크 값은 SCTP 패킷만 센다(F1AP·NGAP 시그널링 — F1-U 사용자 데이터는 빠짐, 탐지 쪽 11/13)
+    def link_rate(kind: str) -> str:
+        """overhead_link의 <방향>_<kind> 구간 증가분 ÷ 구간 길이 = 초당 값. 들어옴·나감 × 링크마다 한 계열."""
+        return f'''
+links = {overhead_pivot([f"ingress_{kind}", f"egress_{kind}", "t_end_ms"], measurement="overhead_link")}
+  |> map(fn: (r) => ({{r with secs: float(v: r.t_end_ms - int(v: r._time) / 1000000) / 1000.0,
+      link: if not exists r.role then r.iface else if r.role == "f1" then "F1" else if r.role == "n2" then "N2"
+            else if r.role == "f1+n2" then "F1+N2" else r.role}}))
+  |> filter(fn: (r) => r.secs > 0.0)
+inbound = links
+  |> filter(fn: (r) => exists r.ingress_{kind})
+  |> map(fn: (r) => ({{_time: r._time, link: r.link, iface: r.iface, _value: float(v: r.ingress_{kind}) / r.secs,
+      dir: if r.link == "F1" then "들어옴 (DU → CU)" else if r.link == "N2" then "들어옴 (AMF → CU)" else "들어옴"}}))
+  |> group()
+outbound = links
+  |> filter(fn: (r) => exists r.egress_{kind})
+  |> map(fn: (r) => ({{_time: r._time, link: r.link, iface: r.iface, _value: float(v: r.egress_{kind}) / r.secs,
+      dir: if r.link == "F1" then "나감 (CU → DU)" else if r.link == "N2" then "나감 (CU → AMF)" else "나감"}}))
+  |> group()
+union(tables: [inbound, outbound])
+  |> group(columns: ["link", "dir", "iface"])
+  |> sort(columns: ["_time"])
+'''
+
+    link_note = ("선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균) — F1-U 사용자 데이터(GTP-U)는 "
+                 "들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향(CU 기준 들어옴은 위, 나감은 아래). "
+                 "네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸")
+    for x, title, kind, unit, extra in (
+            (0, "F1·N2 SCTP 트래픽 (바이트/초, 위 = 들어옴 · 아래 = 나감)", "wire_bytes", "binBps",
+             " 바이트는 이더넷 헤더 포함, FCS 제외."),
+            (12, "F1·N2 SCTP 패킷 (패킷/초, 위 = 들어옴 · 아래 = 나감)", "sctp_packets", "pps",
+             " 공격으로 시그널링이 몰리는 모양은 바이트보다 패킷 수에서 더 잘 보인다. GSO로 묶인 패킷은 세그먼트 수만큼 센다.")):
+        b.add("timeseries", title, x, 12, 8, [target(link_rate(kind))], link_note + "." + extra,
+              field_config={"defaults": {**timeseries_defaults(unit, min_zero=False),
+                                         "displayName": "${__field.labels.link} ${__field.labels.dir}",
+                                         "noValue": "링크 값 없음"},
+                            "overrides": [override(".*나감.*", ("custom.transform", "negative-Y"), regex=True)]},
+              options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                       "tooltip": {"mode": "multi", "sort": "none"}}, new_line=x == 12)
+
+    load = f'''
+{overhead_pivot(["node_busy_cores", "cpu_count"])}
+  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)
+  |> map(fn: (r) => ({{_time: r._time, _value: r.node_busy_cores / float(v: r.cpu_count) * 100.0}}))
+  |> group()
+  |> sort(columns: ["_time"])
+  |> map(fn: (r) => ({{_time: r._time, "CPU 사용률": r._value}}))
+'''
+    attempts = f'''
+from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "kpm2" and {ENV} and r._field == "cc.RRC.ConnEstabAtt.total"
+      and contains(value: r.cell, set: ${{cell:json}}))
+  |> group()
+  |> aggregateWindow(every: 3s, fn: sum, createEmpty: false, timeSrc: "_start")
+  |> map(fn: (r) => ({{_time: r._time, "RRC 연결 시도": r._value}}))
+'''
+    b.add("timeseries", "부하와 함께 — CPU 사용률 · RRC 연결 시도", 0, 24, 8,
+          [target(load, "A"), target(attempts, "B")],
+          "공격으로 연결 시도가 몰릴 때 CU CPU가 얼마나 오르나. 왼쪽 축 = 노드 CPU 사용률, 오른쪽 축(막대) = 상시 KPM2 RRC 연결 시도"
+          "(위쪽 셀 변수로 고른 셀의 합). 둘 다 3초 구간이라 칸끼리 겹친다",
+          field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
+                                     "color": {"mode": "fixed", "fixedColor": "blue"}},
+                        "overrides": [override("RRC 연결 시도.*", ("unit", "none"), ("max", None),
+                                               ("custom.axisPlacement", "right"), ("custom.drawStyle", "bars"),
+                                               ("custom.fillOpacity", 50), ("custom.barAlignment", 1),
+                                               ("color", {"mode": "fixed", "fixedColor": "orange"}), regex=True)]},
+          # 범례는 오른쪽 표(이름·평균·최대) — 아래 목록이면 Grafana가 오른쪽 축 계열을 따로 떼어 두고, 오른쪽 목록은 값이
+          # 줄마다 어긋난다(사용자 확인 11/13). 표 모드는 오른쪽 축 계열에 '(right y-axis)'를 붙이는데 끌 설정이 없다
+          options={"legend": {"displayMode": "table", "placement": "right", "showLegend": True, "calcs": ["mean", "max"]},
+                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
 
 
 def performance() -> dict:
@@ -758,68 +989,36 @@ union(tables: [counted, zeros])
   |> group(columns: ["class"])
   |> sum()
 '''
-    b.add("stat", "경보 수 — 종류별", 0, 10, 5, [target(by_class)],
+    b.add("stat", "경보 수 — 종류별", 0, 24, 4, [target(by_class)],
           "실험 동안 경보가 몇 번 울렸나(raise 기준, 경보 하나 = 1). 공격 경보만 '탐지'로 세고, 4단계 이상 유형과 판정 보류 "
           "경보(2·3단계 룰인데 kind anomaly)는 따로 센다(27_ §5.5)",
           field_config={"defaults": {"displayName": "${__field.labels.class}", "unit": "none", "color": TEXT_COLOR},
                         "overrides": []},
-          options=stat_options())
+          options=stat_options(), new_line=True)
 
-    stage_summary = f'''
-import "array"
-{stage_counts()}
-total = (column) => {{
-  found = counts |> sum(column: column) |> findColumn(fn: (key) => true, column: column)
-  return if length(arr: found) > 0 then found[0] else 0
-}}
-missed = counts
-  |> map(fn: (r) => ({{rule: r.rule, d: if r.full > r.kpm then r.full - r.kpm else 0}}))
-  |> sum(column: "d")
-  |> findColumn(fn: (key) => true, column: "d")
-present = from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r.env == "${{kpm_only}}")
-  |> limit(n: 1)
-  |> keep(columns: ["_measurement"])
-  |> group()
-  |> count(column: "_measurement")
-  |> findColumn(fn: (key) => true, column: "_measurement")
-replayed = if length(arr: present) > 0 then present[0] > 0 else false
-array.from(rows: [
-  {{항목: "1~4단계 경보", 값: total(column: "full")}},
-  {{항목: "1단계만 경보", 값: if replayed then total(column: "kpm") else {NO_REPLAY}}},
-  {{항목: "1단계만으로는 못 잡은 경보", 값: if not replayed then {NO_REPLAY} else if length(arr: missed) > 0 then missed[0] else 0}}])
-'''
-    b.add("stat", "단계 비교 — 1~4단계 vs 1단계만", 10, 14, 5, [target(stage_summary)],
-          "표준 KPM(1단계)만으로는 못 잡고 UE 메시지(2~4단계)로 잡은 경보가 몇 개인가 — 프로젝트 핵심 주장. "
-          "같은 기록을 1단계만으로 다시 재생한 결과(위쪽 '단계 비교 대상', 기본 replay-kpm-only — 탐지 쪽이 detector --replay로 "
-          "만들어 보냄, 27_ §3)와 룰별 경보 수를 비교해, 1~4단계가 더 많은 만큼을 더한다. 재생 결과가 없으면 '재생 없음'",
-          field_config={"defaults": {"unit": "none", "color": TEXT_COLOR,
-                                     "mappings": [{"type": "value", "options": {
-                                         str(NO_REPLAY): {"text": "재생 없음", "index": 0}}}]},
-                        "overrides": []},
-          options=stat_options("/^값$/", values=True), new_line=True)
-
-    stage_bars = f'''
+    per_attack = f'''
 import "dict"
 names = {rule_name_dict()}
-{stage_counts()}
-counts
-  |> sort(columns: ["full", "kpm"], desc: true)
-  |> map(fn: (r) => ({{rule: r.rule, 공격: r.rule + "  " + dict.get(dict: names, key: r.rule, default: ""),
-      "1~4단계": r.full, "1단계만": r.kpm}}))
-  |> keep(columns: ["공격", "1~4단계", "1단계만"])
+from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "alert" and r._field == "severity" and r.event == "raise" and {ENV}
+      and {CELL_FILTER})
+  |> group(columns: ["rule"])
+  |> count()
+  |> group()
+  |> sort(columns: ["_value"], desc: true)
+  |> map(fn: (r) => ({{rule: r.rule, 공격: dict.get(dict: names, key: r.rule, default: r.rule), "경보 수": r._value}}))
+  |> keep(columns: ["공격", "경보 수"])
 '''
-    b.add("barchart", "단계 비교 — 룰별 경보 수", 0, 12, 11, [target(stage_bars)],
-          "룰별로 1~4단계(데이터 출처)와 1단계만(단계 비교 대상)의 경보 수(raise). 2~4단계 룰은 1단계만에서 0이어야 하고, "
-          "막대 차이가 'UE 메시지로 더 잡은 것'. 1단계만 재생 결과가 없으면 1단계만 막대가 모두 0이다",
+    b.add("barchart", "공격별 경보 수", 0, 12, 11, [target(per_attack)],
+          "실험 동안 어떤 공격·이상 유형이 몇 번 울렸나(raise 기준). 같은 공격에 여러 룰이 함께 울릴 수 있다(27_ §5.1)",
           field_config={"defaults": {"unit": "none", "min": 0, "decimals": 0,
+                                     "color": {"mode": "fixed", "fixedColor": "orange"},
                                      "custom": {"fillOpacity": 80, "lineWidth": 1, "gradientMode": "none"}},
-                        "overrides": [override("1~4단계", ("color", {"mode": "fixed", "fixedColor": "orange"})),
-                                      override("1단계만", ("color", {"mode": "fixed", "fixedColor": "blue"}))]},
+                        "overrides": []},
           options={"orientation": "horizontal", "xField": "공격", "showValue": "auto", "groupWidth": 0.7, "barWidth": 0.9,
-                   "stacking": "none", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
-                   "tooltip": {"mode": "multi", "sort": "none"}})
+                   "stacking": "none", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": False},
+                   "tooltip": {"mode": "single", "sort": "none"}})
 
     durations = f'''
 import "date"
@@ -844,37 +1043,34 @@ import "date"
 import "strings"
 {alerts_in_range()}
 in_range
-  |> map(fn: (r) => ({{rule: r.rule, stage: r.stage, class: r.class,
+  |> map(fn: (r) => ({{rule: r.rule, class: r.class,
       high: if r.sev == 2 then 1 else 0,
       cleared: if r.event == "clear" then 1 else 0,
       ended: if r.event == "end" then 1 else 0,
       open: if r.event == "raise" or r.event == "update" then 1 else 0,
       secs: if r.event == "clear" or r.event == "end" then float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0 else 0.0}}))
-  |> group(columns: ["rule", "stage", "class"])
+  |> group(columns: ["rule", "class"])
   |> reduce(identity: {{n: 0, high: 0, cleared: 0, ended: 0, open: 0, secs: 0.0, longest: 0.0}},
       fn: (r, accumulator) => ({{n: accumulator.n + 1, high: accumulator.high + r.high,
         cleared: accumulator.cleared + r.cleared, ended: accumulator.ended + r.ended, open: accumulator.open + r.open,
         secs: accumulator.secs + r.secs, longest: if r.secs > accumulator.longest then r.secs else accumulator.longest}}))
   |> group()
-  |> map(fn: (r) => ({{rule: r.rule, 룰: r.rule, 공격: r.rule, 단계: r.stage, 종류: r.class, "경보 수": r.n,
+  |> sort(columns: ["n"], desc: true)
+  |> map(fn: (r) => ({{rule: r.rule, 공격: r.rule, 종류: r.class, "경보 수": r.n,
       "high까지": r.high, 해제: r.cleared, "강제 종료": r.ended, "끝이 안 옴": r.open,
       "평균 길이(초)": if r.cleared + r.ended > 0 then r.secs / float(v: r.cleared + r.ended) else 0.0,
       "최대 길이(초)": r.longest}}))
-  |> sort(columns: ["경보 수"], desc: true)
 '''
     # Flux map의 열 순서는 정해져 있지 않아서 표에서 순서를 정한다
-    columns = ["룰", "공격", "단계", "종류", "경보 수", "high까지", "해제", "강제 종료", "끝이 안 옴", "평균 길이(초)",
-               "최대 길이(초)"]
-    b.add("table", "룰 × 단계 × 종류", 0, 24, 9, [target(per_rule)],
-          "룰·단계·종류마다 경보 수와 끝난 모습. high까지 = 심각도가 high까지 오른 경보(27_ §5.3). 강제 종료 = end"
+    columns = ["공격", "종류", "경보 수", "high까지", "해제", "강제 종료", "끝이 안 옴", "평균 길이(초)", "최대 길이(초)"]
+    b.add("table", "공격별 경보 결과", 0, 24, 9, [target(per_rule)],
+          "공격(룰)·종류마다 경보 수와 끝난 모습. high까지 = 심각도가 high까지 오른 경보(27_ §5.3). 강제 종료 = end"
           "(분석 엔진 재시작·입력 끊김·입력 멈춤). 끝이 안 옴 = clear·end가 오지 않은 경보. 길이는 해제·강제 종료된 경보만",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
-                        "overrides": [override("룰", ("custom.width", 80)),
-                                      override("공격", ("mappings", rule_mappings())),
-                                      override("단계", ("custom.width", 60)),
+                        "overrides": [override("공격", ("mappings", rule_mappings())),
                                       override("종류", ("mappings", KIND_MAPPINGS),
                                                ("custom.cellOptions", {"type": "color-text"}), ("custom.width", 90)),
-                                      *[override(name, ("custom.width", 105)) for name in columns[4:9]],
+                                      *[override(name, ("custom.width", 105)) for name in columns[2:7]],
                                       override("평균 길이(초)", ("decimals", 1), ("custom.width", 115)),
                                       override("최대 길이(초)", ("decimals", 1), ("custom.width", 115))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False},
@@ -996,16 +1192,8 @@ from(bucket: v.defaultBucket)
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
           new_line=True)
 
-    # ---- 파이프라인 완성 뒤
-    b.row("파이프라인 완성 뒤 채울 것")
-    later = b.add("text", "탐지율 · 오탐 · 탐지 지연 · 수집 오버헤드", 0, 24, 4, [],
-                  "전체 파이프라인(분석 엔진 → 탐지 엔진 → 대시보드, 실제 공격)이 완성된 뒤 탐지 쪽과 정해 채운다(27_ §9)",
-                  options={"mode": "markdown", "content": (
-                      "- **탐지율 · 오탐**: 정답 기록(공격 구간)과 경보를 맞추는 규칙 — 탐지 쪽과 정함(27_ §9 R1·R2)\n"
-                      "- **탐지 지연**: 경보별 지연 — 27_ §9 R3\n"
-                      "- **수집 오버헤드**: 노드별 호스트 CPU·메모리와 eBPF 에이전트 프로세스 몫 — 측정 형식 협의 중(27_ §9 R5)")},
-                  new_line=True)
-    del later["datasource"], later["targets"]
+    # ---- CU 자원 (수집 오버헤드, M11)
+    add_overhead_rows(b)
 
     variables = [
         source_variable(),
@@ -1014,15 +1202,10 @@ import "influxdata/influxdb/schema"
 schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
   predicate: (r) => (r._measurement == "kpm2" or r._measurement == "alert") and {ENV})
 ''', multi=True, include_all=True, description="경보 수·입력 품질에 넣을 셀"),
-        {"name": "kpm_only", "label": "단계 비교 대상", "type": "custom", "hide": 0,
-         "query": f"1단계만 재생 : {KPM_ONLY_DEFAULT}",
-         "current": {"text": "1단계만 재생", "value": KPM_ONLY_DEFAULT},
-         "options": [{"text": "1단계만 재생", "value": KPM_ONLY_DEFAULT, "selected": True}],
-         "description": "같은 기록을 1단계만으로 다시 재생한 결과의 X-Env(27_ §3). 탐지 쪽이 detector --replay로 만들어 보낸다"},
     ]
     return dashboard("portran-performance", "PortRAN 성능",
-                     "탐지 성과 — 실험 구간의 경보 수, 단계 비교(1~4단계 vs 1단계만), 경보 길이, 경보·입력 품질. "
-                     "docs/dashboard-design.md 3절",
+                     "탐지 성과 — 실험 구간의 경보 수(종류별·공격별), 경보 길이, 경보·입력 품질. "
+                     "CU 자원(수집 오버헤드). docs/dashboard-design.md 3절",
                      b, variables, [], refresh="1m", time_from="now-24h")
 
 

@@ -1,11 +1,11 @@
-# PortRAN 메시지 스키마 (v0.4)
+# PortRAN 메시지 스키마 (v0.5)
 
 collector가 받는 메시지 형식이다. **기계 검증의 단일 기준은 [`messages.schema.json`](messages.schema.json)**이고, 이 문서는 그 내용을 사람이 읽기 쉽게 풀어 쓴 것이다. 둘이 다르면 JSON Schema가 맞다.
 
 | 갈래 | `type` | 보내는 곳 | 기준 |
 |---|---|---|---|
 | **탐지 엔진 레코드** | `alert` · `evidence` · `gap` · `kpm2` · `hello` · `f1_evt` | 탐지 엔진 전송기 (`POST /ingest`) | 탐지 엔진 담당 명세 [`27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](../reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (2026-11-05 확정, 이하 **27_**). 뜻·룰별 값은 27_이 기준이고, 이 문서는 collector가 무엇을 검사하고 어떻게 저장하는지를 적는다 |
-| **수집 오버헤드** | `overhead` | 미정 | 측정 주체·형식을 탐지 쪽과 협의 중(R5)이라 처음 형식 그대로 둔다(6절) |
+| **수집 오버헤드** | `overhead` | 분석 엔진(계측기)이 3초마다 — 전송기가 `kpm2`·`f1_evt`처럼 줄 그대로 `POST /ingest` | 탐지 쪽이 11/13에 보낸 형식(27_ 밖, R5). 6절 |
 
 처음 스키마의 `metric`·`detection`·`attack_run`(mock 생성기 전용)은 M10에서 mock·evaluator와 함께 지웠다(v0.4).
 
@@ -13,15 +13,17 @@ collector가 받는 메시지 형식이다. **기계 검증의 단일 기준은 
 
 ## 1. 공통 규칙
 
-| 항목 | 탐지 엔진 레코드 | `overhead` |
-|---|---|---|
-| 전송 단위 | JSON 한 줄 = 레코드 하나 (JSON Lines, UTF-8) | 같음 |
-| 전송 방식 | `POST /ingest` (2절). 시험용으로 UDP·파일도 받는다(이때 환경은 collector `--env`) | UDP(기본 `127.0.0.1:9999`, 데이터그램 하나에 한 줄) 또는 파일 |
-| 시각 | **Unix epoch 밀리초 정수** — 분석 엔진이 붙인 데이터 시각(27_ §2.3). 2001-09-09 ~ 2286년 범위만 받는다(초·마이크로초·나노초로 잘못 보낸 값을 잡으려고) | **Unix epoch 나노초 정수** (2001-09-09 이후) |
-| 모르는 필드 | **받는다.** 녹화에는 그대로 남고 InfluxDB 저장과 화면에서는 무시한다. 탐지 쪽은 필드를 더할 때 형식 판을 올리지 않는다(27_ §2.4) | **거부한다.** 오타를 바로 잡기 위해서다(처음 규칙) |
-| 형식 판 | `alert`의 `fmt`, `kpm2`·`hello`·`f1_evt`의 `ver`가 `1`이 아니면 거부(대시보드 2차 답변서 D8, 27_ §9) | — |
-| `null` | "그 값을 셌어야 하는데 모름". 키가 없음 = 해당 없음. InfluxDB에는 그 필드를 빼고 쓴다(그래프에서 0이 아니라 '데이터 없음') | 허용하지 않음 |
-| 다시 보낸 줄 | 환경 + 레코드별 키가 같으면 한 번만 저장(2.3) | 거르지 않음 |
+모든 레코드(탐지 엔진 레코드 6종과 `overhead`)에 같은 규칙을 쓴다. v0.4까지 `overhead`만 따로 쓰던 규칙(ns 시각, 모르는 필드 거부, UDP)은 v0.5에서 없앴다.
+
+| 항목 | 규칙 |
+|---|---|
+| 전송 단위 | JSON 한 줄 = 레코드 하나 (JSON Lines, UTF-8) |
+| 전송 방식 | `POST /ingest` (2절). 시험용으로 UDP·파일도 받는다(이때 환경은 collector `--env`) |
+| 시각 | **Unix epoch 밀리초 정수** — 분석 엔진이 붙인 데이터 시각(27_ §2.3). 2001-09-09 ~ 2286년 범위만 받는다(초·마이크로초·나노초로 잘못 보낸 값을 잡으려고) |
+| 모르는 필드 | **받는다.** 녹화에는 그대로 남고 InfluxDB 저장과 화면에서는 무시한다. 탐지 쪽은 필드를 더할 때 형식 판을 올리지 않는다(27_ §2.4) |
+| 형식 판 | `alert`의 `fmt`, `kpm2`·`hello`·`f1_evt`·`overhead`의 `ver`가 `1`이 아니면 거부(대시보드 2차 답변서 D8, 27_ §9) |
+| `null` | "그 값을 셌어야 하는데 모름". 키가 없음 = 해당 없음. InfluxDB에는 그 필드를 빼고 쓴다(그래프에서 0이 아니라 '데이터 없음') |
+| 다시 보낸 줄 | 환경 + 레코드별 키가 같으면 한 번만 저장(2.3) |
 
 공통 검사:
 - 정수 필드에 실수 표기(`1.0`)·문자열은 거부한다. JSON Schema 표준은 `1.0`을 정수로 보지만 우리 검증기 `common/schema.py`는 정밀도 손실을 막기 위해 실수 표기를 거부한다.
@@ -64,7 +66,7 @@ collector가 받는 메시지 형식이다. **기계 검증의 단일 기준은 
 | `evidence` | (`alert_id`, `phase`, `seq`, `ue`) — 1단계는 `ue` 없음 |
 | `gap` | (`alert_id`, `t_from`) |
 | `kpm2` | (`session`, `cell_id`, `agg_ms`, `t_start_ms`) |
-| `hello` · `f1_evt` | (`session`, `seq`) |
+| `hello` · `f1_evt` · `overhead` | (`session`, `seq`) — 세 종류가 같은 번호열을 쓴다 |
 
 collector는 최근 키 `COLLECTOR_DEDUP_MAX_KEYS`개를 메모리에 기억한다. 재시작하면 비지만, 같은 줄은 InfluxDB에서 같은 series·같은 시각에 덮어써지므로(5절) 저장 결과는 같다. 녹화 파일에는 재시작 뒤 다시 온 줄이 한 번 더 남을 수 있다.
 
@@ -86,7 +88,7 @@ curl -s -X POST http://127.0.0.1:8088/ingest -H 'Content-Type: application/x-ndj
 경보 하나 = (룰, 셀) 하나. 생애는 `raise` → (`update`) → `clear`/`end`. 1단계 `raise` 예:
 
 ```json
-{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0},"params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
+{"type":"alert","fmt":1,"alert_id":"S1-L3-01-V-1-65","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell","kind":"attack","cell":1,"t":1792209006400,"severity":"medium","mode":"normal","cond":["C1","C2","C2a"],"candidates":["L3-11"],"values":{"a_w":13,"f_w":12,"ratio":0.9230769230769231,"base":1.0,"sigma":0.0},"params":{"z":3.0,"theta":0.5,"f_abs_frac":0.1,"f_abs":10},"refs":{"a":[46,55],"f":[56,65]}}
 ```
 
 | 검사 | 내용 |
@@ -271,22 +273,42 @@ collector가 아래처럼 변환한다. 보내는 쪽은 신경 쓰지 않아도
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 | `alert_ue` | `ues[].t_hit` | env, alert_id, ue(`<cell>-<du_ue_id>-<uid>`) | cell, du_ue_id, uid, cu_ue_id, crnti, s_tmsi, cond, uncertain, conditions, peers(쉼표·`;`로 이은 문자열), seq_from, seq_to, evidence, values_json, event |
-| `overhead` | `ts` | node, ebpf_on | cpu_pct, mem_mb |
+| `overhead` | `t_start_ms` | env, session, node(`node_id`, 있을 때) | t_end_ms, seq, process_scope, cpu_count, node_busy_cores·process_cores(실수), mem_total_bytes·mem_used_bytes·process_rss_bytes |
+| `overhead_link` | `t_start_ms` | env, session, node, iface(`interface_name`), role | t_end_ms, seq, ingress_sctp_packets, ingress_wire_bytes, egress_sctp_packets, egress_wire_bytes |
 
 - **시각**: ms를 ns로 바꿔 쓴다. 같은 ms에 여러 줄이 올 수 있어(27_ §4.2) `evidence`·`f1_evt`는 ms 안의 ns 자리에 `seq`를 넣어 가른다(`t_ms × 10⁶ + seq mod 10⁶`). 표시 시각은 1 ms 안에서만 달라진다.
 - **`alert_id`를 tag로 둔다**(field로는 두지 않는다 — 같은 이름의 tag·field가 있으면 pivot 때 열이 겹친다). 같은 원본 줄이 두 경보의 근거로 함께 올 수 있어(예: `L3-24`·`L3-14` 판정 보류 경보) `alert_id`가 series를 가르지 않으면 서로 덮어쓴다. 경보는 공격마다 하나라 series 수는 경보 수에 비례한다(경보 하나에 `evidence` series 3개 정도).
 - **세션**: `alert`·`gap`의 `session` 필드는 그 경보의 첫 `evidence`에서 알게 된다. 경보를 먼저 쓴 뒤 세션을 알면 같은 점에 `session` 필드만 더해 쓴다.
 - **숫자 타입**: `kpm2`·근거 `kpm2`의 지표는 모두 실수로 쓴다(정수·실수가 섞이면 InfluxDB가 쓰기를 거부함, 27_ §7.1). `values`·`params`·`ues`처럼 룰마다 다른 묶음은 JSON 문자열로 통째 저장하고 화면에서 펼친다.
 - **대표 값** `rep_value`: 화면에 값 하나만 보일 때 쓰는 룰별 값(27_ §5.3 '대표 값(제안)'). 판정 보류 경보는 `held_w`. `rep_key`가 어떤 값인지 알려 준다.
+- **`overhead_link`**: `overhead`의 `link[]` 한 칸(NIC 하나) = 점 하나(M11, `alert_ue`와 같은 이유). 값은 구간 증가분이라 초당 값은 화면에서 구간 길이(`t_end_ms` − 시각)로 나눈다.
 - **`alert_ue`**: `alert`의 `ues[]` 한 칸 = 점 하나(M10). 경보 상세의 '걸린 UE' 표를 행으로 그리려고 따로 둔다(`ues_json` 배열은 Flux·Grafana에서 행으로 펴기 어렵다). `update`에는 새로 걸린 UE만 오므로 모으면 그 경보의 전체 UE다.
 
-## 6. `overhead` — 수집 오버헤드 (R5 협의 전까지 처음 형식)
+## 6. `overhead` — 수집 오버헤드 (11/13 탐지 쪽 형식, M11)
+
+분석 엔진(계측기)이 `kpm2`·`ue_evt`·`f1_evt`와 **같은 소켓, 같은 번호열**(`session`·`seq`)로 구간마다 한 줄 낸다. 구간은 `--overhead-ms`(기본 3,000 ms) — 상시 `kpm2`와 같은 3초다. 전송기가 줄 그대로 `/ingest`로 보낸다.
 
 ```json
-{"type":"overhead","ts":1763280000000000000,"node":"cu","ebpf_on":true,"cpu_pct":23.4,"mem_mb":512}
+{"type":"overhead","ver":1,"session":"20261113T043024Z","seq":37,"node_id":"cu","process_scope":"self","t_start_ms":1794544261000,"t_end_ms":1794544264000,"cpu":{"count":4,"node_busy_cores":0.03,"process_cores":0},"memory":{"total_bytes":8153268224,"used_bytes":4623908864,"process_rss_bytes":323219456},"link":[{"interface_name":"ens5","role":"f1","ingress":{"sctp_packet_count":0,"wire_byte_count":0},"egress":{"sctp_packet_count":0,"wire_byte_count":0}}]}
 ```
 
-필수: `ts`(Unix epoch **나노초** 정수) · `node`(`cu`·`du`·`core`) · `ebpf_on`(불리언, 문자열 `"true"`는 거부) · `cpu_pct`·`mem_mb`(0 이상 숫자, 멀티코어 합산이면 100을 넘을 수 있음). 모르는 필드는 거부한다. UDP·파일로 받는다. 측정 주체·형식은 탐지 쪽과 협의 중이라(27_ §9 R5) 정해지면 이 절을 고친다.
+| 필드 | 뜻 |
+|---|---|
+| `ver` | 줄 형식 판. `1`이 아니면 거부 |
+| `session` · `seq` | 계측기 기동 시각(UTC, 재시작하면 바뀜)과 그 세션 안의 줄 번호 — `kpm2`·`ue_evt`·`f1_evt`와 한 번호열 |
+| `node_id` | 어느 박스의 부하인가(`cu`로 통일 — 11/13). 계측기에 `--node`를 안 주면 키가 없다(`hello`와 같은 규칙) |
+| `process_scope` | `process_*` 값이 덮는 범위. `self` = 계측기 프로세스 하나. 탐지 판정·전송은 다른 프로세스라 그 몫은 `node_*`에만 섞여 있다 |
+| `t_start_ms` · `t_end_ms` | 이 줄이 덮는 구간(벽시계 epoch ms) |
+| `cpu.count` | 노드 코어 수(아래 두 값의 분모, 1 이상) |
+| `cpu.node_busy_cores` | 구간 동안 노드가 바쁘게 돈 코어 수의 평균(실수) |
+| `cpu.process_cores` | 같은 구간에 계측기가 쓴 코어 수의 평균. `0`은 유효한 측정값(한가했음) |
+| `memory.total_bytes` · `used_bytes` | 노드 전체·사용 중(MemTotal − MemAvailable), 구간 끝 순간값 |
+| `memory.process_rss_bytes` | 계측기 프로세스의 resident |
+| `link[]` | 선언한 NIC마다 한 칸: `interface_name`(필수), `role`(`f1`·`n2`·`f1+n2`), `ingress`(들어옴, F1이면 DU → CU)·`egress`(나감)의 `sctp_packet_count`·`wire_byte_count`(구간 증가분 — 누적·초당 값 아님). **SCTP 패킷만 센다**(F1AP·NGAP 시그널링, F1-U 사용자 데이터 GTP-U는 빠짐 — 11/13). 바이트는 이더넷 헤더 포함·FCS 제외, GSO로 묶인 패킷은 세그먼트 수만큼 |
+
+- 숫자를 못 읽었으면 `null`(첫 구간의 `link` 증가분도 `null`). `null`·빈 객체·키 없음은 모두 "값 없음"으로 받아 InfluxDB에서 그 필드를 뺀다.
+- 점유율(%)은 보내는 쪽이 나누지 않는다(분모를 잃으면 0.5가 몇 코어의 절반인지 모름). 화면에서 `node_busy_cores` / `count`로 계산한다.
+- 검사: 위 형식과 타입(정수·0 이상, `count` ≥ 1), 모르는 필드는 받는다. `t_start_ms` ≥ `t_end_ms`면 저장하고 경고만 남긴다.
 
 ## 7. 직접 검증해 보기
 
@@ -294,7 +316,7 @@ collector를 InfluxDB 없이 띄워 놓고 내 프로그램이 보내게 하면,
 
 ```bash
 python -m collector.collector --dry-run --in http://127.0.0.1:8088            # 탐지 엔진 전송기 (2.4절)
-python -m collector.collector --dry-run                                       # UDP 127.0.0.1:9999로 받기
+python -m collector.collector --dry-run                                       # UDP 127.0.0.1:9999로 받기(시험용)
 python -m collector.collector --dry-run --in file://out.jsonl --once --env lab   # 파일 검사
 ```
 
@@ -315,3 +337,4 @@ python -c "import json,sys; from common.schema import validation_errors as v; \
 | 0.2 | 2026-11-04 | (커밋 전에 0.3에 합침) 지표 이름을 TeleRAN Table I·II의 24개로 고정 |
 | 0.3 | 2026-11-09 | **탐지 엔진 레코드 6종 추가**(`alert`·`evidence`·`gap`·`kpm2`·`hello`·`f1_evt`, 27_ 명세 그대로 — ms 시각, 모르는 필드 받음, `fmt`·`ver` 1). `POST /ingest`·`X-Env`·중복 키(2절). Table I·II 대응을 `kpm2` 키와 `ue_evt` 필드로 바꿈(4절). `evidence.raw`가 KPM1 `ue_evt`면 타임라인 필드 7개(`t_ms`·`cell_id`·`du_ue_id`·`dir`·`proto`·`msg`·`type`)를 검사(3.7절, `$defs.ue_evt`). `metric`·`detection`·`attack_run`은 mock 전용·교체 예정으로 6절에 모음. 스키마 `$defs.evidence`(탐지 근거 항목)는 `$defs.detection_evidence`로 이름만 바꿈 |
 | 0.4 | 2026-11-11 | `metric`·`detection`·`attack_run`(mock 전용)을 mock 생성기·evaluator·옛 대시보드와 함께 **삭제**(M10). `overhead`만 처음 형식으로 남김(6절). InfluxDB `alert_ue`(걸린 UE 한 칸 = 점 하나) 추가(5절) |
+| 0.5 | 2026-11-13 | **`overhead`를 탐지 쪽 형식으로 바꿈**(M11, 6절): 분석 엔진이 3초마다 `/ingest`로, ms 구간 `t_start_ms`·`t_end_ms`, `session`·`seq`(중복 키), `ver` 1, 노드·계측기 CPU(코어 수)·메모리(바이트)·NIC별 링크 증가분, 모르는 필드 받음. 옛 형식(ns `ts`·`node`·`ebpf_on`·`cpu_pct`·`mem_mb`, 모르는 필드 거부)과 `$defs.epoch_ns`·`$defs.node` 삭제. InfluxDB `overhead`를 새 필드로, `overhead_link` 추가(5절) |

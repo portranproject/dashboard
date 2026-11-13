@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portran.local/schema/messages.schema.json",
   "title": "PortRAN observability message",
-  "description": "JSON Lines 한 줄 = 메시지 하나. type 필드로 종류를 구분한다. 사람이 읽는 설명은 schema/SCHEMA.md 참고. alert·evidence·gap·kpm2·hello·f1_evt는 탐지 엔진 레코드(reference/detection/27_ 명세), overhead는 형식 미정(R5)이라 옛 형식 그대로다.",
+  "description": "JSON Lines 한 줄 = 메시지 하나. type 필드로 종류를 구분한다. 사람이 읽는 설명은 schema/SCHEMA.md 참고. 모두 탐지 쪽(분석 엔진·탐지 엔진)이 보내는 레코드다. alert·evidence·gap·kpm2·hello·f1_evt는 reference/detection/27_ 명세, overhead는 11/13에 받은 형식(SCHEMA.md 6절).",
   "type": "object",
   "required": [
     "type"
@@ -30,12 +30,6 @@
     {"if": {"properties": {"type": {"const": "overhead"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/overhead"}}
   ],
   "$defs": {
-    "epoch_ns": {
-      "description": "Unix epoch 나노초 정수(overhead). 하한(2001-09-09)은 초·밀리초·마이크로초 단위 실수를 잡기 위한 것.",
-      "type": "integer",
-      "minimum": 1000000000000000000,
-      "maximum": 9223372036854775807
-    },
     "epoch_ms": {
       "description": "Unix epoch 밀리초 정수(탐지 엔진 레코드, 27_ §2.3). 하한 2001-09-09, 상한 2286년 — 초·마이크로초·나노초로 잘못 보낸 값을 잡는다.",
       "type": "integer",
@@ -61,6 +55,16 @@
         "integer",
         "null"
       ]
+    },
+    "non_negative_int_or_null": {
+      "description": "모름(측정 못 함)은 null (overhead).",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "non_negative_number_or_null": {
+      "description": "모름(측정 못 함)은 null (overhead). 0은 유효한 측정값이다.",
+      "type": ["number", "null"],
+      "minimum": 0
     },
     "kpm_counter": {
       "description": "kpm2 cc·si·ext의 값: 숫자, 모름(null), 또는 하위 키(원인별 등)마다 숫자·null을 담은 객체 (27_ §4.1).",
@@ -572,45 +576,57 @@
         }
       }
     },
-    "node": {
-      "enum": [
-        "cu",
-        "du",
-        "core"
-      ]
+    "overhead_direction": {
+      "description": "overhead link[]의 한 방향(ingress = 들어옴, egress = 나감). 구간 동안의 증가분이다(누적·초당 값 아님). 커널 맵을 못 읽었거나 첫 구간이면 null.",
+      "type": "object",
+      "properties": {
+        "sctp_packet_count": {"$ref": "#/$defs/non_negative_int_or_null"},
+        "wire_byte_count": {"$ref": "#/$defs/non_negative_int_or_null"}
+      }
+    },
+    "overhead_link": {
+      "description": "overhead link[] 한 칸 = 선언한 NIC 하나.",
+      "type": "object",
+      "required": ["interface_name"],
+      "properties": {
+        "interface_name": {"$ref": "#/$defs/non_empty_string"},
+        "role": {"type": "string"},
+        "ingress": {"$ref": "#/$defs/overhead_direction"},
+        "egress": {"$ref": "#/$defs/overhead_direction"}
+      }
     },
     "overhead": {
-      "description": "수집 오버헤드. 측정 주체·형식은 탐지 쪽과 협의 중(R5)이라 옛 형식 그대로 둔다.",
+      "description": "수집 오버헤드 — 분석 엔진(계측기)이 kpm2·ue_evt·f1_evt와 같은 소켓·번호열로 구간(기본 3,000 ms)마다 한 줄. 노드 CPU·메모리, 계측기 프로세스 몫, NIC별 F1·N2 트래픽. 11/13 탐지 쪽 형식(SCHEMA.md 6절). 모르는 필드는 받는다.",
       "type": "object",
-      "required": [
-        "type",
-        "ts",
-        "node",
-        "ebpf_on",
-        "cpu_pct",
-        "mem_mb"
-      ],
-      "additionalProperties": false,
+      "required": ["type", "ver", "session", "seq", "t_start_ms", "t_end_ms", "cpu", "memory"],
       "properties": {
-        "type": {
-          "const": "overhead"
+        "type": {"const": "overhead"},
+        "ver": {"const": 1},
+        "session": {"$ref": "#/$defs/non_empty_string"},
+        "seq": {"$ref": "#/$defs/non_negative_int"},
+        "node_id": {"$ref": "#/$defs/non_empty_string"},
+        "process_scope": {"type": "string"},
+        "t_start_ms": {"$ref": "#/$defs/epoch_ms"},
+        "t_end_ms": {"$ref": "#/$defs/epoch_ms"},
+        "cpu": {
+          "type": "object",
+          "properties": {
+            "count": {"type": ["integer", "null"], "minimum": 1},
+            "node_busy_cores": {"$ref": "#/$defs/non_negative_number_or_null"},
+            "process_cores": {"$ref": "#/$defs/non_negative_number_or_null"}
+          }
         },
-        "ts": {
-          "$ref": "#/$defs/epoch_ns"
+        "memory": {
+          "type": "object",
+          "properties": {
+            "total_bytes": {"$ref": "#/$defs/non_negative_int_or_null"},
+            "used_bytes": {"$ref": "#/$defs/non_negative_int_or_null"},
+            "process_rss_bytes": {"$ref": "#/$defs/non_negative_int_or_null"}
+          }
         },
-        "node": {
-          "$ref": "#/$defs/node"
-        },
-        "ebpf_on": {
-          "type": "boolean"
-        },
-        "cpu_pct": {
-          "type": "number",
-          "minimum": 0
-        },
-        "mem_mb": {
-          "type": "number",
-          "minimum": 0
+        "link": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/overhead_link"}
         }
       }
     }

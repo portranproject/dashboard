@@ -14,7 +14,8 @@
 | M8 탐지 엔진 연동 1 — 스키마 v0.3 · collector `/ingest` | 완료 (PR #21 병합) | 2026-11-09 |
 | M9 탐지 엔진 연동 2 — AWS 앞단 TLS · 연동 시험 | 완료 (PR #22·#24, 배포 #23·#25, 탐지 쪽 전송기 연동 시험 통과) | 2026-11-09 |
 | M10 대시보드 재구성 · 옛 메시지 삭제 | 진행 중 (PR #27~#38, 배포 #28·#30·#32·#34·#36·#38 — replay·관제·성능(탐지 성과) 대시보드·정리 배포 완료. 남은 것: 수집 오버헤드(R5)·단계 비교 데이터, 탐지 쪽 대기) | |
-| M11 수집 오버헤드 — 스키마 v0.5 · collector · 성능 대시보드 CU 자원 | 진행 중 (브랜치 `feat/dashboard-M11` — 구현·확인 끝, PR 전) | |
+| M11 수집 오버헤드 — 스키마 v0.5 · collector · 성능 대시보드 CU 자원 | 완료 (PR #40, 배포 #41) | 2026-11-13 |
+| M12 Slack 알림 — Grafana Alerting (공격 경보·수집 멈춤) | 진행 중 (브랜치 `feat/dashboard-M12` — 구현·확인 끝, PR 전) | |
 
 ---
 
@@ -1160,10 +1161,54 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 
 ### 남은 일
 
-- [ ] PR(`feat/dashboard-M11` → `dev`) → `main` 배포
+- [x] PR(`feat/dashboard-M11` → `dev`, #40) → `main` 배포(#41, 2026-11-13)
 - [x] 탐지 쪽 `overhead` 실제 출력 샘플(11/13, 30줄 = 90초) → `tests/data/overhead/overhead-sample-3s-30.jsonl`에 넣고 스키마·`/ingest`·실제 InfluxDB·대시보드로 확인(T7 ②)
 - [ ] (있으면) 계측기 기동 직후·링크 값을 못 읽은 구간이 든 샘플로 T7 ①③ 확인
 - [ ] 탐지 쪽 확인: 오버헤드 전용 전송기의 `X-Env`·주소·인증서·헤더·응답 처리가 기존 전송기와 같은지(D171)
 - [ ] AWS에서 탐지 쪽이 계측기를 켠 뒤 CU 자원 줄 확인(데이터 출처 AWS)
 - [ ] 노드가 늘면(예: DU) 노드 변수 추가
 - [ ] 배포 뒤 AWS 관제 경보 목록에 해제된 경보(UE 컨텍스트 고갈 등)가 다시 보이는지(D176)
+
+---
+
+## M12 — Slack 알림: Grafana Alerting (2026-11-13, 브랜치 `feat/dashboard-M12`)
+
+목표: AWS(p4) 실측에서 공격 경보가 나면 Slack으로 알리고, 실험 중 데이터가 끊기면 알린다. 사용자 결정(11/13): ① Webhook은 사용자가 만들어 서버 `.env`에 ② 데이터 출처는 AWS만(On-Premise는 받기 시작하면) ③ 공격 경보 발생 + 해제(이상 유형·판정 보류·high 오름은 알리지 않음) ④ 메시지 = 공격 이름·셀·심각도·시작 시각 + 경보 상세 링크 ⑤ 수집 멈춤 알림도.
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `grafana/build.py` | `alerting()` — 알림 provisioning을 만든다: 규칙 2개(공격 경보, 수집 멈춤), Slack 연락처 2개(수집 멈춤은 해제 알림 없음), 알림 정책(경보 하나 = 알림 하나), 메시지 템플릿. 공격 경보 상태는 대시보드와 같은 `alert_summary`, 공격 이름은 같은 짧은 이름. `--check`가 알림 파일도 본다 |
+| `grafana/provisioning/alerting/portran.json` (새 파일) | 위 생성 결과 |
+| `docker-compose.yml` · `.env.example` | Grafana에 `SLACK_WEBHOOK_URL`(비어 있으면 아무 데도 안 가는 주소)·`GF_SERVER_ROOT_URL`(= `GRAFANA_ROOT_URL`) |
+| `tests/test_dashboards.py` | 알림 provisioning 구성 검사(AWS만, 공격만, 연락처·정책, 템플릿에 `$` 없음, `.Values`는 `with` 안), 알림 쿼리를 Grafana에서 실행(Grafana 있을 때) |
+| 문서 | CLAUDE.md 4·9.3·13절, README "Slack 알림", `docs/deploy.md` 11절(Webhook 만들기·서버 `.env`·시험) |
+| `README.md` 맨 위 그림 | ASCII 흐름도를 **Mermaid 그림**으로(GitHub에서 그려짐): 테스트베드(분석 엔진·탐지 엔진·전송기·오버헤드 전송기) → 대시보드 서버(nginx → collector → InfluxDB → Grafana, 녹화·replay) → Slack·팀원 브라우저, On-Premise는 점선(나중). 사용자 요청(11/13). Edge headless로 mermaid 10.9.1을 그려 미리 확인 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D180 | 알림은 **Grafana Alerting**(provisioning) — collector가 직접 보내지 않는다 | 새 코드가 거의 없고, 발생·해제 상태·중복 묶기·재전송을 Grafana가 한다. 시간 기반 알림(수집 멈춤)도 같은 방식. collector에 외부 연결을 만들지 않는다 | 불필요 |
+| D181 | 공격 경보 규칙: 6시간 범위의 AWS 공격 경보마다 한 계열, 값 = 열림 1(medium)·2(high) / 해제 0 / 강제 종료 -1, 0보다 크면 울림. 10초마다, 바로(`for` 0초) | 값에 끝난 모양을 담아 해제 알림에 '해제·강제 종료'를 적는다(라벨에 넣으면 상태가 바뀔 때 다른 알림이 된다). 6시간 안에 끝이 안 오면 범위를 벗어나며 '끝 소식 없음'으로 끝난다. 상태 불명(15초·90초 무소식)으로 끝내지 않는 건, 근거가 잠깐 늦을 때 발생·끝이 번갈아 와 Slack이 시끄러워지지 않게 | 불필요 |
+| D182 | 수집 멈춤: 마지막 레코드(상시 KPM2 `n`·오버헤드·경보·근거·hello) 뒤 5분 넘으면 울림. 최근 1시간에 아무것도 없으면 조회 결과 없음 = 정상(테스트베드를 끈 것). 해제 알림은 보내지 않음 | 실험 중 끊김만 알리고, 끈 테스트베드로 매번 울리거나 '다시 들어옴'·'1시간 지남'을 해제처럼 알리지 않게. 일부러 멈춘 실험에도 한 번은 온다(메시지에 적음) | 불필요 |
+| D183 | 조회 실패는 마지막 상태 유지(`execErrState: KeepLast`), 결과 없음은 정상(`noDataState: OK`), 같은 알림 다시 보내기 24시간 | InfluxDB가 잠깐 죽거나 오래 열린 경보로 Slack에 오류·반복 알림이 쏟아지지 않게 | 불필요 |
+| D184 | Webhook 주소는 `.env` → Grafana 환경변수 → provisioning `${SLACK_WEBHOOK_URL}`. 비어 있으면 `http://127.0.0.1:9/…`(연결 거부)로 | 비밀 값을 저장소에 두지 않는다. 비어 있어도 Grafana가 뜨고(잘못된 연락처로 provisioning이 실패하지 않게) Slack 서버로도 나가지 않는다 | 불필요 |
+| D185 | 메시지 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.CommonAnnotations`·`.ExternalURL`), `.Values`는 `{{ with .Values }}` 안에서만 | provisioning 파일은 환경변수를 바꿔 넣는다. 조회 결과가 없을 때(NoData) `.Values.B`를 꺼내면 템플릿이 깨졌다(임시 Grafana에서 확인) | 불필요 |
+
+### 확인 결과
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 266 passed, 4 skipped(로컬 Grafana·InfluxDB가 필요한 테스트 — 알림 쿼리는 아래 임시 Grafana에서 직접 실행해 오류 0) |
+| 임시 스택에서 실제 알림 | 임시 InfluxDB·Grafana 12.4.13 + 가짜 Slack 수신기(같은 네트워크의 작은 HTTP 서버)로: ① AWS에 6분 전 상시 KPM2 한 줄 → "⚠️ 수집 멈춤 … 마지막 수신 370초 전" ② 샘플 T10 경보 raise → "🚨 UE 컨텍스트 고갈 · 셀 1 · medium · 시작 2026-11-13 17:23:18 + 경보 상세 링크", 수집 멈춤은 조용히 끝남 ③ T10 clear → "✅ … 해제" ④ 샘플 T07(`end` session_reset) → "✅ … 강제 종료". 환경변수 Webhook 주소가 들어가고 JSON provisioning이 읽힘 |
+| 고친 것 | 조회 결과 없을 때 템플릿 오류(→ `with`), 링크의 `//`(→ `ExternalURL`은 `/`로 끝남) |
+
+확인하지 못한 것: 실제 Slack 채널(Webhook은 사용자가 만들어 서버에 넣음), AWS 배포 뒤 실측 경보.
+
+### 남은 일
+
+- [ ] PR(`feat/dashboard-M12` → `dev`) → `main` 배포
+- [ ] (사용자) Slack Incoming Webhook 만들어 서버 `.env`에 `SLACK_WEBHOOK_URL`·`GRAFANA_ROOT_URL=http://3.39.170.31:3000` → `docker compose up -d grafana` → Contact points에서 Test(`docs/deploy.md` 11절)
+- [ ] On-Premise를 받기 시작하면 알림 출처에 `lab` 더하기

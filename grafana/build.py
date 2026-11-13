@@ -1209,27 +1209,139 @@ schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
                      b, variables, [], refresh="1m", time_from="now-24h")
 
 
+# --------------------------------------------------------------------------- 알림 — Slack (M12)
+
+# 알림은 AWS 실측에서만 보낸다(11/13 사용자 결정). On-Premise(lab)는 받기 시작하면 더한다.
+NOTIFY_SOURCE = "p4"
+NOTIFY_INTERVAL = "10s"           # 규칙을 조회하는 주기
+ATTACK_LOOKBACK_S = 6 * 3600      # 공격 경보를 찾는 범위. 이보다 오래 열린 경보는 '끝 소식 없음'으로 끝난다
+COLLECT_STOP_S = 300              # 수집 멈춤: 마지막 레코드 뒤 이만큼 아무것도 없으면
+COLLECT_LOOKBACK_S = 3600         # 이 범위에 아무것도 없으면 테스트베드를 끈 것으로 보고 알리지 않는다
+ALERTING_OUT = ROOT / "provisioning" / "alerting" / "portran.json"
+SLACK_ALL = "PortRAN Slack"
+SLACK_NO_RESOLVE = "PortRAN Slack (해제 알림 없음)"
+
+# 알림 메시지(Slack). 한 알림 = 경보 하나(group_by alert_id)라서 .CommonLabels·.CommonAnnotations만 쓴다.
+# provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿에 '$'를 쓰지 않는다.
+NOTIFY_TEMPLATE = (
+    '{{ define "portran.title" }}{{ if eq .CommonLabels.notify "collect" }}⚠️ PortRAN 수집 멈춤'
+    '{{ else if eq .Status "firing" }}🚨 PortRAN 공격 경보{{ else }}✅ PortRAN 공격 경보 끝{{ end }}{{ end }}\n'
+    '{{ define "portran.text" }}{{ if eq .CommonLabels.notify "collect" }}{{ .CommonAnnotations.summary }}'
+    '{{ else }}*{{ .CommonLabels.attack }}* · 셀 {{ .CommonLabels.cell }} · '
+    '{{ if eq .Status "firing" }}{{ .CommonAnnotations.severity }} · 시작 {{ .CommonLabels.start }}'
+    '{{ else }}{{ .CommonAnnotations.status }}{{ end }}\n'
+    # ExternalURL(= GF_SERVER_ROOT_URL)은 Grafana가 늘 '/'로 끝나게 맞춘다
+    '<{{ .ExternalURL }}d/portran-monitoring?var-source=' + NOTIFY_SOURCE + '&var-alert_id={{ .CommonLabels.alert_id }}|경보 상세 보기>'
+    '{{ end }}{{ end }}\n'
+)
+
+
+def alert_rule(uid: str, title: str, query: str, lookback_s: int, threshold: float, labels: dict,
+               annotations: dict) -> dict:
+    """InfluxDB 조회(A) → 계열마다 마지막 값(B) → B > threshold면 울림(C)."""
+    return {
+        "uid": uid, "title": title, "condition": "C",
+        "data": [
+            {"refId": "A", "relativeTimeRange": {"from": lookback_s, "to": 0}, "datasourceUid": DS["uid"],
+             "model": {"refId": "A", "query": query.strip("\n")}},
+            {"refId": "B", "relativeTimeRange": {"from": 0, "to": 0}, "datasourceUid": "__expr__",
+             "model": {"refId": "B", "type": "reduce", "expression": "A", "reducer": "last",
+                       "settings": {"mode": "dropNN"}}},
+            {"refId": "C", "relativeTimeRange": {"from": 0, "to": 0}, "datasourceUid": "__expr__",
+             "model": {"refId": "C", "type": "threshold", "expression": "B",
+                       "conditions": [{"evaluator": {"type": "gt", "params": [threshold]}}]}},
+        ],
+        # 조회 결과가 없으면 정상, 조회가 실패하면 마지막 상태를 유지(InfluxDB가 잠깐 죽어도 Slack에 오류를 쏟지 않게)
+        "noDataState": "OK", "execErrState": "KeepLast", "for": "0s",
+        "labels": labels, "annotations": annotations, "isPaused": False,
+    }
+
+
+def alerting() -> dict:
+    env = f'r.env == "{NOTIFY_SOURCE}"'
+    # 공격 경보(kind attack)마다 한 계열. 값: 열림(raise·update) = 1(medium)·2(high), 해제 = 0, 강제 종료 = -1.
+    # 경보 상태는 alert_summary(관제 대시보드와 같은 계산)로 정한다
+    attacks = f'''
+import "date"
+import "dict"
+import "strings"
+names = {rule_name_dict()}
+{alert_summary(f"-{ATTACK_LOOKBACK_S}s", "-5m", stop="now()").replace(ENV, env)}
+summary
+  |> filter(fn: (r) => r.kind == "attack")
+  |> map(fn: (r) => ({{alert_id: r.alert_id, rule: r.rule, cell: r.cell,
+      attack: dict.get(dict: names, key: r.rule, default: r.rule),
+      start: strings.replaceAll(v: strings.substring(v: string(v: date.add(d: 9h, to: r.start)), start: 0, end: 19), t: "T", u: " "),
+      _time: now(),
+      _value: if r.event == "raise" or r.event == "update" then (if r.sev == 2 then 2.0 else 1.0)
+              else if r.event == "end" then -1.0 else 0.0}}))
+  |> group(columns: ["alert_id", "rule", "cell", "attack", "start"])
+'''
+    measurements = {"kpm2": "n", "overhead": "seq", "alert": "severity", "evidence": "seq", "hello": "seq"}
+    seen = " or ".join(f'(r._measurement == "{m}" and r._field == "{f}")' for m, f in measurements.items())
+    collect = f'''
+from(bucket: v.defaultBucket)
+  |> range(start: -{COLLECT_LOOKBACK_S}s)
+  |> filter(fn: (r) => {env} and ({seen}))
+  |> keep(columns: ["_time"])
+  |> group()
+  |> max(column: "_time")
+  |> map(fn: (r) => ({{_time: now(), _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}}))
+'''
+    rules = [
+        alert_rule("portran-attack", "공격 경보 (AWS)", attacks, ATTACK_LOOKBACK_S, 0,
+                   {"notify": "attack"},
+                   # 조회 결과가 없을 때(NoData)는 .Values가 비어 있어 B를 꺼내면 템플릿이 깨진다 — with로 감싼다
+                   {"severity": '{{ with .Values }}{{ if eq .B.Value 2.0 }}high{{ else }}medium{{ end }}{{ end }}',
+                    "status": '{{ with .Values }}{{ if gt .B.Value 0.0 }}끝 소식 없음(6시간 안에 해제·강제 종료가 오지 않음)'
+                              '{{ else if lt .B.Value 0.0 }}강제 종료{{ else }}해제{{ end }}{{ end }}',
+                    "description": "AWS(p4) 공격 경보(kind attack)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
+                                   "이상 유형·판정 보류 경보는 알리지 않는다(M12)"}),
+        alert_rule("portran-collect-stop", "수집 멈춤 (AWS)", collect, COLLECT_LOOKBACK_S, COLLECT_STOP_S,
+                   {"notify": "collect"},
+                   {"summary": f"AWS(p4)에서 {COLLECT_STOP_S // 60}분 넘게 데이터(상시 KPM2·오버헤드·경보·근거)가 오지 않아요. "
+                               "{{ with .Values }}마지막 수신 {{ printf \"%.0f\" .B.Value }}초 전. {{ end }}실험을 일부러 멈춘 거라면 무시하세요",
+                    "description": f"마지막 레코드 뒤 {COLLECT_STOP_S}초. 최근 {COLLECT_LOOKBACK_S // 60}분에 아무것도 없으면 "
+                                   "테스트베드를 끈 것으로 보고 울리지 않는다. 다시 들어와도 알리지 않는다"}),
+    ]
+    slack = lambda uid, no_resolve: {"uid": uid, "type": "slack", "disableResolveMessage": no_resolve, "settings": {
+        "url": "${SLACK_WEBHOOK_URL}", "title": '{{ template "portran.title" . }}', "text": '{{ template "portran.text" . }}'}}
+    return {
+        "apiVersion": 1,
+        "groups": [{"orgId": 1, "name": "PortRAN 알림", "folder": "PortRAN", "interval": NOTIFY_INTERVAL, "rules": rules}],
+        "contactPoints": [
+            {"orgId": 1, "name": SLACK_ALL, "receivers": [slack("portran-slack", False)]},
+            {"orgId": 1, "name": SLACK_NO_RESOLVE, "receivers": [slack("portran-slack-no-resolve", True)]},
+        ],
+        # 한 알림 = 경보 하나. 같은 알림을 다시 보내는 간격은 길게(오래 열린 경보로 Slack이 시끄럽지 않게)
+        "policies": [{"orgId": 1, "receiver": SLACK_ALL, "group_by": ["alertname", "alert_id"],
+                      "group_wait": "0s", "group_interval": "10s", "repeat_interval": "24h",
+                      "routes": [{"receiver": SLACK_NO_RESOLVE, "object_matchers": [["notify", "=", "collect"]]}]}],
+        "templates": [{"orgId": 1, "name": "portran", "template": NOTIFY_TEMPLATE}],
+    }
+
+
 # --------------------------------------------------------------------------- 쓰기
 
-BUILDERS = {"monitoring.json": monitoring, "performance.json": performance}
+BUILDERS = {OUT_DIR / "monitoring.json": monitoring, OUT_DIR / "performance.json": performance,
+            ALERTING_OUT: alerting}
 
 
-def render() -> dict[str, str]:
-    return {name: json.dumps(build(), ensure_ascii=False, indent=2) + "\n" for name, build in BUILDERS.items()}
+def render() -> dict[Path, str]:
+    return {path: json.dumps(build(), ensure_ascii=False, indent=2) + "\n" for path, build in BUILDERS.items()}
 
 
 def main(argv: list[str]) -> int:
     outputs = render()
     if "--check" in argv:
-        stale = [n for n, text in outputs.items() if not (OUT_DIR / n).exists()
-                 or (OUT_DIR / n).read_text(encoding="utf-8") != text]
+        stale = [p.name for p, text in outputs.items() if not p.exists() or p.read_text(encoding="utf-8") != text]
         if stale:
-            print(f"대시보드 JSON이 grafana/build.py와 다릅니다: {', '.join(stale)} — python grafana/build.py로 다시 만드세요")
+            print(f"대시보드·알림 JSON이 grafana/build.py와 다릅니다: {', '.join(stale)} — python grafana/build.py로 다시 만드세요")
             return 1
         return 0
-    for name, text in outputs.items():
-        (OUT_DIR / name).write_text(text, encoding="utf-8")
-        print(f"썼음: {OUT_DIR / name}")
+    for path, text in outputs.items():
+        path.write_text(text, encoding="utf-8")
+        print(f"썼음: {path}")
     return 0
 
 

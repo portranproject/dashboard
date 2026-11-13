@@ -407,6 +407,24 @@ sudo bash deploy/server-deploy.sh      # 새 인증서를 만들고 PEM을 출�
 | `400` | 본문이 UTF-8이 아니거나 `X-Env` 형식 오류 — 응답 본문 `error`에 사유 |
 | `200`인데 `rejected` > 0 | 줄 형식 문제. 서버 `recordings/rejected.jsonl`의 `reasons` |
 
+## 11. Slack 알림 (M12)
+
+AWS(p4)의 공격 경보 발생·끝과 수집 멈춤을 Slack으로 보낸다(규칙은 README "Slack 알림", CLAUDE.md 9.3절). 서버 `.env`에 두 값을 넣는다.
+
+1. Slack에서 알림 받을 채널 → 앱 추가 → **Incoming Webhooks** → "Add to Slack" → 채널 고르기 → Webhook URL 복사(`https://hooks.slack.com/services/…`). **비밀 값**이라 채팅·커밋에 붙이지 않는다.
+2. 서버에서(`sudo -i` 뒤 `/opt/portran/dashboard`):
+   ```bash
+   nano .env      # 아래 두 줄을 넣거나 고친다
+   # SLACK_WEBHOOK_URL=https://hooks.slack.com/services/…
+   # GRAFANA_ROOT_URL=http://3.39.170.31:3000
+   docker compose up -d grafana   # .env 값이 바뀌면 Grafana를 다시 만든다(.env만 바꾼 건 CD가 모른다)
+   ```
+3. 시험: Grafana → Alerting → Contact points → `PortRAN Slack` → **Test** → 채널에 시험 메시지가 오면 끝.
+
+- `SLACK_WEBHOOK_URL`이 비어 있으면 알림이 아무 데도 가지 않는다(Grafana 로그에 전송 실패만 남음).
+- 메시지의 "경보 상세 보기" 링크는 `GRAFANA_ROOT_URL`을 쓴다. 3000번은 보안 그룹에서 허용한 IP에서만 열린다.
+- Webhook을 바꾸거나 끊으려면 Slack 앱 설정에서 지우고 `.env`를 고친 뒤 2번의 마지막 명령.
+
 ## 문제 해결
 
 **Session Manager "연결" 버튼이 비활성이다**

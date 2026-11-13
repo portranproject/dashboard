@@ -2,15 +2,50 @@
 
 O-RAN 기반 5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드 · 검증 파이프라인**.
 
-```
-탐지 엔진 전송기 ──HTTPS POST /ingest (X-Env)──> nginx(TLS) ──> collector ──> InfluxDB ──> Grafana (관제 / 성능)
-                                                                  │
-                          replay (녹화·샘플을 지금 시각으로) ──────┤<── recordings/raw-*.jsonl
+```mermaid
+flowchart LR
+  subgraph TB["🧪 테스트베드 · AWS p4 CU 박스"]
+    direction TB
+    EBPF["분석 엔진<br/>eBPF 계측기"]
+    DET["탐지 엔진<br/>룰 13개"]
+    SEND["전송기<br/>경보 · 근거 · 상시 KPM2"]
+    OSEND["오버헤드 전송기<br/>CPU · 메모리 · F1/N2"]
+    EBPF -->|"KPM1 · KPM2"| DET --> SEND
+    EBPF -->|"3초마다"| OSEND
+  end
+  LAB["🏫 On-Premise · 연구실<br/>(나중에)"]
+  subgraph EC2["☁️ 대시보드 서버 · AWS EC2"]
+    direction LR
+    NGINX["nginx<br/>HTTPS :443 /ingest"]
+    COL["collector<br/>검증 · 중복 제거"]
+    DB[("InfluxDB")]
+    REC[/"녹화<br/>raw-*.jsonl"/]
+    G["Grafana<br/>관제 · 성능 대시보드"]
+    NGINX --> COL --> DB --> G
+    COL --> REC
+    REC -.->|"replay<br/>시연 · 백업"| COL
+  end
+  SEND -->|"POST /ingest<br/>X-Env: p4"| NGINX
+  OSEND -->|"POST /ingest"| NGINX
+  LAB -.->|"X-Env: lab"| NGINX
+  G -->|"공격 경보 · 수집 멈춤"| SLACK(["💬 Slack"])
+  USER(["👥 팀원 브라우저"]) -->|":3000"| G
+
+  classDef tb fill:#e8f1fd,stroke:#3b82f6,color:#1e3a8a
+  classDef srv fill:#e9f8ef,stroke:#16a34a,color:#14532d
+  classDef ext fill:#f4f0fd,stroke:#7c3aed,color:#3b0764
+  classDef later fill:#f5f5f5,stroke:#9ca3af,color:#6b7280,stroke-dasharray: 4 3
+  class EBPF,DET,SEND,OSEND tb
+  class NGINX,COL,DB,REC,G srv
+  class SLACK,USER ext
+  class LAB later
+  style TB fill:#f7fbff,stroke:#93c5fd
+  style EC2 fill:#f5fcf7,stroke:#86efac
 ```
 
 - 메시지 형식: [`schema/SCHEMA.md`](schema/SCHEMA.md) ← **다른 파트 담당자는 이것만 보면 된다**
 - 탐지 엔진 레코드 형식의 기준: [`reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md`](reference/detection/27_탐지엔진_1-4단계-대시보드-지표_명세서.md) (탐지 엔진 담당, 11/05 확정)
-- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, collector, 대시보드, replay, AWS 배포 — mock 생성기로 먼저 개발), M8·M9(탐지 엔진 레코드 수신·저장, AWS `/ingest` HTTPS 경로 — 탐지 쪽 전송기 연동 시험 통과) 완료. M10 대시보드 재구성(관제 대시보드·성능 대시보드 탐지 성과, mock·evaluator·처음 메시지 형식 삭제)에 이어 M11에서 수집 오버헤드를 탐지 쪽 형식(11/13)으로 받아 성능 대시보드 CU 자원 줄에 보인다.
+- 진행 현황: [`docs/progress.md`](docs/progress.md). M1~M7(스키마, collector, 대시보드, replay, AWS 배포 — mock 생성기로 먼저 개발), M8·M9(탐지 엔진 레코드 수신·저장, AWS `/ingest` HTTPS 경로 — 탐지 쪽 전송기 연동 시험 통과) 완료. M10 대시보드 재구성(관제 대시보드·성능 대시보드 탐지 성과, mock·evaluator·처음 메시지 형식 삭제)에 이어 M11에서 수집 오버헤드를 탐지 쪽 형식(11/13)으로 받아 성능 대시보드 CU 자원 줄에 보이고, M12에서 AWS 공격 경보·수집 멈춤을 Slack으로 알린다.
 
 ## 준비물
 
@@ -124,6 +159,18 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | CU 자원 (수집 오버헤드) | 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 메모리), CPU 사용률, CPU 내역(분석 엔진 + 그 밖), 메모리 사용량·내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초), 부하와 함께(CPU % + RRC 연결 시도) |
 
 - 위쪽 변수: 데이터 출처, 셀. 공격 이름은 두 대시보드 모두 짧게('UE 컨텍스트 고갈', '하향 IMSI 추출'), 단계(1~4)는 화면에 표시하지 않는다(11/13).
+
+**Slack 알림** (M12) — AWS(p4) 실측만, Grafana Alerting이 10초마다 확인해 보낸다.
+
+| 알림 | 예 |
+|---|---|
+| 🚨 공격 경보 발생 | `UE 컨텍스트 고갈 · 셀 6733824 · medium · 시작 2026-11-13 15:53:12` + 경보 상세 링크 |
+| ✅ 공격 경보 끝 | `UE 컨텍스트 고갈 · 셀 6733824 · 해제`(또는 강제 종료, 끝 소식 없음) |
+| ⚠️ 수집 멈춤 | 데이터가 5분 넘게 안 올 때 한 번(다시 들어와도 알리지 않음, 1시간 넘게 꺼져 있으면 알리지 않음) |
+
+- 이상 유형·판정 보류 경보와 재생·샘플 데이터는 알리지 않는다.
+- 켜는 법: Slack에서 채널에 **Incoming Webhooks** 앱을 추가해 받은 주소를 `.env`의 `SLACK_WEBHOOK_URL`에 넣고 `docker compose up -d grafana`. 링크 주소는 `GRAFANA_ROOT_URL`. Grafana → Alerting → Contact points → `PortRAN Slack` → **Test**로 시험 메시지를 보낼 수 있다.
+- 규칙은 `grafana/build.py`가 `grafana/provisioning/alerting/portran.json`으로 만든다(UI에서 고쳐도 저장되지 않음).
 
 ## 개발·시연 데이터 (replay)
 

@@ -40,6 +40,10 @@ services:
       INFLUX_ORG: ${INFLUX_ORG}
       INFLUX_BUCKET: ${INFLUX_BUCKET}
       INFLUX_TOKEN: ${INFLUX_TOKEN}
+      # Slack 알림(M12, provisioning/alerting/portran.json). 비어 있으면 아무 데도 안 가는 주소로 — 알림은 실패 로그만 남는다
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-http://127.0.0.1:9/slack-webhook-not-set}
+      # 알림 메시지의 '경보 상세 보기' 링크 앞부분
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

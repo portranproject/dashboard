@@ -272,6 +272,41 @@ def test_annotation_filters_point_to_existing_panels(path):
             assert set(a["filter"]["ids"]) <= ids, a["name"]
 
 
+# --------------------------------------------------------------------------- Slack 알림 (M12, grafana/build.py가 만든다)
+
+ALERTING = REPO_ROOT / "grafana" / "provisioning" / "alerting" / "portran.json"
+
+
+def test_alerting_provisioning():
+    """공격 경보·수집 멈춤 두 규칙, AWS(p4)만, Slack 연락처 둘(수집 멈춤은 해제 알림 없음)."""
+    a = load(ALERTING)
+    [group] = a["groups"]
+    assert group["folder"] == "PortRAN" and group["interval"] == "10s"
+    rules = {r["uid"]: r for r in group["rules"]}
+    assert set(rules) == {"portran-attack", "portran-collect-stop"}
+    for r in rules.values():
+        q = r["data"][0]["model"]["query"]
+        assert r["data"][0]["datasourceUid"] == DATASOURCE_UID
+        assert 'r.env == "p4"' in q and "${" not in q, r["uid"]  # AWS 실측만(On-Premise는 받기 시작하면)
+        assert r["noDataState"] == "OK" and r["execErrState"] == "KeepLast", r["uid"]
+    assert 'r.kind == "attack"' in rules["portran-attack"]["data"][0]["model"]["query"]  # 이상 유형·판정 보류는 알리지 않음
+    assert rules["portran-attack"]["labels"] == {"notify": "attack"}
+    assert rules["portran-collect-stop"]["labels"] == {"notify": "collect"}
+    # 조회 결과가 없을 때도 템플릿이 깨지지 않게 .Values는 with 안에서만
+    for r in rules.values():
+        for text in r["annotations"].values():
+            assert ".Values" not in text or "{{ with .Values }}" in text, (r["uid"], text)
+    points = {c["name"]: c["receivers"][0] for c in a["contactPoints"]}
+    assert all(p["type"] == "slack" and p["settings"]["url"] == "${SLACK_WEBHOOK_URL}" for p in points.values())
+    assert [p["disableResolveMessage"] for p in points.values()] == [False, True]
+    [policy] = a["policies"]
+    assert policy["group_by"] == ["alertname", "alert_id"]  # 알림 하나 = 경보 하나
+    assert policy["routes"] == [{"receiver": "PortRAN Slack (해제 알림 없음)", "object_matchers": [["notify", "=", "collect"]]}]
+    # provisioning은 환경변수를 바꿔 넣는다 — 템플릿·주석에 '$'가 있으면 깨질 수 있다(웹훅 주소만 예외)
+    text = json.dumps(a, ensure_ascii=False).replace("${SLACK_WEBHOOK_URL}", "")
+    assert "$" not in text
+
+
 # --------------------------------------------------------------------------- 쿼리 실행 (Grafana 필요)
 
 VARIABLE_VALUES = {
@@ -306,6 +341,16 @@ def grafana_up():
         urllib.request.urlopen(f"http://localhost:{os.environ.get('GRAFANA_PORT', '3000')}/api/health", timeout=3)
     except Exception:
         pytest.skip("Grafana에 접속할 수 없음")
+
+
+def test_alert_queries_run_without_error(grafana_up):
+    """알림 규칙의 Flux도 Grafana(InfluxDB 데이터소스)에서 오류 없이 돈다."""
+    errors = []
+    for rule in load(ALERTING)["groups"][0]["rules"]:
+        result = grafana_query(rule["data"][0]["model"]["query"])
+        if "error" in result:
+            errors.append(f"{rule['uid']}: {result['error']}")
+    assert errors == []
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

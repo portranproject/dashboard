@@ -88,7 +88,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | 실행 | `docker compose` (InfluxDB + Grafana), Python 프로그램은 호스트에서 실행. AWS 배포만 collector 등도 컨테이너로 띄운다(`docker-compose.aws.yml`, M7) |
 
 - Docker 이미지는 `latest` 대신 고정 버전 태그를 쓴다.
-- 접속 정보(토큰, org, bucket, 포트)는 `.env`로 관리하고 `.env.example`만 커밋한다.
+- 접속 정보(토큰, org, bucket, 포트, Slack Webhook)는 `.env`로 관리하고 `.env.example`만 커밋한다.
 
 ## 4. 디렉터리 구조
 
@@ -132,6 +132,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 ├── grafana/
 │   ├── provisioning/datasources/influxdb.yml
 │   ├── provisioning/dashboards/dashboards.yml
+│   ├── provisioning/alerting/portran.json   # Slack 알림 규칙·연락처·템플릿 (M12, build.py가 만든다)
 │   ├── build.py                  # 대시보드 JSON 생성기 (JSON은 이것으로만 고친다, M10)
 │   ├── rule-names.json           # 룰 ID → 공격 이름 (27_ §5.3)
 │   └── dashboards/{monitoring.json, performance.json}   # 관제·성능 (grafana/build.py가 만든다)
@@ -258,6 +259,18 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 ### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
 `docs/dashboard-design.md` 3절. 고른 시간 범위(실험 구간)에 시작한 경보로: 종류별 경보 수, 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표, 경보가 어떻게 끝났나(해제·강제 종료 사유·끝이 안 옴), 근거 손실, 입력 끊김(gap), 상시 KPM2 칸 채움·일부만 측정된 지표. **CU 자원**(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), 부하와 함께(CPU % + RRC 연결 시도, 오른쪽 범례 표에 평균·최대). 변수: `source`, `cell`. 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴다(11/13). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
 
+### 9.3 Slack 알림 (M12, Grafana Alerting)
+알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).
+| 규칙 | 언제 | Slack |
+|---|---|---|
+| 공격 경보 (AWS) | AWS(p4)의 공격 경보(`kind` `attack`)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
+| 수집 멈춤 (AWS) | 마지막 레코드(상시 KPM2·오버헤드·경보·근거·hello) 뒤 5분 넘게 아무것도 없을 때. 최근 1시간에 아무것도 없으면(테스트베드를 끈 것) 울리지 않음 | 멈춤만 알리고 다시 들어올 때는 알리지 않음 |
+
+- 10초마다 조회한다. 알림 하나 = 경보 하나(`group_by alert_id`), 같은 알림 다시 보내기 24시간.
+- 이상 유형·판정 보류 경보, 재생·샘플·On-Premise 데이터는 알리지 않는다(11/13 사용자 결정). On-Premise는 받기 시작하면 더한다.
+- Webhook 주소는 `.env`의 `SLACK_WEBHOOK_URL`(비밀 값, 서버 `.env`에만). 비어 있으면 아무 데도 안 가는 주소로 두어 전송 실패 로그만 남는다. 링크 앞부분은 `GRAFANA_ROOT_URL`(Grafana `root_url`).
+- provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.Values`만). 조회 결과가 없을 때 템플릿이 깨지지 않게 `.Values`는 `{{ with .Values }}` 안에서만 쓴다.
+
 ## 10. 평가 (보류)
 
 처음 evaluator(정답 기록 `attack_run`과 `detection`을 맞춰 탐지율·오탐·지연 계산)는 M10에서 지웠다. 정답 기록을 대시보드로 받지 않기로 했고(11/04), 평가 결과(R1 `eval`·R2 `eval_run`)·경보별 지연(R3)은 전체 파이프라인(분석 엔진 → 탐지 엔진 → 대시보드, 실제 공격)이 완성된 뒤 탐지 쪽과 함께 정한다(27_ §9). 정해지면 이 절을 다시 쓴다.
@@ -315,5 +328,6 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
 | M7 | AWS 배포 · CI/CD. AWS에는 대시보드 스택(InfluxDB + Grafana + collector)만 올리고, 테스트베드 실시간 경로(eBPF → 탐지 엔진)는 로컬에 둔다 | CI: PR마다 Python 3.10·3.14로 서비스 테스트까지 전체 통과. AWS: EC2에서 대시보드 접속, mock·replay 데이터 표시. CD: `main` 병합 시 자동 배포 후 헬스 체크 통과 |
 | M8 | 탐지 엔진 연동 1 — 스키마 v0.3(27_ 레코드 6종), collector `POST /ingest`·`X-Env`·중복 제거·InfluxDB 저장 | 탐지 쪽 샘플 32개 전 줄 스키마 통과, `/ingest`로 넣어 InfluxDB 저장(타입 충돌·덮어쓰기 없음), 재전송 중복 제거·503 재시도 테스트 통과 |
 | M9 | 탐지 엔진 연동 2 — AWS 앞단 TLS(자체 서명 인증서, IP SAN), 443·보안 그룹, 탐지 쪽 전송기와 연동 시험 | 탐지 쪽 전송기가 EC2 `https://<IP>/ingest`로 보낸 레코드가 InfluxDB에 저장됨 |
-| M11 | 수집 오버헤드 — 탐지 쪽 `overhead` 형식(11/13)으로 스키마 v0.5, collector 저장(`overhead`·`overhead_link`), replay, 성능 대시보드 CU 자원 줄 | 새 형식이 스키마·`/ingest`·InfluxDB(실제 InfluxDB 통합 테스트)를 통과하고, CU 자원 줄이 실제 Grafana에서 표시됨 |
 | M10 | 대시보드 재구성 — 관제(상시 KPM2·경보 목록·경보 상세: 근거 KPM2 그래프·KPM1 타임라인)·성능 대시보드를 탐지 엔진 레코드로. replay를 새 형식으로 바꾸고 mock·evaluator·처음 메시지(`metric`·`detection`·`attack_run`)·옛 대시보드를 지운다. 평가는 27_ §9에 따라 탐지 쪽과 정한 뒤 | 27_ §7 '화면과 레코드'의 화면이 샘플·replay 데이터로 표시됨 |
+| M11 | 수집 오버헤드 — 탐지 쪽 `overhead` 형식(11/13)으로 스키마 v0.5, collector 저장(`overhead`·`overhead_link`), replay, 성능 대시보드 CU 자원 줄 | 새 형식이 스키마·`/ingest`·InfluxDB(실제 InfluxDB 통합 테스트)를 통과하고, CU 자원 줄이 실제 Grafana에서 표시됨 |
+| M12 | Slack 알림 — AWS(p4) 공격 경보 발생·끝, 수집 멈춤을 Grafana Alerting으로(provisioning `grafana/provisioning/alerting/portran.json`, `grafana/build.py`가 만든다) | 알림 규칙이 실제 Grafana에서 돌고, 시험용 수신기로 발생·해제·강제 종료·수집 멈춤 메시지가 옴 |

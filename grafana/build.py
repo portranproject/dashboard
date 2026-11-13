@@ -147,6 +147,13 @@ def target(query: str, ref: str = "A", hide: bool = False) -> dict:
     return t
 
 
+def column_order(columns: list[str], hide: tuple[str, ...] = ()) -> list[dict]:
+    """표·stat의 열 순서를 고정하는 Grafana 변환. Flux map의 열 순서는 정해져 있지 않아, 정하지 않으면 새로고침할 때마다
+    열이 섞여 나온다(관제 판정 요약 등, 11/13 사용자 지적)."""
+    return [{"id": "organize", "options": {"excludeByName": {name: True for name in hide}, "renameByName": {},
+                                           "indexByName": {name: i for i, name in enumerate(columns)}}}]
+
+
 def override(name: str, *props: tuple[str, object], regex: bool = False) -> dict:
     return {"matcher": {"id": "byRegexp" if regex else "byName", "options": name},
             "properties": [{"id": k, "value": v} for k, v in props]}
@@ -474,7 +481,9 @@ from(bucket: v.defaultBucket)
                         "overrides": [override("공격", ("mappings", rule_mappings()), ("custom.width", 300)),
                                       override("심각도", ("mappings", SEVERITY_MAPPINGS),
                                                ("custom.cellOptions", {"type": "color-background"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["룰", "공격", "종류", "셀", "심각도", "마지막 이벤트", "모드", "갈래", "세션"]),
+          new_line=True)
 
     labels = [("cond_json", "성립 조건 (cond)"), ("candidates_json", "같은 모양의 다른 공격 후보 (candidates)"),
               ("conditions_json", "공격자 행동 전제 (conditions)"), ("values_json", "관측값 (values, 마지막 값)"),
@@ -501,7 +510,8 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "left", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("항목", ("custom.width", 260)),
                                       override("값", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "md", "footer": {"show": False}})
+          options={"showHeader": True, "cellHeight": "md", "footer": {"show": False}},
+          transformations=column_order(["항목", "값"]))
 
     candidates = f'''
 import "array"
@@ -523,7 +533,8 @@ array.from(rows: if length(arr: ids) > 0 then array.map(arr: ids, fn: (x) => ({{
           field_config={"defaults": {"custom": {"align": "left"}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),
                                       override("ID", ("custom.width", 90))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["ID", "공격"]), new_line=True)
 
     ues = f'''
 import "date"
@@ -551,7 +562,10 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("걸린 시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("UE 관측값", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["걸린 시각", "UE (cell-du_ue_id-uid)", "S-TMSI", "C-RNTI", "조건", "불확실", "전제",
+                                        "피해자 연결 (peers)", "근거", "UE 관측값", "이벤트"]),
+          new_line=True)
 
     ev_kpm2 = f'''
 import "date"
@@ -630,7 +644,8 @@ from(bucket: v.defaultBucket)
                                       override("방향", ("custom.width", 70)), override("프로토콜", ("custom.width", 70)),
                                       override("구간", ("custom.width", 65)),
                                       override("원본", ("custom.cellOptions", {"type": "json-view"}))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}}, new_line=True)
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["시각", "UE", "구간", "방향", "프로토콜", "메시지", "원본"]), new_line=True)
 
     # ---- 변수·주석
     variables = [
@@ -1203,6 +1218,7 @@ from(bucket: v.defaultBucket)
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "noValue": "없음"},
                         "overrides": [override("칸", ("custom.width", 70))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(["지표", "칸"]),
           new_line=True)
 
     # ---- CU 자원 (수집 오버헤드, M11)

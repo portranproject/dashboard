@@ -1664,7 +1664,27 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "룰": 0,
+              "공격": 1,
+              "종류": 2,
+              "셀": 3,
+              "심각도": 4,
+              "마지막 이벤트": 5,
+              "모드": 6,
+              "갈래": 7,
+              "세션": 8
+            }
+          }
+        }
+      ]
     },
     {
       "id": 14,
@@ -1735,7 +1755,20 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "항목": 0,
+              "값": 1
+            }
+          }
+        }
+      ]
     },
     {
       "id": 15,
@@ -1919,7 +1952,20 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "ID": 0,
+              "공격": 1
+            }
+          }
+        }
+      ]
     },
     {
       "id": 16,
@@ -1994,7 +2040,29 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "걸린 시각": 0,
+              "UE (cell-du_ue_id-uid)": 1,
+              "S-TMSI": 2,
+              "C-RNTI": 3,
+              "조건": 4,
+              "불확실": 5,
+              "전제": 6,
+              "피해자 연결 (peers)": 7,
+              "근거": 8,
+              "UE 관측값": 9,
+              "이벤트": 10
+            }
+          }
+        }
+      ]
     },
     {
       "id": 17,
@@ -2268,7 +2336,25 @@
         "footer": {
           "show": false
         }
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "시각": 0,
+              "UE": 1,
+              "구간": 2,
+              "방향": 3,
+              "프로토콜": 4,
+              "메시지": 5,
+              "원본": 6
+            }
+          }
+        }
+      ]
     }
   ]
 }

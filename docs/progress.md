@@ -23,7 +23,7 @@
 - 사용자 화면 확인 뒤 대시보드 정리: 단계 비교·자리 표시 삭제, 짧은 공격 이름, 단계(1~4) 표시 삭제, 링크 범례, 범례 표
 - **버그 수정**: 관제 경보 목록에서 해제된 경보가 빠지던 것(#28 이후 AWS에도 있었음, D176)
 - **M12 Slack 알림**(#42·#43): AWS 공격 경보 발생·끝, 수집 멈춤. README 맨 위 그림을 Mermaid로
-- 관제 KPM1 메시지 흐름에서 마지막 메시지가 화면 끝까지 늘어나 보이던 것을 고침(D186), Slack Webhook이 비면 Grafana가 안 뜨는 것을 막는 테스트(D187)
+- 관제 KPM1 메시지 흐름에서 마지막 메시지가 화면 끝까지 늘어나 보이던 것을 고침(D186), Slack Webhook이 비면 Grafana가 안 뜨는 것을 막는 테스트(D187), 표 열 순서가 새로고침마다 바뀌던 것을 고정(D188)
 - 브랜치 정리: 원격·로컬 모두 `main`·`dev`만(병합된 `docs/l3-01-v-1112`·`feat/dashboard-M11`·`feat/dashboard-M12` 삭제)
 
 ---
@@ -1207,6 +1207,7 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | D185 | 메시지 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.CommonAnnotations`·`.ExternalURL`), `.Values`는 `{{ with .Values }}` 안에서만 | provisioning 파일은 환경변수를 바꿔 넣는다. 조회 결과가 없을 때(NoData) `.Values.B`를 꺼내면 템플릿이 깨졌다(임시 Grafana에서 확인) | 불필요 |
 | D186 | 관제 "근거 KPM1 — UE별 메시지 흐름"은 UE마다 마지막 메시지 1초 뒤(`TIMELINE_END_S`)에 빈 값을 끼워 거기서 끝낸다(빈 값은 투명) | 상태 타임라인은 값을 다음 값이 올 때까지 늘여 그려서, 마지막 메시지(예: `UEContextReleaseComplete`)가 화면 끝(지금)까지 24분짜리 상태처럼 보였다(사용자 AWS 화면 11/13, Blind DoS 경보 해제 뒤). 임시 Grafana에서 샘플 S24로 마지막 메시지 뒤가 빈칸인 것 확인 | 불필요 |
 | D187 | Grafana에 `SLACK_WEBHOOK_URL`이 비어서 가지 않게 compose 기본값을 지키는 테스트 | 값이 비면 Slack 연락처 검사(`recipient must be specified`)에 걸려 **Grafana가 아예 뜨지 않는다**(11/13 임시 Grafana에서 확인). compose는 비어 있을 때 `http://127.0.0.1:9/…`를 넘겨 괜찮지만, 이 기본값이 빠지면 배포 헬스 체크가 실패한다 | 불필요 |
+| D188 | 관제·성능의 모든 표는 `organize` 변환(`column_order()`)으로 열 순서를 박아 둔다(판정 요약: 룰·공격·종류·셀·심각도·마지막 이벤트·모드·갈래·세션) | Flux `map`이 만든 열은 순서가 정해져 있지 않아, 판정 요약 같은 표의 열이 새로고침마다 뒤섞였다(사용자 AWS 화면 11/13). 모든 표 패널에 `indexByName`이 있는지 테스트로 지킨다. 임시 Grafana에서 샘플 S24를 두 번 띄워 순서가 같은 것 확인 | 불필요 |
 
 ### 확인 결과
 

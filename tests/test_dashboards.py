@@ -239,6 +239,15 @@ def test_panel_layout(path):
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_tables_have_fixed_column_order(path):
+    """Flux map의 열 순서는 정해져 있지 않다 — 표마다 organize로 순서를 고정하지 않으면 새로고침할 때마다 섞인다(11/13)."""
+    for p in load(path)["panels"]:
+        if p["type"] == "table":
+            org = [t for t in p.get("transformations", []) if t["id"] == "organize"]
+            assert org and org[0]["options"]["indexByName"], p["title"]
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_ranges_are_never_empty(path):
     """range의 stop이 화면 시간 범위 끝이면 start도 화면 시간 범위 기준이어야 한다. start가 지금 기준(-5m)이면 지난
     시간 범위를 골랐을 때 start > stop이 되어 'cannot query an empty range'로 패널이 깨진다(AWS 요약 줄, 11/11)."""

@@ -1479,7 +1479,7 @@
       "id": 11,
       "type": "table",
       "title": "판정 요약",
-      "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
+      "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래(branch) 열은 없앴다(11/16) — 값은 InfluxDB·원본 녹화에 남아 있다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -1497,7 +1497,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"mode\" or r._field == \"branch\" or r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity, 모드: r.mode,\n      갈래: if exists r.branch then r.branch else \"\",\n      세션: if exists r.session then r.session else \"\"}))"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"mode\" or r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity, 모드: r.mode,\n      세션: if exists r.session then r.session else \"\"}))"
         }
       ],
       "fieldConfig": {
@@ -1714,8 +1714,7 @@
               "심각도": 4,
               "마지막 이벤트": 5,
               "모드": 6,
-              "갈래": 7,
-              "세션": 8
+              "세션": 7
             }
           }
         }
@@ -2006,7 +2005,7 @@
       "id": 14,
       "type": "table",
       "title": "걸린 UE",
-      "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 불확실: mid_join(연결 중간부터 봄)·loss(유실)·late. Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
+      "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 관측 오류(uncertain) = 그 UE를 온전히 못 본 이유: mid_join(연결 중간부터 봄)·loss(입력 유실·한 방향 미관측)·late(늦은 줄). 비어 있으면 깨끗하게 봄 — 관측 오류뿐인 경보는 판정 보류. Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -2024,7 +2023,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert_ue\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({\"걸린 시각\": r._time, \"UE (cell-du_ue_id-uid)\": r.ue,\n      \"S-TMSI\": if exists r.s_tmsi then r.s_tmsi else \"\",\n      \"C-RNTI\": if exists r.crnti then string(v: r.crnti) else \"\",\n      조건: if exists r.cond then r.cond else \"\",\n      불확실: if exists r.uncertain then r.uncertain else \"\",\n      전제: if exists r.conditions then r.conditions else \"\",\n      \"피해자 연결 (peers)\": if exists r.peers then r.peers else \"\",\n      근거: if exists r.evidence and r.evidence then \"있음\" else \"없음\",\n      \"UE 관측값\": if exists r.values_json then r.values_json else \"\",\n      이벤트: r.event}))"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert_ue\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({\"걸린 시각\": r._time, \"UE (cell-du_ue_id-uid)\": r.ue,\n      \"S-TMSI\": if exists r.s_tmsi then r.s_tmsi else \"\",\n      \"C-RNTI\": if exists r.crnti then string(v: r.crnti) else \"\",\n      조건: if exists r.cond then r.cond else \"\",\n      \"관측 오류\": if exists r.uncertain then r.uncertain else \"\",\n      \"피해자 연결 (peers)\": if exists r.peers then r.peers else \"\",\n      근거: if exists r.evidence and r.evidence then \"있음\" else \"없음\",\n      \"UE 관측값\": if exists r.values_json then r.values_json else \"\",\n      이벤트: r.event}))"
         }
       ],
       "fieldConfig": {
@@ -2088,12 +2087,11 @@
               "S-TMSI": 2,
               "C-RNTI": 3,
               "조건": 4,
-              "불확실": 5,
-              "전제": 6,
-              "피해자 연결 (peers)": 7,
-              "근거": 8,
-              "UE 관측값": 9,
-              "이벤트": 10
+              "관측 오류": 5,
+              "피해자 연결 (peers)": 6,
+              "근거": 7,
+              "UE 관측값": 8,
+              "이벤트": 9
             }
           }
         }

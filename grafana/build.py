@@ -358,25 +358,24 @@ import "date"
 from(bucket: v.defaultBucket)
   |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => {sel})
-  |> filter(fn: (r) => r._field == "mode" or r._field == "branch" or r._field == "severity" or r._field == "session")
+  |> filter(fn: (r) => r._field == "mode" or r._field == "severity" or r._field == "session")
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> group()
   |> sort(columns: ["_time"])
   |> last(column: "_time")
   |> map(fn: (r) => ({{룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,
       "마지막 이벤트": r.event, 심각도: r.severity, 모드: r.mode,
-      갈래: if exists r.branch then r.branch else "",
       세션: if exists r.session then r.session else ""}}))
 '''
     b.add("table", "판정 요약", 0, 24, 4, [target(summary)],
           "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). "
-          "갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
+          "갈래(branch) 열은 없앴다(11/16) — 값은 InfluxDB·원본 녹화에 남아 있다",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("공격", ("mappings", rule_mappings()), ("custom.width", 300)),
                                       override("심각도", ("mappings", SEVERITY_MAPPINGS),
                                                ("custom.cellOptions", {"type": "color-background"}))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
-          transformations=column_order(["룰", "공격", "종류", "셀", "심각도", "마지막 이벤트", "모드", "갈래", "세션"]),
+          transformations=column_order(["룰", "공격", "종류", "셀", "심각도", "마지막 이벤트", "모드", "세션"]),
           new_line=True)
 
     labels = [("cond_json", "성립 조건 (cond)"), ("candidates_json", "같은 모양의 다른 공격 후보 (candidates)"),
@@ -442,8 +441,7 @@ from(bucket: v.defaultBucket)
       "S-TMSI": if exists r.s_tmsi then r.s_tmsi else "",
       "C-RNTI": if exists r.crnti then string(v: r.crnti) else "",
       조건: if exists r.cond then r.cond else "",
-      불확실: if exists r.uncertain then r.uncertain else "",
-      전제: if exists r.conditions then r.conditions else "",
+      "관측 오류": if exists r.uncertain then r.uncertain else "",
       "피해자 연결 (peers)": if exists r.peers then r.peers else "",
       근거: if exists r.evidence and r.evidence then "있음" else "없음",
       "UE 관측값": if exists r.values_json then r.values_json else "",
@@ -451,13 +449,14 @@ from(bucket: v.defaultBucket)
 '''
     b.add("table", "걸린 UE", 0, 24, 8, [target(ues)],
           "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 "
-          "세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 불확실: mid_join(연결 중간부터 봄)·loss(유실)·late. "
+          "세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 관측 오류(uncertain) = 그 UE를 온전히 못 본 이유: "
+          "mid_join(연결 중간부터 봄)·loss(입력 유실·한 방향 미관측)·late(늦은 줄). 비어 있으면 깨끗하게 봄 — 관측 오류뿐인 경보는 판정 보류. "
           "Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("걸린 시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("UE 관측값", ("custom.cellOptions", {"type": "json-view"}))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
-          transformations=column_order(["걸린 시각", "UE (cell-du_ue_id-uid)", "S-TMSI", "C-RNTI", "조건", "불확실", "전제",
+          transformations=column_order(["걸린 시각", "UE (cell-du_ue_id-uid)", "S-TMSI", "C-RNTI", "조건", "관측 오류",
                                         "피해자 연결 (peers)", "근거", "UE 관측값", "이벤트"]),
           new_line=True)
 
@@ -660,6 +659,8 @@ def stat_options(fields: str = "", values: bool = False) -> dict:
 # --------------------------------------------------------------------------- 성능 — CU 자원 (수집 오버헤드, M11)
 
 OVERHEAD = 'r._measurement == "overhead"'
+# node_id 표시: cu로 끝나면 CU(AWS 탐지 쪽은 p4-cu로 보냄, 11/16 사용자 요청). 그 밖의 값은 그대로
+NODE_MAPPINGS = [{"type": "regex", "options": {"pattern": "^(.+-)?(cu|CU)$", "result": {"text": "CU", "index": 0}}}]
 OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
 
 
@@ -698,10 +699,12 @@ from(bucket: v.defaultBucket)
   |> drop(columns: ["_time"])
 '''
     b.add("stat", "노드", 0, 8, 4, [target(node_info)],
-          "overhead를 보내는 노드(node_id, 11/13부터 cu로 통일)와 코어 수·전체 메모리(마지막 값). 마지막 수신 = 마지막 3초 구간이 "
+          "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). 노드는 node_id가 cu로 끝나면(AWS는 p4-cu) CU로 보인다. "
+          "마지막 수신 = 마지막 3초 구간이 "
           f"시작한 뒤 지난 시간(데이터 시각 기준) — {OVERHEAD_STALE_S}초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
           field_config={"defaults": {"color": TEXT_COLOR, "noValue": "overhead 없음"},
-                        "overrides": [override("메모리", ("unit", "bytes")),
+                        "overrides": [override("노드", ("mappings", NODE_MAPPINGS)),
+                                      override("메모리", ("unit", "bytes")),
                                       override("마지막 수신", ("unit", "s"), ("decimals", 0),
                                                ("color", {"mode": "thresholds"}),
                                                ("thresholds", {"mode": "absolute", "steps": [

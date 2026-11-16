@@ -69,7 +69,7 @@ M10에서 처음 대시보드 2개(`realtime.json`·`evaluation.json`, mock 메�
 | 상시 KPM2 | (겹쳐 표시) | 경보가 언제 울렸나 | 주석: `alert` `raise`~`clear`/`end` 구간(영역), `hello`(세션 시작, 파랑)·`f1_evt`(DU·CU 재시작, 보라) 세로선 — 색을 나눈다(D157), `gap` 구간 '데이터 없음'. 주석은 늘 켜 두고 위쪽 토글은 숨긴다(D189) |
 | 경보 목록 | 경보 표 | 어떤 경보가 있었나 | `alert`를 `alert_id`로 묶어 한 행: 시작 = `raise`의 시각, 심각도 = 최대, UE 수 = 마지막 `ues_total`, 대표 값 = 마지막 `rep_value`(`rep_key`), 상태 = 열림 / 해제(`clear`) / 강제 종료(`end`·`reason`) / 상태 불명(4절). 공격 이름은 6절 대응표 |
 | 경보 상세 | 판정 정보 | 왜 이 경보가 났나 | `alert_id == ${alert_id}`의 `cond_json`·`candidates_json`(→ 이름)·`conditions_json`·`mode`·`branch`·`params_json`. `values_json`은 **마지막 것**(`update`가 덮어씀, 27_ §7) |
-| 경보 상세 | 걸린 UE 표 (UE 메시지 경보) | 어느 단말이 걸렸나 | `raise`·`update`의 `ues_json`을 **모두 합침**(`update`에는 새로 걸린 UE만 옴). 열: `cell`·`du_ue_id`·`uid`·`s_tmsi`·`crnti`·`t_hit`·`cond`·`uncertain`·`values` |
+| 경보 상세 | 걸린 UE 표 (UE 메시지 경보) | 어느 단말이 걸렸나 | `raise`·`update`의 `ues_json`을 **모두 합침**(`update`에는 새로 걸린 UE만 옴). 열: `cell`·`du_ue_id`·`uid`·`s_tmsi`·`crnti`·`t_hit`·`cond`·`uncertain`('관측 오류')·`peers`·`values`. 전제(`conditions`) 열과 판정 요약의 갈래(`branch`) 열은 없앴다(11/16, D193) |
 | 경보 상세 | 근거 KPM2 그래프 (셀 지표 경보) | 경보 직전·중에 셀 카운터가 어땠나 | `evidence` `raw_type == "kpm2"`, 100 ms 칸마다 `cc.*` 막대. `raise`의 `refs_json`(`a` 시도 창, `f` 무응답 창의 `seq` 범위)을 `evidence.seq`로 시각에 맞춰 강조. `gap`은 '데이터 없음' |
 | 경보 상세 | 근거 KPM1 타임라인 (UE 메시지 경보) | 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나 | `evidence` `raw_type == "ue_evt"`를 UE(`uid`)별로 시각 순. 열: 시각·UE·방향(↑ `UL` / ↓ `DL`)·`proto`(색)·`msg`·`raw_json`의 `f`. 표로 시작하고, 흐름을 한눈에 보는 상태 타임라인(UE마다 한 줄)을 위에 둔다 |
 

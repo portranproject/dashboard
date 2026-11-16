@@ -299,6 +299,14 @@ def test_panel_titles_are_short(path):
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_descriptions_have_no_spec_refs(path):
+    """패널·변수 설명(ⓘ)에 명세 참조('27_ §5.1')를 넣지 않는다 — 화면을 보는 사람에게는 뜻 없는 기호(사용자 요청 11/16)."""
+    d = load(path)
+    for item in d["panels"] + d["templating"]["list"]:
+        assert not re.search(r"27_|§", item.get("description", "")), item.get("title", item.get("name"))
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_ranges_are_never_empty(path):
     """range의 stop이 화면 시간 범위 끝이면 start도 화면 시간 범위 기준이어야 한다. start가 지금 기준(-5m)이면 지난
     시간 범위를 골랐을 때 start > stop이 되어 'cannot query an empty range'로 패널이 깨진다(AWS 요약 줄, 11/11)."""

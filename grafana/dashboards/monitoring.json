@@ -1,7 +1,7 @@
 {
   "uid": "portran-monitoring",
   "title": "PortRAN 관제",
-  "description": "탐지 엔진 레코드(27_) 실시간 관제 — 상시 KPM2, 경보 목록, 경보 상세(근거 KPM2·KPM1). docs/dashboard-design.md 2절",
+  "description": "탐지 엔진 레코드(27_) 실시간 관제 — 탐지 결과(고른 범위의 경보 수·공격별·길이), 상시 KPM2, 경보 목록, 경보 상세(근거 KPM2·KPM1). docs/dashboard-design.md 2절",
   "tags": [
     "portran"
   ],
@@ -46,7 +46,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(255, 152, 48, 0.12)",
         "target": {
           "datasource": {
@@ -77,8 +77,8 @@
         "filter": {
           "exclude": false,
           "ids": [
-            7,
-            8
+            6,
+            7
           ]
         }
       },
@@ -89,7 +89,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(128, 128, 128, 0.25)",
         "target": {
           "datasource": {
@@ -120,8 +120,8 @@
         "filter": {
           "exclude": false,
           "ids": [
-            7,
-            8
+            6,
+            7
           ]
         }
       },
@@ -132,7 +132,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(128, 128, 128, 0.12)",
         "target": {
           "datasource": {
@@ -163,8 +163,8 @@
         "filter": {
           "exclude": false,
           "ids": [
-            7,
-            8
+            6,
+            7
           ]
         }
       },
@@ -175,7 +175,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(31, 120, 193, 1)",
         "target": {
           "datasource": {
@@ -202,8 +202,8 @@
         "filter": {
           "exclude": false,
           "ids": [
-            7,
-            8
+            6,
+            7
           ]
         }
       },
@@ -214,7 +214,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(163, 82, 204, 1)",
         "target": {
           "datasource": {
@@ -241,8 +241,8 @@
         "filter": {
           "exclude": false,
           "ids": [
-            7,
-            8
+            6,
+            7
           ]
         }
       },
@@ -253,7 +253,7 @@
           "uid": "portran-influxdb"
         },
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "rgba(128, 128, 128, 0.25)",
         "target": {
           "datasource": {
@@ -284,7 +284,7 @@
         "filter": {
           "exclude": false,
           "ids": [
-            17
+            15
           ]
         }
       }
@@ -341,7 +341,7 @@
         "multi": true,
         "includeAll": true,
         "hide": 0,
-        "description": "상시 KPM2 그래프에 보일 셀",
+        "description": "탐지 결과·상시 KPM2 그래프에 넣을 셀",
         "current": {
           "text": "All",
           "value": "$__all"
@@ -362,7 +362,7 @@
         "sort": 0,
         "multi": false,
         "includeAll": false,
-        "hide": 0,
+        "hide": 2,
         "description": "경보 상세에 보일 경보. 경보 목록에서 행을 누르면 바뀐다",
         "current": {},
         "options": []
@@ -373,7 +373,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "요약 — 지금",
+      "title": "탐지 결과",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -385,16 +385,16 @@
     },
     {
       "id": 2,
-      "type": "stat",
-      "title": "열린 경보",
-      "description": "지금 울리고 있는 경보 수(최근 7일 안에 열려 아직 clear·end가 오지 않은 것). 공격 경보만 '탐지'로 세고, 4단계 이상 유형과 판정 보류 경보는 따로 센다(27_ §5.5). 상태 불명 = 열린 채 1단계 15초, 2~4단계 90초 동안 레코드가 없는 경보(탐지 엔진이 죽었거나 다시 떴을 수 있음, 27_ §7)",
+      "type": "barchart",
+      "title": "공격별 경보 수",
+      "description": "실험 동안 어떤 공격·이상 유형이 몇 번 울렸나(raise 기준). 같은 공격에 여러 룰이 함께 울릴 수 있다(27_ §5.1)",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
       },
       "gridPos": {
-        "h": 5,
-        "w": 9,
+        "h": 11,
+        "w": 12,
         "x": 0,
         "y": 1
       },
@@ -405,129 +405,56 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"array\"\nimport \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: -7d, stop: now())\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: -5m, stop: now())\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// map 결과에 그대로 옮긴 열(alert_id)이 하나도 없으면 InfluxDB 2.7의 Flux가 조건식 값을 null로 만든다 — 그래서 alert_id를 함께 둔다\ncounted = summary\n  |> filter(fn: (r) => r.status == \"열림\" or r.status == \"상태 불명\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, class: if r.status == \"열림\" then r.class else \"상태 불명\", _value: 1}))\n  |> keep(columns: [\"class\", \"_value\"])\nzeros = array.from(rows: [{class: \"공격\", _value: 0}, {class: \"이상 유형\", _value: 0}, {class: \"판정 보류\", _value: 0},\n                         {class: \"상태 불명\", _value: 0}])\nunion(tables: [counted, zeros])\n  |> group(columns: [\"class\"])\n  |> sum()"
+          "query": "import \"dict\"\nnames = [\"L3-01-V\": \"UE 컨텍스트 고갈\", \"L3-01-O\": \"인증 단계 고착\", \"L3-20\": \"Blind DoS\", \"L3-21\": \"상향 DoS\", \"L3-24\": \"하향 IMSI 추출\", \"L3-14\": \"UE 능력 탈취\", \"L3-06\": \"NAS 카운터 비동기화\", \"AN-01\": \"인증 동기 실패 재인증\", \"AN-02\": \"식별 요청 증가\", \"AN-04\": \"같은 UE의 짧은 연결 반복\", \"AN-06a\": \"보안 수립 뒤 재인증·SMC 재등장\", \"AN-07\": \"같은 S-TMSI의 Setup 반복·Complete 없음\", \"AN-08\": \"기존 UE들의 재등록 급증\", \"L3-11\": \"RRC 거절·해제 투옥\", \"L3-11-V1\": \"RRC 거절·해제 투옥\", \"L3-11-V2\": \"RRC 거절·해제 투옥\", \"L3-19-Va\": \"디바이스 강제 차단\", \"L3-23-O\": \"원격 등록 해제\", \"L3-28-V\": \"모바일 망 매핑 MNmap\", \"L3-07-OV\": \"인증 동기 실패 공격\", \"L3-25-OV\": \"상향 IMSI 추출\", \"L3-02-Oa\": \"배터리 소진·룰라비\", \"L3-34-OV\": \"TORPEDO\", \"L3-12-V\": \"은밀 강제분리\", \"L3-33-V\": \"TMSI·페이징·RNTI 노출\", \"L3-06-O1\": \"NAS 카운터 비동기화\", \"L3-17-OV\": \"SIB TAC 조작\", \"L3-26-O\": \"IMSI 캐처·가짜 기지국\"]\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r._field == \"severity\" and r.event == \"raise\" and r.env == \"${source}\"\n      and contains(value: r.cell, set: ${cell:json}))\n  |> group(columns: [\"rule\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: dict.get(dict: names, key: r.rule, default: r.rule), \"경보 수\": r._value}))\n  |> keep(columns: [\"공격\", \"경보 수\"])"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "displayName": "${__field.labels.class}",
           "unit": "none",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "gradientMode": "none"
           }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "orientation": "horizontal",
+        "xField": "공격",
+        "showValue": "auto",
+        "groupWidth": 0.7,
+        "barWidth": 0.9,
+        "stacking": "none",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
         },
-        "orientation": "vertical"
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       }
     },
     {
       "id": 3,
-      "type": "stat",
-      "title": "최고 심각도 (열린 경보)",
-      "description": "열린 경보가 그 경보에서 낸 심각도 가운데 가장 높은 것. high는 한 번 오르면 내려가지 않는다(27_ §5.3)",
+      "type": "histogram",
+      "title": "경보 길이 분포",
+      "description": "경보가 얼마나 오래 이어졌나 — raise부터 clear·end까지(= duration_ms, 27_ §5.4). 가로축 = 경보 길이(초), 세로축 = 경보 수. 해제·강제 종료된 경보만 — 아직 끝나지 않은 경보는 빠진다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
       },
       "gridPos": {
-        "h": 5,
-        "w": 3,
-        "x": 9,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "portran-influxdb"
-          },
-          "refId": "A",
-          "query": "import \"array\"\nimport \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: -7d, stop: now())\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: -5m, stop: now())\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nunion(tables: [summary |> filter(fn: (r) => r.status == \"열림\") |> keep(columns: [\"sev\"]), array.from(rows: [{sev: 0}])])\n  |> max(column: \"sev\")\n  |> map(fn: (r) => ({_value: string(v: r.sev)}))"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "2": {
-                  "text": "high",
-                  "color": "red",
-                  "index": 0
-                },
-                "1": {
-                  "text": "medium",
-                  "color": "orange",
-                  "index": 1
-                },
-                "0": {
-                  "text": "없음",
-                  "color": "green",
-                  "index": 2
-                },
-                "high": {
-                  "color": "red",
-                  "index": 3
-                },
-                "medium": {
-                  "color": "orange",
-                  "index": 4
-                }
-              }
-            }
-          ],
-          "displayName": "최고 심각도"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "/.*/",
-          "values": false
-        }
-      }
-    },
-    {
-      "id": 4,
-      "type": "stat",
-      "title": "수집 상태 — 마지막 수신 뒤",
-      "description": "데이터 시각 기준으로 마지막 레코드가 몇 초 전인가. 상시 KPM2는 3초마다 와야 하고(실험 때 상시 경로를 켰을 때), 경보·근거는 경보가 있을 때만 온다",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "portran-influxdb"
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 6,
+        "h": 11,
+        "w": 12,
         "x": 12,
         "y": 1
       },
@@ -538,110 +465,38 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -30d)\n  |> filter(fn: (r) => r.env == \"${source}\" and ((r._measurement == \"kpm2\" and r._field == \"n\")\n      or (r._measurement == \"alert\" and r._field == \"severity\")\n      or (r._measurement == \"evidence\" and r._field == \"seq\")))\n  |> group(columns: [\"_measurement\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({row: 1, _time: r._time,\n      name: if r._measurement == \"kpm2\" then \"상시 KPM2\" else if r._measurement == \"alert\" then \"경보\" else \"근거\",\n      _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}))\n  |> group()\n  |> pivot(rowKey: [\"row\"], columnKey: [\"name\"], valueColumn: \"_value\")\n  |> drop(columns: [\"row\", \"_time\"])"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and contains(value: r.cell, set: ${cell:json}))\nin_range\n  |> filter(fn: (r) => r.event == \"clear\" or r.event == \"end\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, \"경보 길이(초)\": float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0}))\n  |> keep(columns: [\"경보 길이(초)\"])"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 15
-              },
-              {
-                "color": "red",
-                "value": 60
-              }
-            ]
+          "unit": "none",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 1
           }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "textMode": "value_and_name",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "vertical"
-      }
-    },
-    {
-      "id": 5,
-      "type": "stat",
-      "title": "분석 엔진 세션 · DU·CU 재시작",
-      "description": "마지막 hello의 세션(분석 엔진이 다시 뜨면 바뀜)과, 고른 시간 범위 안의 DU·CU 재시작(f1_evt) 수",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "portran-influxdb"
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 18,
-        "y": 1
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "portran-influxdb"
-          },
-          "refId": "A",
-          "query": "import \"array\"\nlast = from(bucket: v.defaultBucket)\n  |> range(start: -30d)\n  |> filter(fn: (r) => r._measurement == \"hello\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group()\n  |> max(column: \"_time\")\n  |> findColumn(fn: (key) => true, column: \"session\")\nrestarts = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"f1_evt\" and r._field == \"msg\" and r.env == \"${source}\")\n  |> group()\n  |> count()\n  |> findColumn(fn: (key) => true, column: \"_value\")\narray.from(rows: [{\"지금 세션\": if length(arr: last) > 0 then last[0] else \"-\",\n                    \"재시작 (범위 안)\": if length(arr: restarts) > 0 then restarts[0] else 0}])"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "textMode": "value_and_name",
-        "orientation": "vertical",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "/.*/",
-          "values": false
+        "bucketCount": 20,
+        "combine": false,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
         }
       }
     },
     {
-      "id": 6,
-      "type": "row",
-      "title": "상시 KPM2 — 셀 ${cell}, 3초 묶음 (TeleRAN Table II)",
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 6
-      },
-      "panels": []
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "RRC 연결 시도 · 성공 · 무응답 (3초마다)",
-      "description": "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
+      "id": 4,
+      "type": "table",
+      "title": "공격별 경보 결과",
+      "description": "공격(룰)·종류마다 경보 수와 끝난 모습. high 도달 = 심각도가 한 번이라도 high까지 오른 경보(한 번 오르면 내려가지 않음, 룰마다 조건이 다르고 L3-24·L3-06·이상 유형·판정 보류는 늘 medium — 27_ §5.3). 강제 종료 = end(분석 엔진 재시작·입력 끊김·입력 멈춤). 끝이 안 옴 = clear·end가 오지 않은 경보. 길이는 해제·강제 종료된 경보만",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -650,7 +505,356 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "A",
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and contains(value: r.cell, set: ${cell:json}))\nin_range\n  |> map(fn: (r) => ({rule: r.rule, class: r.class,\n      high: if r.sev == 2 then 1 else 0,\n      cleared: if r.event == \"clear\" then 1 else 0,\n      ended: if r.event == \"end\" then 1 else 0,\n      open: if r.event == \"raise\" or r.event == \"update\" then 1 else 0,\n      secs: if r.event == \"clear\" or r.event == \"end\" then float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0 else 0.0}))\n  |> group(columns: [\"rule\", \"class\"])\n  |> reduce(identity: {n: 0, high: 0, cleared: 0, ended: 0, open: 0, secs: 0.0, longest: 0.0},\n      fn: (r, accumulator) => ({n: accumulator.n + 1, high: accumulator.high + r.high,\n        cleared: accumulator.cleared + r.cleared, ended: accumulator.ended + r.ended, open: accumulator.open + r.open,\n        secs: accumulator.secs + r.secs, longest: if r.secs > accumulator.longest then r.secs else accumulator.longest}))\n  |> group()\n  |> sort(columns: [\"n\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: r.rule, 종류: r.class, \"경보 수\": r.n,\n      \"high 도달\": r.high, 해제: r.cleared, \"강제 종료\": r.ended, \"끝이 안 옴\": r.open,\n      \"평균 길이(초)\": if r.cleared + r.ended > 0 then r.secs / float(v: r.cleared + r.ended) else 0.0,\n      \"최대 길이(초)\": r.longest}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "공격"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "L3-01-V": {
+                        "text": "UE 컨텍스트 고갈",
+                        "index": 0
+                      },
+                      "L3-01-O": {
+                        "text": "인증 단계 고착",
+                        "index": 1
+                      },
+                      "L3-20": {
+                        "text": "Blind DoS",
+                        "index": 2
+                      },
+                      "L3-21": {
+                        "text": "상향 DoS",
+                        "index": 3
+                      },
+                      "L3-24": {
+                        "text": "하향 IMSI 추출",
+                        "index": 4
+                      },
+                      "L3-14": {
+                        "text": "UE 능력 탈취",
+                        "index": 5
+                      },
+                      "L3-06": {
+                        "text": "NAS 카운터 비동기화",
+                        "index": 6
+                      },
+                      "AN-01": {
+                        "text": "인증 동기 실패 재인증",
+                        "index": 7
+                      },
+                      "AN-02": {
+                        "text": "식별 요청 증가",
+                        "index": 8
+                      },
+                      "AN-04": {
+                        "text": "같은 UE의 짧은 연결 반복",
+                        "index": 9
+                      },
+                      "AN-06a": {
+                        "text": "보안 수립 뒤 재인증·SMC 재등장",
+                        "index": 10
+                      },
+                      "AN-07": {
+                        "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
+                        "index": 11
+                      },
+                      "AN-08": {
+                        "text": "기존 UE들의 재등록 급증",
+                        "index": 12
+                      },
+                      "L3-11": {
+                        "text": "RRC 거절·해제 투옥",
+                        "index": 13
+                      },
+                      "L3-11-V1": {
+                        "text": "RRC 거절·해제 투옥",
+                        "index": 14
+                      },
+                      "L3-11-V2": {
+                        "text": "RRC 거절·해제 투옥",
+                        "index": 15
+                      },
+                      "L3-19-Va": {
+                        "text": "디바이스 강제 차단",
+                        "index": 16
+                      },
+                      "L3-23-O": {
+                        "text": "원격 등록 해제",
+                        "index": 17
+                      },
+                      "L3-28-V": {
+                        "text": "모바일 망 매핑 MNmap",
+                        "index": 18
+                      },
+                      "L3-07-OV": {
+                        "text": "인증 동기 실패 공격",
+                        "index": 19
+                      },
+                      "L3-25-OV": {
+                        "text": "상향 IMSI 추출",
+                        "index": 20
+                      },
+                      "L3-02-Oa": {
+                        "text": "배터리 소진·룰라비",
+                        "index": 21
+                      },
+                      "L3-34-OV": {
+                        "text": "TORPEDO",
+                        "index": 22
+                      },
+                      "L3-12-V": {
+                        "text": "은밀 강제분리",
+                        "index": 23
+                      },
+                      "L3-33-V": {
+                        "text": "TMSI·페이징·RNTI 노출",
+                        "index": 24
+                      },
+                      "L3-06-O1": {
+                        "text": "NAS 카운터 비동기화",
+                        "index": 25
+                      },
+                      "L3-17-OV": {
+                        "text": "SIB TAC 조작",
+                        "index": 26
+                      },
+                      "L3-26-O": {
+                        "text": "IMSI 캐처·가짜 기지국",
+                        "index": 27
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "종류"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "공격": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "이상 유형": {
+                        "color": "yellow",
+                        "index": 1
+                      },
+                      "판정 보류": {
+                        "color": "purple",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 90
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "경보 수"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "high 도달"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "해제"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "강제 종료"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "끝이 안 옴"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "평균 길이(초)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "최대 길이(초)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "경보 수",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "rule": true
+            },
+            "renameByName": {},
+            "indexByName": {
+              "공격": 0,
+              "종류": 1,
+              "경보 수": 2,
+              "high 도달": 3,
+              "해제": 4,
+              "강제 종료": 5,
+              "끝이 안 옴": 6,
+              "평균 길이(초)": 7,
+              "최대 길이(초)": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "KPM",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "panels": []
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "RRC 연결 시도 · 성공 · 무응답",
+      "description": "상시 KPM2(TeleRAN Table II) — 셀마다 3초 묶음, 위쪽 셀 선택으로 거른다. 셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "portran-influxdb"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 22
       },
       "targets": [
         {
@@ -739,9 +943,9 @@
       }
     },
     {
-      "id": 8,
+      "id": 7,
       "type": "timeseries",
-      "title": "UE 컨텍스트 · 연결 UE 수 — 셀 한도 96",
+      "title": "UE 컨텍스트 · 연결 UE 수",
       "description": "셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 96의 90%(1·2단계 경보가 high가 되는 기준, 27_ §5.3). UE 컨텍스트 수는 완료를 기다리는 UE까지 센 탐지 쪽 확장 지표(ext.UeCtxMax)",
       "datasource": {
         "type": "influxdb",
@@ -751,7 +955,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 31
       },
       "targets": [
         {
@@ -807,20 +1011,20 @@
       }
     },
     {
-      "id": 9,
+      "id": 8,
       "type": "row",
-      "title": "경보 목록 — 행을 누르면 아래 경보 상세가 그 경보로 바뀐다",
+      "title": "경보 목록",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 39
       },
       "panels": []
     },
     {
-      "id": 10,
+      "id": 9,
       "type": "table",
       "title": "경보",
       "description": "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, UE 수·대표 값 = 마지막 값. 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, 2~4단계 90초 동안 아무것도 없음 — 27_ §7). 행을 누르면 아래 경보 상세가 바뀐다",
@@ -830,9 +1034,9 @@
       },
       "gridPos": {
         "h": 11,
-        "w": 17,
+        "w": 24,
         "x": 0,
-        "y": 25
+        "y": 40
       },
       "targets": [
         {
@@ -1259,176 +1463,7 @@
       ]
     },
     {
-      "id": 11,
-      "type": "bargauge",
-      "title": "룰별 경보 수 (raise)",
-      "description": "고른 시간 범위에 어떤 공격·이상 유형이 몇 번 울렸나. 같은 공격에 여러 룰이 함께 울릴 수 있다(27_ §5.1)",
-      "datasource": {
-        "type": "influxdb",
-        "uid": "portran-influxdb"
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 7,
-        "x": 17,
-        "y": 25
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "portran-influxdb"
-          },
-          "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r._field == \"severity\" and r.event == \"raise\" and r.env == \"${source}\")\n  |> group(columns: [\"rule\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> map(fn: (r) => ({공격: r.rule, \"경보 수\": r._value}))"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "min": 0,
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "orange"
-          },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "L3-01-V": {
-                  "text": "UE 컨텍스트 고갈",
-                  "index": 0
-                },
-                "L3-01-O": {
-                  "text": "인증 단계 고착",
-                  "index": 1
-                },
-                "L3-20": {
-                  "text": "Blind DoS",
-                  "index": 2
-                },
-                "L3-21": {
-                  "text": "상향 DoS",
-                  "index": 3
-                },
-                "L3-24": {
-                  "text": "하향 IMSI 추출",
-                  "index": 4
-                },
-                "L3-14": {
-                  "text": "UE 능력 탈취",
-                  "index": 5
-                },
-                "L3-06": {
-                  "text": "NAS 카운터 비동기화",
-                  "index": 6
-                },
-                "AN-01": {
-                  "text": "인증 동기 실패 재인증",
-                  "index": 7
-                },
-                "AN-02": {
-                  "text": "식별 요청 증가",
-                  "index": 8
-                },
-                "AN-04": {
-                  "text": "같은 UE의 짧은 연결 반복",
-                  "index": 9
-                },
-                "AN-06a": {
-                  "text": "보안 수립 뒤 재인증·SMC 재등장",
-                  "index": 10
-                },
-                "AN-07": {
-                  "text": "같은 S-TMSI의 Setup 반복·Complete 없음",
-                  "index": 11
-                },
-                "AN-08": {
-                  "text": "기존 UE들의 재등록 급증",
-                  "index": 12
-                },
-                "L3-11": {
-                  "text": "RRC 거절·해제 투옥",
-                  "index": 13
-                },
-                "L3-11-V1": {
-                  "text": "RRC 거절·해제 투옥",
-                  "index": 14
-                },
-                "L3-11-V2": {
-                  "text": "RRC 거절·해제 투옥",
-                  "index": 15
-                },
-                "L3-19-Va": {
-                  "text": "디바이스 강제 차단",
-                  "index": 16
-                },
-                "L3-23-O": {
-                  "text": "원격 등록 해제",
-                  "index": 17
-                },
-                "L3-28-V": {
-                  "text": "모바일 망 매핑 MNmap",
-                  "index": 18
-                },
-                "L3-07-OV": {
-                  "text": "인증 동기 실패 공격",
-                  "index": 19
-                },
-                "L3-25-OV": {
-                  "text": "상향 IMSI 추출",
-                  "index": 20
-                },
-                "L3-02-Oa": {
-                  "text": "배터리 소진·룰라비",
-                  "index": 21
-                },
-                "L3-34-OV": {
-                  "text": "TORPEDO",
-                  "index": 22
-                },
-                "L3-12-V": {
-                  "text": "은밀 강제분리",
-                  "index": 23
-                },
-                "L3-33-V": {
-                  "text": "TMSI·페이징·RNTI 노출",
-                  "index": 24
-                },
-                "L3-06-O1": {
-                  "text": "NAS 카운터 비동기화",
-                  "index": 25
-                },
-                "L3-17-OV": {
-                  "text": "SIB TAC 조작",
-                  "index": 26
-                },
-                "L3-26-O": {
-                  "text": "IMSI 캐처·가짜 기지국",
-                  "index": 27
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "orientation": "horizontal",
-        "displayMode": "basic",
-        "showUnfilled": true,
-        "valueMode": "color",
-        "reduceOptions": {
-          "calcs": [],
-          "fields": "/^경보 수$/",
-          "values": true
-        },
-        "namePlacement": "left",
-        "sizing": "auto"
-      }
-    },
-    {
-      "id": 12,
+      "id": 10,
       "type": "row",
       "title": "경보 상세 — ${alert_id}",
       "collapsed": false,
@@ -1436,12 +1471,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 51
       },
       "panels": []
     },
     {
-      "id": 13,
+      "id": 11,
       "type": "table",
       "title": "판정 요약",
       "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래 = L3-21·L3-14·AN-02의 판정 갈래(27_ §5.2)",
@@ -1453,7 +1488,7 @@
         "h": 4,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 52
       },
       "targets": [
         {
@@ -1687,7 +1722,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 12,
       "type": "table",
       "title": "판정 근거 값",
       "description": "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값(27_ §5.4 룰별 뜻)",
@@ -1699,7 +1734,7 @@
         "h": 9,
         "w": 15,
         "x": 0,
-        "y": 41
+        "y": 56
       },
       "targets": [
         {
@@ -1771,7 +1806,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 13,
       "type": "table",
       "title": "후보 공격",
       "description": "이 경보와 같은 모양을 만드는 다른 공격(candidates). 탐지 엔진은 경보끼리 묶지 않으므로, 같은 셀·같은 시간의 다른 경보와 함께 본다(27_ §7). 4단계 이상 유형은 여기 후보 가운데 하나다",
@@ -1783,7 +1818,7 @@
         "h": 9,
         "w": 9,
         "x": 15,
-        "y": 41
+        "y": 56
       },
       "targets": [
         {
@@ -1968,7 +2003,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 14,
       "type": "table",
       "title": "걸린 UE",
       "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 불확실: mid_join(연결 중간부터 봄)·loss(유실)·late. Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
@@ -1980,7 +2015,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 65
       },
       "targets": [
         {
@@ -2065,10 +2100,10 @@
       ]
     },
     {
-      "id": 17,
+      "id": 15,
       "type": "timeseries",
-      "title": "근거 KPM2 — 100 ms 칸",
-      "description": "1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
+      "title": "근거 KPM",
+      "description": "경보 근거로 온 KPM2(100 ms 칸). 1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -2077,7 +2112,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 73
       },
       "targets": [
         {
@@ -2163,10 +2198,10 @@
       }
     },
     {
-      "id": 18,
+      "id": 16,
       "type": "state-timeline",
-      "title": "근거 KPM1 — UE별 메시지 흐름",
-      "description": "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). 자세한 값은 아래 표",
+      "title": "UE_EVENT — UE별 메시지 흐름",
+      "description": "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). 자세한 값은 아래 표",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -2175,7 +2210,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 66
+        "y": 81
       },
       "targets": [
         {
@@ -2227,9 +2262,9 @@
       }
     },
     {
-      "id": 19,
+      "id": 17,
       "type": "table",
-      "title": "근거 KPM1 — 메시지",
+      "title": "UE_EVENT — 메시지 흐름 상세",
       "description": "근거 메시지 하나 = 한 행. pre = 그 UE가 경보에 처음 실릴 때의 최근 메시지(최대 16줄), active = 경보 중 새 메시지. 원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값, 27_ §4.2)",
       "datasource": {
         "type": "influxdb",
@@ -2239,7 +2274,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 88
       },
       "targets": [
         {

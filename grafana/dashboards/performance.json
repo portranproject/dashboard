@@ -119,7 +119,7 @@
       "id": 2,
       "type": "stat",
       "title": "노드",
-      "description": "overhead를 보내는 노드(node_id, 11/13부터 cu로 통일)와 코어 수·전체 메모리(마지막 값). 마지막 수신 = 마지막 3초 구간이 시작한 뒤 지난 시간(데이터 시각 기준) — 30초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
+      "description": "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). 노드는 node_id가 cu로 끝나면(AWS는 p4-cu) CU로 보인다. 마지막 수신 = 마지막 3초 구간이 시작한 뒤 지난 시간(데이터 시각 기준) — 30초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -149,6 +149,29 @@
           "noValue": "overhead 없음"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "노드"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "regex",
+                    "options": {
+                      "pattern": "^(.+-)?(cu|CU)$",
+                      "result": {
+                        "text": "CU",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",

@@ -178,7 +178,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 
 ### 5.2 overhead — 수집 오버헤드 (M11)
 
-분석 엔진(계측기)이 `kpm2`·`ue_evt`·`f1_evt`와 같은 소켓·번호열(`session`·`seq`)로 3초 구간(`t_start_ms`~`t_end_ms`)마다 한 줄 낸다. 노드 CPU(`count`·`node_busy_cores` — 바쁜 코어 수 평균)·메모리(바이트), 계측기 프로세스 몫(`process_cores`·`process_rss_bytes`, `process_scope: self`), 선언한 NIC별 F1·N2 패킷·바이트 증가분(`link[]`). `node_id`는 `cu`로 통일(11/13). 점유율(%)은 보내는 쪽이 나누지 않고 화면이 계산한다. 필드·예시는 `schema/SCHEMA.md` 6절. 처음 스키마의 `metric`·`detection`·`attack_run`(mock 전용)은 M10에서, 옛 `overhead` 형식(ns `ts`·`ebpf_on`·`cpu_pct`·`mem_mb`)은 M11에서 지웠다.
+분석 엔진(계측기)이 `kpm2`·`ue_evt`·`f1_evt`와 같은 소켓·번호열(`session`·`seq`)로 3초 구간(`t_start_ms`~`t_end_ms`)마다 한 줄 낸다. 노드 CPU(`count`·`node_busy_cores` — 바쁜 코어 수 평균)·메모리(바이트), 계측기 프로세스 몫(`process_cores`·`process_rss_bytes`, `process_scope: self`), 선언한 NIC별 F1·N2 패킷·바이트 증가분(`link[]`). `node_id`는 `cu`로 통일(11/13, AWS 실제 값은 `p4-cu` — 화면에는 둘 다 CU로, D192). 점유율(%)은 보내는 쪽이 나누지 않고 화면이 계산한다. 필드·예시는 `schema/SCHEMA.md` 6절. 처음 스키마의 `metric`·`detection`·`attack_run`(mock 전용)은 M10에서, 옛 `overhead` 형식(ns `ts`·`ebpf_on`·`cpu_pct`·`mem_mb`)은 M11에서 지웠다.
 
 ## 6. InfluxDB 매핑
 

@@ -254,7 +254,7 @@ from(bucket: v.defaultBucket)
 '''
     bars = b.add("timeseries", "RRC 연결 시도 · 성공 · 무응답", 0, 24, 9, [target(kpm_bars)],
                  "상시 KPM2(TeleRAN Table II) — 셀마다 3초 묶음, 위쪽 셀 선택으로 거른다. "
-                 "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). "
+                 "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다. "
                  "주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
                  field_config={"defaults": {"unit": "none", "min": 0,
                                             "displayName": "${__field.name} · 셀 ${__field.labels.cell}",
@@ -280,7 +280,7 @@ from(bucket: v.defaultBucket)
   |> sort(columns: ["_time"])
 '''
     lines = b.add("timeseries", "UE 컨텍스트 · 연결 UE 수", 0, 24, 8, [target(kpm_lines)],
-                  f"셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 {CELL_LIMIT}의 90%(1·2단계 경보가 high가 되는 기준, 27_ §5.3). "
+                  f"셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 {CELL_LIMIT}의 90%(1·2단계 경보가 high가 되는 기준). "
                   "UE 컨텍스트 수는 완료를 기다리는 UE까지 센 탐지 쪽 확장 지표(ext.UeCtxMax)",
                   field_config={"defaults": {"unit": "none", "min": 0,
                                              "displayName": "${__field.name} · 셀 ${__field.labels.cell}",
@@ -325,7 +325,7 @@ summary
     b.add("table", "경보", 0, 24, 11, [target(alert_list)],
           "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, "
           "UE 수·대표 값 = 마지막 값. 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, "
-          "2~4단계 90초 동안 아무것도 없음 — 27_ §7). 행을 누르면 아래 경보 상세가 바뀐다",
+          "2~4단계 90초 동안 아무것도 없음). 행을 누르면 아래 경보 상세가 바뀐다",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True},
                                      "links": [link]},
                         "overrides": [
@@ -399,7 +399,7 @@ from(bucket: v.defaultBucket)
   |> drop(columns: ["n"])
 '''
     b.add("table", "판정 근거 값", 0, 15, 9, [target(detail)],
-          "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값(27_ §5.4 룰별 뜻)",
+          "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값",
           field_config={"defaults": {"custom": {"align": "left", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("항목", ("custom.width", 260)),
                                       override("값", ("custom.cellOptions", {"type": "json-view"}))]},
@@ -422,7 +422,7 @@ array.from(rows: if length(arr: ids) > 0 then array.map(arr: ids, fn: (x) => ({{
 '''
     b.add("table", "후보 공격", 15, 9, 9, [target(candidates)],
           "이 경보와 같은 모양을 만드는 다른 공격(candidates). 탐지 엔진은 경보끼리 묶지 않으므로, 같은 셀·같은 시간의 다른 경보와 "
-          "함께 본다(27_ §7). 4단계 이상 유형은 여기 후보 가운데 하나다",
+          "함께 본다. 4단계 이상 유형은 여기 후보 가운데 하나다",
           field_config={"defaults": {"custom": {"align": "left"}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),
                                       override("ID", ("custom.width", 90))]},
@@ -476,7 +476,7 @@ from(bucket: v.defaultBucket)
 '''
     ev_bars = b.add("timeseries", "근거 KPM", 0, 24, 8, [target(ev_kpm2)],
                     "경보 근거로 온 KPM2(100 ms 칸). 1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 "
-                    "보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
+                    "보여 준다. 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
                     field_config={"defaults": {"unit": "none", "min": 0, "displayName": "${__field.name}",
                                                "custom": {"drawStyle": "bars", "fillOpacity": 70, "barAlignment": -1,
                                                           "lineWidth": 1, "spanNulls": False}},
@@ -507,7 +507,7 @@ union(tables: [msgs, ends])
   |> sort(columns: ["_time"])
 '''
     tl = b.add("state-timeline", "UE_EVENT — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
-               "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
+               "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나. UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
                "자세한 값은 아래 표",
                field_config={"defaults": {"displayName": "${__field.labels.ue}", "color": {"mode": "palette-classic"},
                                           "custom": {"fillOpacity": 80, "lineWidth": 1},
@@ -531,7 +531,7 @@ from(bucket: v.defaultBucket)
 '''
     b.add("table", "UE_EVENT — 메시지 흐름 상세", 0, 24, 10, [target(messages)],
           "근거 메시지 하나 = 한 행. pre = 그 UE가 경보에 처음 실릴 때의 최근 메시지(최대 16줄), active = 경보 중 새 메시지. "
-          "원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값, 27_ §4.2)",
+          "원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값)",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
                         "overrides": [override("시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("방향", ("custom.width", 70)), override("프로토콜", ("custom.width", 70)),
@@ -924,7 +924,7 @@ from(bucket: v.defaultBucket)
   |> keep(columns: ["공격", "경보 수"])
 '''
     b.add("barchart", "공격별 경보 수", 0, 12, 11, [target(per_attack)],
-          "실험 동안 어떤 공격·이상 유형이 몇 번 울렸나(raise 기준). 같은 공격에 여러 룰이 함께 울릴 수 있다(27_ §5.1)",
+          "실험 동안 어떤 공격·이상 유형이 몇 번 울렸나(raise 기준). 같은 공격에 여러 룰이 함께 울릴 수 있다",
           field_config={"defaults": {"unit": "none", "min": 0, "decimals": 0,
                                      "color": {"mode": "fixed", "fixedColor": "orange"},
                                      "custom": {"fillOpacity": 80, "lineWidth": 1, "gradientMode": "none"}},
@@ -943,7 +943,7 @@ in_range
   |> keep(columns: ["경보 길이(초)"])
 '''
     b.add("histogram", "경보 길이 분포", 12, 12, 11, [target(durations)],
-          "경보가 얼마나 오래 이어졌나 — raise부터 clear·end까지(= duration_ms, 27_ §5.4). 가로축 = 경보 길이(초), "
+          "경보가 얼마나 오래 이어졌나 — raise부터 clear·end까지(= duration_ms). 가로축 = 경보 길이(초), "
           "세로축 = 경보 수. 해제·강제 종료된 경보만 — 아직 끝나지 않은 경보는 빠진다",
           field_config={"defaults": {"unit": "none", "color": {"mode": "fixed", "fixedColor": "orange"},
                                      "custom": {"fillOpacity": 70, "lineWidth": 1}}, "overrides": []},
@@ -977,7 +977,7 @@ in_range
     # Flux map의 열 순서는 정해져 있지 않아서 표에서 순서를 정한다
     columns = ["공격", "종류", "경보 수", "high 도달", "해제", "강제 종료", "끝이 안 옴", "평균 길이(초)", "최대 길이(초)"]
     b.add("table", "공격별 경보 결과", 0, 24, 9, [target(per_rule)],
-          "공격(룰)·종류마다 경보 수와 끝난 모습. high 도달 = 심각도가 한 번이라도 high까지 오른 경보(한 번 오르면 내려가지 않음, 룰마다 조건이 다르고 L3-24·L3-06·이상 유형·판정 보류는 늘 medium — 27_ §5.3). 강제 종료 = end"
+          "공격(룰)·종류마다 경보 수와 끝난 모습. high 도달 = 심각도가 한 번이라도 high까지 오른 경보(한 번 오르면 내려가지 않음, 룰마다 조건이 다르고 L3-24·L3-06·이상 유형·판정 보류는 늘 medium). 강제 종료 = end"
           "(분석 엔진 재시작·입력 끊김·입력 멈춤). 끝이 안 옴 = clear·end가 오지 않은 경보. 길이는 해제·강제 종료된 경보만",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),

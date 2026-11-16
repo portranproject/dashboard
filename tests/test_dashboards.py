@@ -152,6 +152,16 @@ def test_tables_sort_before_renaming_map():
     assert "단계" not in order and min(order, key=order.get) == "시작"
 
 
+def test_alert_detail_columns():
+    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고, 불확실은 '관측 오류'로(사용자 요청 11/16)."""
+    panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
+    summary = panels["판정 요약"]["transformations"][0]["options"]["indexByName"]
+    assert "갈래" not in summary and "branch" not in panels["판정 요약"]["targets"][0]["query"]
+    ues = panels["걸린 UE"]["transformations"][0]["options"]["indexByName"]
+    assert "관측 오류" in ues and not {"불확실", "전제"} & set(ues)
+    assert "r.conditions" not in panels["걸린 UE"]["targets"][0]["query"]
+
+
 def test_kpm1_timeline_ends_after_last_message():
     """상태 타임라인은 마지막 값을 화면 끝까지 늘인다 — UE마다 마지막 메시지 1초 뒤 빈 값(투명)으로 끝낸다(11/13)."""
     p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p["title"] == "UE_EVENT — UE별 메시지 흐름")
@@ -233,6 +243,11 @@ def test_performance_overhead_row():
         # 범례 = 'F1 들어옴 (DU → CU)' — NIC 이름은 범례에서 뺀다
         assert row[title]["fieldConfig"]["defaults"]["displayName"] == "${__field.labels.link} ${__field.labels.dir}"
         assert '"들어옴 (DU → CU)"' in q and '"나감 (CU → AMF)"' in q
+    # 노드 이름: cu로 끝나면 CU로 보인다(AWS는 p4-cu, 11/16)
+    node = row["노드"]
+    [mapping] = next(o for o in node["fieldConfig"]["overrides"] if o["matcher"]["options"] == "노드")["properties"]
+    pattern = mapping["value"][0]["options"]["pattern"]
+    assert [bool(re.match(pattern, v)) for v in ("p4-cu", "cu", "CU", "p4-du", "cuda")] == [True, True, True, False, False]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

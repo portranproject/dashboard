@@ -413,7 +413,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)\n  |> map(fn: (r) => ({_time: r._time, node: if exists r.node then r.node else \"-\",\n      \"CPU 사용률\": r.node_busy_cores / float(v: r.cpu_count) * 100.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)\n  |> map(fn: (r) => ({_time: r._time, node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node,\n      \"CPU 사용률\": r.node_busy_cores / float(v: r.cpu_count) * 100.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -471,7 +471,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"process_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.process_cores)\n  |> map(fn: (r) => ({_time: r._time, node: if exists r.node then r.node else \"-\",\n      \"분석 엔진\": r.process_cores,\n      \"그 밖 (탐지 엔진·전송기·CU 등)\": if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0,\n      \"코어 수\": if exists r.cpu_count then float(v: r.cpu_count) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"process_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.process_cores)\n  |> map(fn: (r) => ({_time: r._time, node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node,\n      \"분석 엔진\": r.process_cores,\n      \"그 밖 (탐지 엔진·전송기·CU 등)\": if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0,\n      \"코어 수\": if exists r.cpu_count then float(v: r.cpu_count) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -595,7 +595,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"mem_total_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes)\n  |> map(fn: (r) => ({_time: r._time, node: if exists r.node then r.node else \"-\",\n      \"사용 중\": float(v: r.mem_used_bytes),\n      \"전체\": if exists r.mem_total_bytes then float(v: r.mem_total_bytes) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"mem_total_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes)\n  |> map(fn: (r) => ({_time: r._time, node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node,\n      \"사용 중\": float(v: r.mem_used_bytes),\n      \"전체\": if exists r.mem_total_bytes then float(v: r.mem_total_bytes) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -682,7 +682,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"process_rss_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.process_rss_bytes)\n  |> map(fn: (r) => ({_time: r._time, node: if exists r.node then r.node else \"-\",\n      \"분석 엔진 (RSS)\": float(v: r.process_rss_bytes),\n      \"그 밖\": if r.mem_used_bytes > r.process_rss_bytes then float(v: r.mem_used_bytes - r.process_rss_bytes) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"strings\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"process_rss_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.process_rss_bytes)\n  |> map(fn: (r) => ({_time: r._time, node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node,\n      \"분석 엔진 (RSS)\": float(v: r.process_rss_bytes),\n      \"그 밖\": if r.mem_used_bytes > r.process_rss_bytes then float(v: r.mem_used_bytes - r.process_rss_bytes) else 0.0}))\n  |> group(columns: [\"node\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {

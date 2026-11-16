@@ -97,13 +97,24 @@ def test_monitoring_layout():
     d = load(DASHBOARD_DIR / "monitoring.json")
     assert d["uid"] == "portran-monitoring" and d["refresh"] == "5s"
     rows = [p["title"].split(" — ")[0] for p in d["panels"] if p["type"] == "row"]
-    assert rows == ["요약", "상시 KPM2", "경보 목록", "경보 상세"]
+    # 요약 줄은 없애고 성능 대시보드의 탐지 결과 줄을 맨 위로 옮겼다(사용자 결정 11/16)
+    # 줄 제목은 짧게(11/16): 탐지 결과 · KPM(상시 KPM2) · 경보 목록 · 경보 상세 — ${alert_id}
+    assert rows == ["탐지 결과", "KPM", "경보 목록", "경보 상세"]
+    # 경보 목록 줄은 경보 표 하나만 한 줄 가득(룰별 경보 수 막대는 없앰 — 사용자 요청 11/16)
+    i = next(i for i, p in enumerate(d["panels"]) if p["type"] == "row" and p["title"].startswith("경보 목록"))
+    assert d["panels"][i + 1]["title"] == "경보" and d["panels"][i + 1]["gridPos"]["w"] == 24
+    assert d["panels"][i + 2]["type"] == "row"
     assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell", "alert_id"]
     names = {a["name"] for a in d["annotations"]["list"]}
     assert {"경보 구간", "데이터 없음 (gap)", "칸 일부 없음", "세션 시작", "DU·CU 재시작"} <= names
     # 세션 시작(hello)과 DU·CU 재시작(f1_evt)은 색이 달라야 구분된다
     colors = {a["name"]: a["iconColor"] for a in d["annotations"]["list"]}
     assert colors["세션 시작"] != colors["DU·CU 재시작"]
+    # 주석은 늘 켜 두고 위쪽 토글은 숨긴다(사용자 요청 11/16)
+    assert all(a["enable"] and a["hide"] for a in d["annotations"]["list"])
+    # 경보 고르기 칸도 숨긴다(11/16) — 경보 목록 행 링크(var-alert_id)로 고른다
+    hidden = {v["name"]: v["hide"] for v in d["templating"]["list"]}
+    assert hidden == {"source": 0, "cell": 0, "alert_id": 2}
     # 공격 이름 값 매핑이 rule-names.json 그대로
     table = next(p for p in d["panels"] if p["title"] == "경보")
     mapping = next(o for o in table["fieldConfig"]["overrides"] if o["matcher"]["options"] == "공격")
@@ -129,7 +140,7 @@ def test_tables_sort_before_renaming_map():
     """map으로 만든 열로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다 — 관제 경보 목록에서 해제된 1단계 경보가 빠졌다(M11에서 찾음).
     정렬은 map 앞, 원래 열로 한다."""
     for name, title, key in (("monitoring.json", "경보", 'sort(columns: ["start"], desc: true)'),
-                             ("performance.json", "공격별 경보 결과", 'sort(columns: ["n"], desc: true)')):
+                             ("monitoring.json", "공격별 경보 결과", 'sort(columns: ["n"], desc: true)')):
         p = next(p for p in load(DASHBOARD_DIR / name)["panels"] if p.get("title") == title)
         q = p["targets"][0]["query"]
         last_map = q.rindex("|> map(")
@@ -143,23 +154,20 @@ def test_tables_sort_before_renaming_map():
 
 def test_kpm1_timeline_ends_after_last_message():
     """상태 타임라인은 마지막 값을 화면 끝까지 늘인다 — UE마다 마지막 메시지 1초 뒤 빈 값(투명)으로 끝낸다(11/13)."""
-    p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p["title"] == "근거 KPM1 — UE별 메시지 흐름")
+    p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p["title"] == "UE_EVENT — UE별 메시지 흐름")
     q = p["targets"][0]["query"]
     assert "|> last()" in q and "date.add(d: 1s" in q and 'union(tables: [msgs, ends])' in q
     [mapping] = p["fieldConfig"]["defaults"]["mappings"]
     assert mapping["options"]["match"] == "empty" and mapping["options"]["result"]["color"] == "transparent"
 
 
-def test_performance_layout():
-    """성능 대시보드 = 탐지 성과 + CU 자원(수집 오버헤드, M11) (docs/dashboard-design.md 3절)."""
-    d = load(DASHBOARD_DIR / "performance.json")
-    assert d["uid"] == "portran-performance"
-    rows = [p["title"].split(" — ")[0] for p in d["panels"] if p["type"] == "row"]
-    assert rows == ["탐지 결과", "경보·입력 품질", "CU 자원"]  # '파이프라인 완성 뒤' 자리는 없앴다(11/13)
-    # 단계 비교(1~4단계 vs 1단계만)는 없앴다(사용자 결정 11/13)
-    assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell"]
-    panels = {p["title"]: p for p in d["panels"] if p["type"] != "row"}
-    assert not any("단계 비교" in title or "kpm_only" in json.dumps(p) for title, p in panels.items())
+def test_detection_rows_on_monitoring():
+    """탐지 결과(경보 수·공격별·길이·결과 표)는 관제 맨 위에 있다 — 요약 줄 대신, 성능에서 옮김(사용자 결정 11/16)."""
+    d = load(DASHBOARD_DIR / "monitoring.json")
+    first_row = next(i for i, p in enumerate(d["panels"]) if p["type"] == "row" and p["title"] == "KPM")
+    panels = {p["title"]: p for p in d["panels"][:first_row] if p["type"] != "row"}
+    # 경보 수 — 종류별 stat은 없앴다(11/16)
+    assert list(panels) == ["공격별 경보 수", "경보 길이 분포", "공격별 경보 결과"]
     # 공격별 막대: 모든 룰·후보 ID → 짧은 공격 이름('#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)' → 'UE 컨텍스트 고갈')
     assert panels["공격별 경보 수"]["options"]["orientation"] == "horizontal"  # 세로 막대는 해 보고 되돌림(11/13)
     q = panels["공격별 경보 수"]["targets"][0]["query"]
@@ -172,7 +180,23 @@ def test_performance_layout():
     assert "룰" not in order and "단계" not in order and min(order, key=order.get) == "공격"
     attack = next(o for o in table["fieldConfig"]["overrides"] if o["matcher"]["options"] == "공격")
     assert attack["properties"][0]["value"][0]["options"]["L3-01-V"]["text"] == "UE 컨텍스트 고갈"
-    # 경보·입력 품질도 셀로 거른다. CU 자원(overhead)은 노드 값이라 셀과 무관
+    # 셀로 거른다
+    for p in panels.values():
+        assert all("${cell:json}" in t["query"] for t in p["targets"]), p["title"]
+
+
+def test_performance_layout():
+    """성능 대시보드 = CU 자원(수집 오버헤드, M11)만 (docs/dashboard-design.md 3절)."""
+    d = load(DASHBOARD_DIR / "performance.json")
+    assert d["uid"] == "portran-performance"
+    rows = [p["title"].split(" — ")[0] for p in d["panels"] if p["type"] == "row"]
+    # '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과는 관제로 옮기고 경보·입력 품질은 없앴다(11/16)
+    assert rows == ["Overhead"]  # CU 자원 — 수집 오버헤드(제목은 짧게, 11/16)
+    # 단계 비교(1~4단계 vs 1단계만)는 없앴다(사용자 결정 11/13)
+    assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell"]
+    panels = {p["title"]: p for p in d["panels"] if p["type"] != "row"}
+    assert not any("단계 비교" in title or "kpm_only" in json.dumps(p) for title, p in panels.items())
+    # CU 자원(overhead)은 노드 값이라 셀과 무관, 상시 KPM2를 함께 그리는 패널만 셀로 거른다
     for p in panels.values():
         for t in p.get("targets", []):
             node_level = 'r._measurement == "overhead' in t["query"] and '"kpm2"' not in t["query"]
@@ -183,26 +207,26 @@ def test_performance_overhead_row():
     """CU 자원 줄(SCHEMA.md 6절 overhead): Beszel식 2열 — CPU·메모리는 노드 전체와 분석 엔진 몫, 링크 트래픽, 부하와 함께."""
     d = load(DASHBOARD_DIR / "performance.json")
     panels = d["panels"]
-    start = next(i for i, p in enumerate(panels) if p["type"] == "row" and p["title"].startswith("CU 자원"))
+    start = next(i for i, p in enumerate(panels) if p["type"] == "row" and p["title"] == "Overhead")
     end = next((i for i, p in enumerate(panels) if i > start and p["type"] == "row"), len(panels))
     row = {p["title"]: p for p in panels[start + 1:end]}
-    assert list(row) == ["노드", "고른 시간 범위 요약", "CPU 사용률 (노드 전체)", "CPU 내역 (코어 수, 쌓기)",
-                         "메모리 사용량 (노드 전체)", "메모리 내역 (쌓기)",
-                         "F1·N2 SCTP 트래픽 (바이트/초, 위 = 들어옴 · 아래 = 나감)",
-                         "F1·N2 SCTP 패킷 (패킷/초, 위 = 들어옴 · 아래 = 나감)", "부하와 함께 — CPU 사용률 · RRC 연결 시도"]
+    assert list(row) == ["노드", "고른 시간 범위 요약", "CPU 사용률", "CPU 내역",
+                         "메모리 사용량", "메모리 내역",
+                         "F1·N2 SCTP 트래픽",
+                         "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"]
     for title, p in row.items():
         if p["type"] == "timeseries":
             # 3초 구간이 6초 넘게 비면 선을 끊는다(상시 KPM2와 같게)
             assert p["fieldConfig"]["defaults"]["custom"]["insertNulls"] == 6000, title
-    load_panel = row["부하와 함께 — CPU 사용률 · RRC 연결 시도"]
+    load_panel = row["CPU 사용률 · RRC 연결 시도"]
     assert [t["refId"] for t in load_panel["targets"]] == ["A", "B"]
     # 두 계열을 한곳에, 이름과 평균·최대가 붙게(목록이면 오른쪽 축 계열만 따로 가고, 아래 표는 너무 벌어짐)
     legend = load_panel["options"]["legend"]
     assert (legend["displayMode"], legend["placement"], legend["calcs"]) == ("table", "right", ["mean", "max"])
     assert '"overhead"' in load_panel["targets"][0]["query"] and '"kpm2"' in load_panel["targets"][1]["query"]
     # 링크: 바이트/초와 패킷/초, 둘 다 구간 길이로 나눈 초당 값
-    for title, field, unit in (("F1·N2 SCTP 트래픽 (바이트/초, 위 = 들어옴 · 아래 = 나감)", "wire_bytes", "binBps"),
-                               ("F1·N2 SCTP 패킷 (패킷/초, 위 = 들어옴 · 아래 = 나감)", "sctp_packets", "pps")):
+    for title, field, unit in (("F1·N2 SCTP 트래픽", "wire_bytes", "binBps"),
+                               ("F1·N2 SCTP 패킷", "sctp_packets", "pps")):
         q = row[title]["targets"][0]["query"]
         assert '"overhead_link"' in q and f"ingress_{field}" in q and f"egress_{field}" in q and "/ r.secs" in q, title
         assert row[title]["fieldConfig"]["defaults"]["unit"] == unit, title
@@ -245,6 +269,13 @@ def test_tables_have_fixed_column_order(path):
         if p["type"] == "table":
             org = [t for t in p.get("transformations", []) if t["id"] == "organize"]
             assert org and org[0]["options"]["indexByName"], p["title"]
+
+
+@pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
+def test_panel_titles_are_short(path):
+    """패널·줄 제목에 괄호 설명을 붙이지 않는다 — 설명은 패널 설명(ⓘ)에 둔다(사용자 요청 11/16)."""
+    for p in load(path)["panels"]:
+        assert "(" not in p["title"], p["title"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

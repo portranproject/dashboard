@@ -660,6 +660,9 @@ def stat_options(fields: str = "", values: bool = False) -> dict:
 
 OVERHEAD = 'r._measurement == "overhead"'
 # node_id 표시: cu로 끝나면 CU(AWS 탐지 쪽은 p4-cu로 보냄, 11/16 사용자 요청). 그 밖의 값은 그대로
+# 시간 그래프는 노드마다 계열 — cu로 끝나는 node_id(cu·p4-cu)는 한 노드 CU로 묶는다(두 이름이 섞이면 범례가 둘씩 나왔음, 11/16)
+NODE_FLUX = ('if not exists r.node then "-" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: "cu") '
+             'then "CU" else r.node')
 NODE_MAPPINGS = [{"type": "regex", "options": {"pattern": "^(.+-)?(cu|CU)$", "result": {"text": "CU", "index": 0}}}]
 OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
 
@@ -751,9 +754,10 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
           options=stat_options("/.*/"), new_line=True)
 
     cpu_pct = f'''
+import "strings"
 {overhead_pivot(["node_busy_cores", "cpu_count"])}
   |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)
-  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+  |> map(fn: (r) => ({{_time: r._time, node: {NODE_FLUX},
       "CPU 사용률": r.node_busy_cores / float(v: r.cpu_count) * 100.0}}))
   |> group(columns: ["node"])
   |> sort(columns: ["_time"])
@@ -766,9 +770,10 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
                    "tooltip": {"mode": "multi", "sort": "none"}})
 
     cpu_split = f'''
+import "strings"
 {overhead_pivot(["node_busy_cores", "process_cores", "cpu_count"])}
   |> filter(fn: (r) => exists r.node_busy_cores and exists r.process_cores)
-  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+  |> map(fn: (r) => ({{_time: r._time, node: {NODE_FLUX},
       "분석 엔진": r.process_cores,
       "그 밖 (탐지 엔진·전송기·CU 등)": if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0,
       "코어 수": if exists r.cpu_count then float(v: r.cpu_count) else 0.0}}))
@@ -789,9 +794,10 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
                    "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
 
     mem_use = f'''
+import "strings"
 {overhead_pivot(["mem_used_bytes", "mem_total_bytes"])}
   |> filter(fn: (r) => exists r.mem_used_bytes)
-  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+  |> map(fn: (r) => ({{_time: r._time, node: {NODE_FLUX},
       "사용 중": float(v: r.mem_used_bytes),
       "전체": if exists r.mem_total_bytes then float(v: r.mem_total_bytes) else 0.0}}))
   |> group(columns: ["node"])
@@ -807,9 +813,10 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
                    "tooltip": {"mode": "multi", "sort": "none"}})
 
     mem_split = f'''
+import "strings"
 {overhead_pivot(["mem_used_bytes", "process_rss_bytes"])}
   |> filter(fn: (r) => exists r.mem_used_bytes and exists r.process_rss_bytes)
-  |> map(fn: (r) => ({{_time: r._time, node: if exists r.node then r.node else "-",
+  |> map(fn: (r) => ({{_time: r._time, node: {NODE_FLUX},
       "분석 엔진 (RSS)": float(v: r.process_rss_bytes),
       "그 밖": if r.mem_used_bytes > r.process_rss_bytes then float(v: r.mem_used_bytes - r.process_rss_bytes) else 0.0}}))
   |> group(columns: ["node"])

@@ -248,6 +248,11 @@ def test_performance_overhead_row():
     [mapping] = next(o for o in node["fieldConfig"]["overrides"] if o["matcher"]["options"] == "노드")["properties"]
     pattern = mapping["value"][0]["options"]["pattern"]
     assert [bool(re.match(pattern, v)) for v in ("p4-cu", "cu", "CU", "p4-du", "cuda")] == [True, True, True, False, False]
+    # 시간 그래프도 cu로 끝나는 node_id(cu·p4-cu)를 한 노드로 묶는다 — 두 이름이 섞인 범위에서 범례가 둘씩 나왔음(11/16)
+    for title in ("CPU 사용률", "CPU 내역", "메모리 사용량", "메모리 내역"):
+        q = row[title]["targets"][0]["query"]
+        assert 'strings.hasSuffix(v: strings.toLower(v: r.node), suffix: "cu")' in q and 'then "CU"' in q, title
+        assert "node: if exists r.node then r.node" not in q, title
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

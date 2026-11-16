@@ -211,7 +211,8 @@ def annotation(name: str, query: str, color: str, panel_ids: list[int], region: 
                 "tags": {"source": "field", "value": "tags"}}
     if region:
         mappings["timeEnd"] = {"source": "field", "value": "timeEnd"}
-    return {"name": name, "datasource": DS, "enable": True, "hide": False, "iconColor": color,
+    # 늘 켜 두고 위쪽 토글은 숨긴다(11/16 사용자 결정 — 변수 줄을 간단하게)
+    return {"name": name, "datasource": DS, "enable": True, "hide": True, "iconColor": color,
             "target": {"datasource": DS, "refId": "Anno", "query": query.strip("\n")}, "mappings": mappings,
             "filter": {"exclude": False, "ids": panel_ids}}
 
@@ -232,103 +233,12 @@ def dashboard(uid: str, title: str, description: str, board: Board, variables: l
 def monitoring() -> dict:
     b = Board()
 
-    # ---- 요약
-    b.row("요약 — 지금")
-    # 상태 불명 판단에는 최근 근거만 있으면 된다(근거가 5분 넘게 없으면 이미 상태 불명이다).
-    # 요약 줄은 화면 시간 범위와 상관없이 지금 상태다(상태 불명도 now() 기준) — 그래서 stop도 now()
-    open_alerts = f'''
-import "array"
-import "date"
-import "strings"
-{alert_summary("-7d", "-5m", stop="now()")}
-// map 결과에 그대로 옮긴 열(alert_id)이 하나도 없으면 InfluxDB 2.7의 Flux가 조건식 값을 null로 만든다 — 그래서 alert_id를 함께 둔다
-counted = summary
-  |> filter(fn: (r) => r.status == "열림" or r.status == "상태 불명")
-  |> map(fn: (r) => ({{alert_id: r.alert_id, class: if r.status == "열림" then r.class else "상태 불명", _value: 1}}))
-  |> keep(columns: ["class", "_value"])
-zeros = array.from(rows: [{{class: "공격", _value: 0}}, {{class: "이상 유형", _value: 0}}, {{class: "판정 보류", _value: 0}},
-                         {{class: "상태 불명", _value: 0}}])
-union(tables: [counted, zeros])
-  |> group(columns: ["class"])
-  |> sum()
-'''
-    b.add("stat", "열린 경보", 0, 9, 5, [target(open_alerts)],
-          "지금 울리고 있는 경보 수(최근 7일 안에 열려 아직 clear·end가 오지 않은 것). 공격 경보만 '탐지'로 세고, "
-          "4단계 이상 유형과 판정 보류 경보는 따로 센다(27_ §5.5). 상태 불명 = 열린 채 1단계 15초, 2~4단계 90초 동안 레코드가 없는 "
-          "경보(탐지 엔진이 죽었거나 다시 떴을 수 있음, 27_ §7)",
-          field_config={"defaults": {"displayName": "${__field.labels.class}", "unit": "none",
-                                     "thresholds": {"mode": "absolute", "steps": [
-                                         {"color": "green", "value": None}, {"color": "red", "value": 1}]}},
-                        "overrides": []},
-          options={"colorMode": "background", "graphMode": "none", "textMode": "value_and_name",
-                   "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}, "orientation": "vertical"})
-
-    max_sev = f'''
-import "array"
-import "date"
-import "strings"
-{alert_summary("-7d", "-5m", stop="now()")}
-union(tables: [summary |> filter(fn: (r) => r.status == "열림") |> keep(columns: ["sev"]), array.from(rows: [{{sev: 0}}])])
-  |> max(column: "sev")
-  |> map(fn: (r) => ({{_value: string(v: r.sev)}}))
-'''
-    b.add("stat", "최고 심각도 (열린 경보)", 9, 3, 5, [target(max_sev)],
-          "열린 경보가 그 경보에서 낸 심각도 가운데 가장 높은 것. high는 한 번 오르면 내려가지 않는다(27_ §5.3)",
-          field_config={"defaults": {"mappings": SEVERITY_MAPPINGS, "displayName": "최고 심각도"}, "overrides": []},
-          options={"colorMode": "background", "graphMode": "none", "textMode": "value",
-                   "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/.*/", "values": False}})
-
-    freshness = f'''
-from(bucket: v.defaultBucket)
-  |> range(start: -30d)
-  |> filter(fn: (r) => {ENV} and ((r._measurement == "kpm2" and r._field == "n")
-      or (r._measurement == "alert" and r._field == "severity")
-      or (r._measurement == "evidence" and r._field == "seq")))
-  |> group(columns: ["_measurement"])
-  |> max(column: "_time")
-  |> map(fn: (r) => ({{row: 1, _time: r._time,
-      name: if r._measurement == "kpm2" then "상시 KPM2" else if r._measurement == "alert" then "경보" else "근거",
-      _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}}))
-  |> group()
-  |> pivot(rowKey: ["row"], columnKey: ["name"], valueColumn: "_value")
-  |> drop(columns: ["row", "_time"])
-'''
-    b.add("stat", "수집 상태 — 마지막 수신 뒤", 12, 6, 5, [target(freshness)],
-          "데이터 시각 기준으로 마지막 레코드가 몇 초 전인가. 상시 KPM2는 3초마다 와야 하고(실험 때 상시 경로를 켰을 때), "
-          "경보·근거는 경보가 있을 때만 온다",
-          field_config={"defaults": {"unit": "s", "decimals": 0,
-                                     "thresholds": {"mode": "absolute", "steps": [
-                                         {"color": "green", "value": None}, {"color": "orange", "value": 15},
-                                         {"color": "red", "value": 60}]}}, "overrides": []},
-          options={"colorMode": "value", "graphMode": "none", "textMode": "value_and_name",
-                   "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}, "orientation": "vertical"})
-
-    session = f'''
-import "array"
-last = from(bucket: v.defaultBucket)
-  |> range(start: -30d)
-  |> filter(fn: (r) => r._measurement == "hello" and r._field == "seq" and {ENV})
-  |> group()
-  |> max(column: "_time")
-  |> findColumn(fn: (key) => true, column: "session")
-restarts = from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "f1_evt" and r._field == "msg" and {ENV})
-  |> group()
-  |> count()
-  |> findColumn(fn: (key) => true, column: "_value")
-array.from(rows: [{{"지금 세션": if length(arr: last) > 0 then last[0] else "-",
-                    "재시작 (범위 안)": if length(arr: restarts) > 0 then restarts[0] else 0}}])
-'''
-    b.add("stat", "분석 엔진 세션 · DU·CU 재시작", 18, 6, 5, [target(session)],
-          "마지막 hello의 세션(분석 엔진이 다시 뜨면 바뀜)과, 고른 시간 범위 안의 DU·CU 재시작(f1_evt) 수",
-          field_config={"defaults": {"unit": "none"}, "overrides": []},
-          options={"colorMode": "none", "graphMode": "none", "textMode": "value_and_name", "orientation": "vertical",
-                   "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/.*/", "values": False}},
-          new_line=True)
+    # ---- 탐지 결과 (요약 줄 대신, 성능 대시보드에서 옮김 — 11/16)
+    add_detection_rows(b)
 
     # ---- 상시 KPM2
-    b.row("상시 KPM2 — 셀 ${cell}, 3초 묶음 (TeleRAN Table II)")
+    # 줄·패널 제목은 짧게(11/16 사용자 요청) — 셀·3초 묶음·셀 한도는 패널 설명(ⓘ)에 있다
+    b.row("KPM")
     kpm_bars = f'''
 from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
@@ -342,7 +252,8 @@ from(bucket: v.defaultBucket)
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
 '''
-    bars = b.add("timeseries", "RRC 연결 시도 · 성공 · 무응답 (3초마다)", 0, 24, 9, [target(kpm_bars)],
+    bars = b.add("timeseries", "RRC 연결 시도 · 성공 · 무응답", 0, 24, 9, [target(kpm_bars)],
+                 "상시 KPM2(TeleRAN Table II) — 셀마다 3초 묶음, 위쪽 셀 선택으로 거른다. "
                  "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다(27_ §4.1). "
                  "주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
                  field_config={"defaults": {"unit": "none", "min": 0,
@@ -368,7 +279,7 @@ from(bucket: v.defaultBucket)
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
 '''
-    lines = b.add("timeseries", f"UE 컨텍스트 · 연결 UE 수 — 셀 한도 {CELL_LIMIT}", 0, 24, 8, [target(kpm_lines)],
+    lines = b.add("timeseries", "UE 컨텍스트 · 연결 UE 수", 0, 24, 8, [target(kpm_lines)],
                   f"셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 {CELL_LIMIT}의 90%(1·2단계 경보가 high가 되는 기준, 27_ §5.3). "
                   "UE 컨텍스트 수는 완료를 기다리는 UE까지 센 탐지 쪽 확장 지표(ext.UeCtxMax)",
                   field_config={"defaults": {"unit": "none", "min": 0,
@@ -385,7 +296,7 @@ from(bucket: v.defaultBucket)
     kpm_panels = [bars["id"], lines["id"]]
 
     # ---- 경보 목록
-    b.row("경보 목록 — 행을 누르면 아래 경보 상세가 그 경보로 바뀐다")
+    b.row("경보 목록")
     alert_list = f'''
 import "date"
 import "strings"
@@ -410,7 +321,8 @@ summary
 '''
     link = {"title": "이 경보 상세 보기",
             "url": "/d/portran-monitoring/?var-source=${source}&var-cell=${cell}&var-alert_id=${__data.fields.alert_id}&${__url_time_range}"}
-    b.add("table", "경보", 0, 17, 11, [target(alert_list)],
+    # 룰별 경보 수 막대는 없애고 표를 한 줄 가득(11/16 — 맨 위 탐지 결과의 공격별 경보 수와 겹침)
+    b.add("table", "경보", 0, 24, 11, [target(alert_list)],
           "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, "
           "UE 수·대표 값 = 마지막 값. 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, "
           "2~4단계 90초 동안 아무것도 없음 — 27_ §7). 행을 누르면 아래 경보 상세가 바뀐다",
@@ -435,25 +347,7 @@ summary
           transformations=[{"id": "organize", "options": {  # map의 열 순서는 정해져 있지 않다(이름순으로 섞여 나옴)
               "excludeByName": {}, "renameByName": {},
               "indexByName": {name: i for i, name in enumerate(
-                  ["시작", "셀", "룰", "공격", "종류", "심각도", "UE 수", "대표 값", "상태", "길이(초)", "alert_id"])}}}])
-
-    per_rule = f'''
-from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "alert" and r._field == "severity" and r.event == "raise" and {ENV})
-  |> group(columns: ["rule"])
-  |> count()
-  |> group()
-  |> sort(columns: ["_value"], desc: true)
-  |> map(fn: (r) => ({{공격: r.rule, "경보 수": r._value}}))
-'''
-    b.add("bargauge", "룰별 경보 수 (raise)", 17, 7, 11, [target(per_rule)],
-          "고른 시간 범위에 어떤 공격·이상 유형이 몇 번 울렸나. 같은 공격에 여러 룰이 함께 울릴 수 있다(27_ §5.1)",
-          field_config={"defaults": {"unit": "none", "min": 0, "color": {"mode": "fixed", "fixedColor": "orange"},
-                                     "mappings": rule_mappings()}, "overrides": []},
-          options={"orientation": "horizontal", "displayMode": "basic", "showUnfilled": True, "valueMode": "color",
-                   "reduceOptions": {"calcs": [], "fields": "/^경보 수$/", "values": True},
-                   "namePlacement": "left", "sizing": "auto"},
+                  ["시작", "셀", "룰", "공격", "종류", "심각도", "UE 수", "대표 값", "상태", "길이(초)", "alert_id"])}}}],
           new_line=True)
 
     # ---- 경보 상세
@@ -581,8 +475,8 @@ from(bucket: v.defaultBucket)
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> sort(columns: ["_time"])
 '''
-    ev_bars = b.add("timeseries", "근거 KPM2 — 100 ms 칸", 0, 24, 8, [target(ev_kpm2)],
-                    "1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 "
+    ev_bars = b.add("timeseries", "근거 KPM", 0, 24, 8, [target(ev_kpm2)],
+                    "경보 근거로 온 KPM2(100 ms 칸). 1단계 경보가 왜 났나. 경보 직전 2.1초(pre 21칸)·경보 중(active)·해제 뒤 1초(post)의 셀 카운터를 100 ms 그대로 "
                     "보여 준다(27_ §6.2). 무응답은 시도보다 약 1초 늦게 찍힌다. 회색 영역 = 데이터 없음(gap). 시간 범위를 경보 구간에 맞춰 본다",
                     field_config={"defaults": {"unit": "none", "min": 0, "displayName": "${__field.name}",
                                                "custom": {"drawStyle": "bars", "fillOpacity": 70, "barAlignment": -1,
@@ -613,8 +507,8 @@ union(tables: [msgs, ends])
   |> group(columns: ["ue"])
   |> sort(columns: ["_time"])
 '''
-    tl = b.add("state-timeline", "근거 KPM1 — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
-               "걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
+    tl = b.add("state-timeline", "UE_EVENT — UE별 메시지 흐름", 0, 24, 7, [target(timeline)],
+               "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나(27_ §6.3). UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). "
                "자세한 값은 아래 표",
                field_config={"defaults": {"displayName": "${__field.labels.ue}", "color": {"mode": "palette-classic"},
                                           "custom": {"fillOpacity": 80, "lineWidth": 1},
@@ -636,7 +530,7 @@ from(bucket: v.defaultBucket)
       방향: if r.dir == "UL" then "↑ UL" else "↓ DL", 프로토콜: r.proto, 메시지: r.msg, 구간: r.phase, 원본: r.raw_json}}))
   |> limit(n: 1000)
 '''
-    b.add("table", "근거 KPM1 — 메시지", 0, 24, 10, [target(messages)],
+    b.add("table", "UE_EVENT — 메시지 흐름 상세", 0, 24, 10, [target(messages)],
           "근거 메시지 하나 = 한 행. pre = 그 UE가 경보에 처음 실릴 때의 최근 메시지(최대 16줄), active = 경보 중 새 메시지. "
           "원본은 분석 엔진이 보낸 ue_evt 그대로(f에 메시지에서 꺼낸 값, 27_ §4.2)",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
@@ -654,7 +548,7 @@ from(bucket: v.defaultBucket)
 import "influxdata/influxdb/schema"
 schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
   predicate: (r) => (r._measurement == "kpm2" or r._measurement == "alert") and {ENV})
-''', multi=True, include_all=True, description="상시 KPM2 그래프에 보일 셀"),
+''', multi=True, include_all=True, description="탐지 결과·상시 KPM2 그래프에 넣을 셀"),
         query_variable("alert_id", "경보", f'''
 from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
@@ -667,6 +561,7 @@ from(bucket: v.defaultBucket)
 ''', description="경보 상세에 보일 경보. 경보 목록에서 행을 누르면 바뀐다"),
     ]
     variables[2]["sort"] = 0
+    variables[2]["hide"] = 2  # 위쪽 칸은 숨긴다(11/16) — 경보 목록에서 행을 눌러 고르고, 경보 상세 행 제목에 보인다
 
     # 열린 경보만 지금까지, 상태 불명은 마지막 레코드(경보·근거)까지, 닫힌 경보는 clear·end까지 칠한다
     alert_regions = f'''
@@ -728,14 +623,14 @@ from(bucket: v.defaultBucket)
         annotation("근거 데이터 없음 (gap)", ev_gaps, "rgba(128, 128, 128, 0.25)", [ev_bars["id"]], region=True),
     ]
     return dashboard("portran-monitoring", "PortRAN 관제",
-                     "탐지 엔진 레코드(27_) 실시간 관제 — 상시 KPM2, 경보 목록, 경보 상세(근거 KPM2·KPM1). docs/dashboard-design.md 2절",
+                     "탐지 엔진 레코드(27_) 실시간 관제 — 탐지 결과(고른 범위의 경보 수·공격별·길이), 상시 KPM2, 경보 목록, "
+                     "경보 상세(근거 KPM2·KPM1). docs/dashboard-design.md 2절",
                      b, variables, annotations, refresh="5s", time_from="now-1h")
 
 
 # --------------------------------------------------------------------------- 성능 (탐지 성과)
 
 CELL_FILTER = "contains(value: r.cell, set: ${cell:json})"
-END_REASONS = [("session_reset", "분석 엔진 재시작"), ("input_lost", "입력 끊김"), ("input_silent", "입력 멈춤")]
 TEXT_COLOR = {"mode": "fixed", "fixedColor": "text"}
 
 
@@ -784,7 +679,7 @@ def timeseries_defaults(unit: str, min_zero: bool = True, **custom) -> dict:
 
 
 def add_overhead_rows(b: Board) -> None:
-    b.row("CU 자원 — 수집 오버헤드 (분석 엔진이 3초마다, 노드 전체와 분석 엔진 몫)")
+    b.row("Overhead")  # 제목은 짧게(11/16) — CU 자원 수집 오버헤드, 분석 엔진이 3초 구간마다(노드 전체와 분석 엔진 몫)
     node_info = f'''
 from(bucket: v.defaultBucket)
   |> range(start: -30d)
@@ -860,8 +755,8 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
   |> group(columns: ["node"])
   |> sort(columns: ["_time"])
 '''
-    b.add("timeseries", "CPU 사용률 (노드 전체)", 0, 12, 8, [target(cpu_pct)],
-          "구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다",
+    b.add("timeseries", "CPU 사용률", 0, 12, 8, [target(cpu_pct)],
+          "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다",
           field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
                                      "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
           options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": False},
@@ -877,8 +772,8 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
   |> group(columns: ["node"])
   |> sort(columns: ["_time"])
 '''
-    b.add("timeseries", "CPU 내역 (코어 수, 쌓기)", 12, 12, 8, [target(cpu_split)],
-          "노드가 쓴 코어를 분석 엔진(계측기 프로세스)과 그 밖으로 나눠 쌓았다. 점선 = 노드 코어 수(위쪽 한계). "
+    b.add("timeseries", "CPU 내역", 12, 12, 8, [target(cpu_split)],
+          "노드가 쓴 코어 수를 분석 엔진(계측기 프로세스)과 그 밖으로 나눠 쌓았다. 점선 = 노드 코어 수(위쪽 한계). "
           "커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽(그 밖)에 잡힌다",
           field_config={"defaults": timeseries_defaults("none", stacking={"mode": "normal", "group": "A"}),
                         "overrides": [
@@ -899,8 +794,8 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
   |> group(columns: ["node"])
   |> sort(columns: ["_time"])
 '''
-    b.add("timeseries", "메모리 사용량 (노드 전체)", 0, 12, 8, [target(mem_use)],
-          "사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 점선 = 전체 메모리",
+    b.add("timeseries", "메모리 사용량", 0, 12, 8, [target(mem_use)],
+          "노드 전체. 사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 점선 = 전체 메모리",
           field_config={"defaults": {**timeseries_defaults("bytes"), "color": {"mode": "fixed", "fixedColor": "green"}},
                         "overrides": [override("전체", ("color", {"mode": "fixed", "fixedColor": "text"}),
                                                ("custom.fillOpacity", 0),
@@ -917,7 +812,7 @@ array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pic
   |> group(columns: ["node"])
   |> sort(columns: ["_time"])
 '''
-    b.add("timeseries", "메모리 내역 (쌓기)", 12, 12, 8, [target(mem_split)],
+    b.add("timeseries", "메모리 내역", 12, 12, 8, [target(mem_split)],
           "노드 사용 메모리를 분석 엔진(계측기 프로세스 resident)과 그 밖으로 나눠 쌓았다",
           field_config={"defaults": timeseries_defaults("bytes", stacking={"mode": "normal", "group": "A"}),
                         "overrides": [
@@ -951,13 +846,13 @@ union(tables: [inbound, outbound])
 '''
 
     link_note = ("선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균) — F1-U 사용자 데이터(GTP-U)는 "
-                 "들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향(CU 기준 들어옴은 위, 나감은 아래). "
+                 "들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = 들어옴, 아래 = 나감(CU 기준). "
                  "네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸")
     for x, title, kind, unit, extra in (
-            (0, "F1·N2 SCTP 트래픽 (바이트/초, 위 = 들어옴 · 아래 = 나감)", "wire_bytes", "binBps",
-             " 바이트는 이더넷 헤더 포함, FCS 제외."),
-            (12, "F1·N2 SCTP 패킷 (패킷/초, 위 = 들어옴 · 아래 = 나감)", "sctp_packets", "pps",
-             " 공격으로 시그널링이 몰리는 모양은 바이트보다 패킷 수에서 더 잘 보인다. GSO로 묶인 패킷은 세그먼트 수만큼 센다.")):
+            (0, "F1·N2 SCTP 트래픽", "wire_bytes", "binBps",
+             " 단위 바이트/초. 바이트는 이더넷 헤더 포함, FCS 제외."),
+            (12, "F1·N2 SCTP 패킷", "sctp_packets", "pps",
+             " 단위 패킷/초. 공격으로 시그널링이 몰리는 모양은 바이트보다 패킷 수에서 더 잘 보인다. GSO로 묶인 패킷은 세그먼트 수만큼 센다.")):
         b.add("timeseries", title, x, 12, 8, [target(link_rate(kind))], link_note + "." + extra,
               field_config={"defaults": {**timeseries_defaults(unit, min_zero=False),
                                          "displayName": "${__field.labels.link} ${__field.labels.dir}",
@@ -983,10 +878,10 @@ from(bucket: v.defaultBucket)
   |> aggregateWindow(every: 3s, fn: sum, createEmpty: false, timeSrc: "_start")
   |> map(fn: (r) => ({{_time: r._time, "RRC 연결 시도": r._value}}))
 '''
-    b.add("timeseries", "부하와 함께 — CPU 사용률 · RRC 연결 시도", 0, 24, 8,
+    b.add("timeseries", "CPU 사용률 · RRC 연결 시도", 0, 24, 8,
           [target(load, "A"), target(attempts, "B")],
           "공격으로 연결 시도가 몰릴 때 CU CPU가 얼마나 오르나. 왼쪽 축 = 노드 CPU 사용률, 오른쪽 축(막대) = 상시 KPM2 RRC 연결 시도"
-          "(위쪽 셀 변수로 고른 셀의 합). 둘 다 3초 구간이라 칸끼리 겹친다",
+          "(위쪽 셀 변수로 고른 셀의 합). 둘 다 3초 구간이라 칸끼리 겹친다. 상시 KPM2가 없는 출처(샘플 등)에서는 RRC 연결 시도가 안 보인다",
           field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
                                      "color": {"mode": "fixed", "fixedColor": "blue"}},
                         "overrides": [override("RRC 연결 시도.*", ("unit", "none"), ("max", None),
@@ -999,31 +894,11 @@ from(bucket: v.defaultBucket)
                    "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
 
 
-def performance() -> dict:
-    b = Board()
-
-    # ---- 탐지 결과
-    b.row("탐지 결과 — 고른 시간 범위(실험 구간)에 시작한 경보")
-    by_class = f'''
-import "array"
-import "date"
-import "strings"
-{alerts_in_range()}
-counted = in_range
-  |> map(fn: (r) => ({{alert_id: r.alert_id, class: r.class, _value: 1}}))
-  |> keep(columns: ["class", "_value"])
-zeros = array.from(rows: [{{class: "공격", _value: 0}}, {{class: "이상 유형", _value: 0}}, {{class: "판정 보류", _value: 0}}])
-union(tables: [counted, zeros])
-  |> group(columns: ["class"])
-  |> sum()
-'''
-    b.add("stat", "경보 수 — 종류별", 0, 24, 4, [target(by_class)],
-          "실험 동안 경보가 몇 번 울렸나(raise 기준, 경보 하나 = 1). 공격 경보만 '탐지'로 세고, 4단계 이상 유형과 판정 보류 "
-          "경보(2·3단계 룰인데 kind anomaly)는 따로 센다(27_ §5.5)",
-          field_config={"defaults": {"displayName": "${__field.labels.class}", "unit": "none", "color": TEXT_COLOR},
-                        "overrides": []},
-          options=stat_options(), new_line=True)
-
+def add_detection_rows(b: Board) -> None:
+    """탐지 결과 줄 — 고른 시간 범위에 시작한 경보의 공격별 수, 경보 길이, 공격별 결과.
+    관제 대시보드 맨 위에 둔다(11/16 사용자 결정 — 요약 줄을 없애고 성능 대시보드에서 옮김)."""
+    b.row("탐지 결과")
+    # 경보 수 — 종류별 stat은 없앴다(11/16 사용자 요청)
     per_attack = f'''
 import "dict"
 names = {rule_name_dict()}
@@ -1057,9 +932,9 @@ in_range
   |> map(fn: (r) => ({{alert_id: r.alert_id, "경보 길이(초)": float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0}}))
   |> keep(columns: ["경보 길이(초)"])
 '''
-    b.add("histogram", "경보 길이 분포 (해제·강제 종료된 경보, 초)", 12, 12, 11, [target(durations)],
+    b.add("histogram", "경보 길이 분포", 12, 12, 11, [target(durations)],
           "경보가 얼마나 오래 이어졌나 — raise부터 clear·end까지(= duration_ms, 27_ §5.4). 가로축 = 경보 길이(초), "
-          "세로축 = 경보 수. 아직 끝나지 않은 경보는 빠진다",
+          "세로축 = 경보 수. 해제·강제 종료된 경보만 — 아직 끝나지 않은 경보는 빠진다",
           field_config={"defaults": {"unit": "none", "color": {"mode": "fixed", "fixedColor": "orange"},
                                      "custom": {"fillOpacity": 70, "lineWidth": 1}}, "overrides": []},
           options={"bucketCount": 20, "combine": False,
@@ -1085,14 +960,14 @@ in_range
   |> group()
   |> sort(columns: ["n"], desc: true)
   |> map(fn: (r) => ({{rule: r.rule, 공격: r.rule, 종류: r.class, "경보 수": r.n,
-      "high까지": r.high, 해제: r.cleared, "강제 종료": r.ended, "끝이 안 옴": r.open,
+      "high 도달": r.high, 해제: r.cleared, "강제 종료": r.ended, "끝이 안 옴": r.open,
       "평균 길이(초)": if r.cleared + r.ended > 0 then r.secs / float(v: r.cleared + r.ended) else 0.0,
       "최대 길이(초)": r.longest}}))
 '''
     # Flux map의 열 순서는 정해져 있지 않아서 표에서 순서를 정한다
-    columns = ["공격", "종류", "경보 수", "high까지", "해제", "강제 종료", "끝이 안 옴", "평균 길이(초)", "최대 길이(초)"]
+    columns = ["공격", "종류", "경보 수", "high 도달", "해제", "강제 종료", "끝이 안 옴", "평균 길이(초)", "최대 길이(초)"]
     b.add("table", "공격별 경보 결과", 0, 24, 9, [target(per_rule)],
-          "공격(룰)·종류마다 경보 수와 끝난 모습. high까지 = 심각도가 high까지 오른 경보(27_ §5.3). 강제 종료 = end"
+          "공격(룰)·종류마다 경보 수와 끝난 모습. high 도달 = 심각도가 한 번이라도 high까지 오른 경보(한 번 오르면 내려가지 않음, 룰마다 조건이 다르고 L3-24·L3-06·이상 유형·판정 보류는 늘 medium — 27_ §5.3). 강제 종료 = end"
           "(분석 엔진 재시작·입력 끊김·입력 멈춤). 끝이 안 옴 = clear·end가 오지 않은 경보. 길이는 해제·강제 종료된 경보만",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),
@@ -1108,119 +983,11 @@ in_range
               "indexByName": {name: i for i, name in enumerate(columns)}}}],
           new_line=True)
 
-    # ---- 경보·입력 품질
-    b.row("경보·입력 품질")
-    # 한 행에 열 순서대로 둔다(종류마다 표를 나누면 Grafana가 이름순으로 늘어놓아 해제가 맨 뒤로 감)
-    endings_cols = [("cleared", 'r.event == "clear"', "해제"),
-                    *[(key, f'r.event == "end" and r.reason == "{key}"', f"강제 종료 · {name}") for key, name in END_REASONS],
-                    ("open", 'r.event == "raise" or r.event == "update"', "끝이 안 옴")]
-    ending_flags = ",\n      ".join(f"{col}: if {cond} then 1 else 0" for col, cond, _ in endings_cols)
-    zero_row = ", ".join(f"{col}: 0" for col, _, _ in endings_cols)
-    ending_sums = ", ".join(f"{col}: accumulator.{col} + r.{col}" for col, _, _ in endings_cols)
-    ending_names = ", ".join(f'{col}: "{name}"' for col, _, name in endings_cols)
-    endings = f'''
-import "array"
-import "date"
-import "strings"
-{alerts_in_range()}
-flags = in_range
-  |> map(fn: (r) => ({{alert_id: r.alert_id,
-      {ending_flags}}}))
-union(tables: [flags, array.from(rows: [{{alert_id: "", {zero_row}}}])])
-  |> group()
-  |> reduce(identity: {{{zero_row}}}, fn: (r, accumulator) => ({{{ending_sums}}}))
-  |> rename(columns: {{{ending_names}}})
-'''
-    b.add("stat", "경보가 어떻게 끝났나", 0, 14, 5, [target(endings)],
-          "해제 = clear(조건이 풀림). 강제 종료 = end — 분석 엔진 재시작(session_reset)·입력 끊김(input_lost)·입력 멈춤"
-          "(input_silent)(27_ §5.1). 끝이 안 옴 = clear·end가 오지 않은 경보(아직 열려 있거나 탐지 엔진이 끝을 못 보냄)",
-          field_config={"defaults": {"unit": "none", "color": TEXT_COLOR}, "overrides": []},
-          options=stat_options(),
-          transformations=[{"id": "organize", "options": {  # reduce가 열을 이름순으로 늘어놓아 순서를 다시 정한다
-              "excludeByName": {}, "renameByName": {},
-              "indexByName": {name: i for i, (_, _, name) in enumerate(endings_cols)}}}])
 
-    evidence_loss = f'''
-import "array"
-sums = from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "alert" and (r._field == "evidence_sent" or r._field == "evidence_dropped")
-      and {ENV} and {CELL_FILTER})
-  |> group(columns: ["_field"])
-  |> sum()
-total = (field) => {{
-  found = sums |> filter(fn: (r) => r._field == field) |> findColumn(fn: (key) => true, column: "_value")
-  return if length(arr: found) > 0 then found[0] else 0
-}}
-sent = total(field: "evidence_sent")
-dropped = total(field: "evidence_dropped")
-array.from(rows: [{{"보낸 근거": sent, "버린 근거": dropped,
-  "손실률": if sent + dropped > 0 then float(v: dropped) / float(v: sent + dropped) * 100.0 else 0.0}}])
-'''
-    b.add("stat", "근거 손실", 14, 10, 5, [target(evidence_loss)],
-          "탐지 엔진 증거 큐(4,096줄)가 넘쳐 버린 근거가 있었나 — 해제·강제 종료된 경보의 evidence_sent·evidence_dropped 합"
-          "(27_ §7). 판정은 멈추지 않지만 경보 상세의 근거 그래프가 빈다",
-          field_config={"defaults": {"unit": "none", "color": TEXT_COLOR},
-                        "overrides": [override("손실률", ("unit", "percent"), ("decimals", 2),
-                                               ("color", {"mode": "thresholds"}),
-                                               ("thresholds", {"mode": "absolute", "steps": [
-                                                   {"color": "green", "value": None}, {"color": "red", "value": 0.01}]}))]},
-          options=stat_options(), new_line=True)
+def performance() -> dict:
+    b = Board()
 
-    gaps = f'''
-import "array"
-gaps = from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "gap" and r._field == "t_to" and {ENV} and {CELL_FILTER})
-  |> group()
-  |> map(fn: (r) => ({{_time: r._time, ms: r._value - int(v: r._time) / 1000000}}))
-count = gaps |> count(column: "ms") |> findColumn(fn: (key) => true, column: "ms")
-total = gaps |> sum(column: "ms") |> findColumn(fn: (key) => true, column: "ms")
-array.from(rows: [{{"gap 수": if length(arr: count) > 0 then count[0] else 0,
-  "빠진 시간": if length(arr: total) > 0 then float(v: total[0]) / 1000.0 else 0.0}}])
-'''
-    b.add("stat", "입력 끊김 (gap)", 0, 8, 6, [target(gaps)],
-          "경보 중 탐지 엔진 입력이 끊긴 구간(gap, 27_ §6.4)이 몇 번, 모두 몇 초였나. 그 구간의 근거는 비어 있다",
-          field_config={"defaults": {"unit": "none", "color": TEXT_COLOR},
-                        "overrides": [override("빠진 시간", ("unit", "s"), ("decimals", 1))]},
-          options=stat_options())
-
-    kpm_fill = f'''
-from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "kpm2" and r._field == "n" and {ENV} and {CELL_FILTER})
-  |> group()
-  |> map(fn: (r) => ({{_time: r._time, part: if r._value * 100 < int(v: r.agg_ms) then 1 else 0}}))
-  |> reduce(identity: {{cells: 0, part: 0}}, fn: (r, accumulator) => ({{cells: accumulator.cells + 1, part: accumulator.part + r.part}}))
-  |> map(fn: (r) => ({{r with ratio: if r.cells > 0 then float(v: r.part) / float(v: r.cells) * 100.0 else 0.0}}))
-  |> rename(columns: {{cells: "전체 칸", part: "칸 일부 없음", ratio: "비율"}})
-'''
-    b.add("stat", "상시 KPM2 칸 채움", 8, 8, 6, [target(kpm_fill)],
-          "3초 칸 가운데 100 ms 원본을 다 채우지 못한 칸(n < agg_ms / 100, 27_ §4.1)이 얼마나 됐나. 분석 엔진 입력이 고르게 "
-          "들어왔는지 본다. 상시 경로를 켠 실험에서만 나온다",
-          field_config={"defaults": {"unit": "none", "color": TEXT_COLOR, "noValue": "상시 KPM2 없음"},
-                        "overrides": [override("비율", ("unit", "percent"), ("decimals", 1))]},
-          options=stat_options())
-
-    partial = f'''
-from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
-  |> filter(fn: (r) => r._measurement == "kpm2" and r._field == "partial_json" and r._value != "[]" and {ENV}
-      and {CELL_FILTER})
-  |> map(fn: (r) => ({{_time: r._time, 지표: r._value, 칸: 1}}))
-  |> group(columns: ["지표"])
-  |> sum(column: "칸")
-  |> group()
-  |> sort(columns: ["칸"], desc: true)
-'''
-    b.add("table", "일부만 측정된 지표 (kpm2 partial)", 16, 8, 6, [target(partial)],
-          "3초 칸 안에서 값이 일부 칸에만 있었던 지표(kpm2 partial, 27_ §4.1)와 그런 칸의 수. 비어 있으면 모든 지표가 다 측정됨",
-          field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "noValue": "없음"},
-                        "overrides": [override("칸", ("custom.width", 70))]},
-          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
-          transformations=column_order(["지표", "칸"]),
-          new_line=True)
-
+    # 탐지 결과는 관제로 옮기고 경보·입력 품질 줄은 없앴다(11/16 사용자 결정) — 성능은 CU 자원만
     # ---- CU 자원 (수집 오버헤드, M11)
     add_overhead_rows(b)
 
@@ -1230,11 +997,10 @@ from(bucket: v.defaultBucket)
 import "influxdata/influxdb/schema"
 schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
   predicate: (r) => (r._measurement == "kpm2" or r._measurement == "alert") and {ENV})
-''', multi=True, include_all=True, description="경보 수·입력 품질에 넣을 셀"),
+''', multi=True, include_all=True, description="CPU 사용률 · RRC 연결 시도 그래프의 RRC 연결 시도에 넣을 셀"),
     ]
     return dashboard("portran-performance", "PortRAN 성능",
-                     "탐지 성과 — 실험 구간의 경보 수(종류별·공격별), 경보 길이, 경보·입력 품질. "
-                     "CU 자원(수집 오버헤드). docs/dashboard-design.md 3절",
+                     "CU 자원(수집 오버헤드 — 노드·분석 엔진 CPU·메모리, F1·N2 SCTP). docs/dashboard-design.md 3절",
                      b, variables, [], refresh="1m", time_from="now-24h")
 
 

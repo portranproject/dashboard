@@ -26,6 +26,8 @@ def logdir(tmp_path, monkeypatch):
                                   "GRAFANA_ADMIN_PASSWORD=pw\n")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
     monkeypatch.setenv("AGENT_LOG_DIR", str(tmp_path / "logs"))
+    for name in (agent_log.LOG_SWITCH, agent_log.WORKFLOW_SWITCH):  # 이 PC의 켬·끔 설정과 무관하게
+        monkeypatch.delenv(name, raising=False)
     return tmp_path / "logs"
 
 
@@ -165,6 +167,67 @@ def test_record_never_fails_and_prints_nothing(logdir):
         r = subprocess.run([sys.executable, str(script)], input=stdin, capture_output=True, text=True, timeout=30)
         assert (r.returncode, r.stdout) == (0, "")
     assert [r["event"] for r in lines(logdir / "unknown.jsonl")] == ["unparsed"] * 3
+
+
+# ── 켜기·끄기 (D207) ─────────────────────────────────────────────────────────
+
+def local_settings(logdir, env):
+    path = logdir.parent / "project" / ".claude" / "settings.local.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"env": env}), encoding="utf-8")
+
+
+def test_switch_defaults_on_then_env_then_local_settings(logdir, monkeypatch):
+    assert agent_log.switch_on(agent_log.LOG_SWITCH) and agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
+    local_settings(logdir, {agent_log.LOG_SWITCH: "off", agent_log.WORKFLOW_SWITCH: "끔"})
+    assert not agent_log.switch_on(agent_log.LOG_SWITCH) and not agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
+    monkeypatch.setenv(agent_log.LOG_SWITCH, "on")  # 환경변수가 파일보다 먼저
+    assert agent_log.switch_on(agent_log.LOG_SWITCH)
+    for value in ("OFF", "0", "false", "No", "꺼짐"):
+        monkeypatch.setenv(agent_log.LOG_SWITCH, value)
+        assert not agent_log.switch_on(agent_log.LOG_SWITCH), value
+    (logdir.parent / "project" / ".claude" / "settings.local.json").write_text("{깨진 JSON", encoding="utf-8")
+    assert agent_log.switch_on(agent_log.WORKFLOW_SWITCH)  # 못 읽으면 켬
+
+
+def test_log_off_writes_nothing(logdir):
+    local_settings(logdir, {agent_log.LOG_SWITCH: "off"})
+    feed({"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "안녕"},
+         {"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}})
+    assert not logdir.exists() or not any(logdir.iterdir())
+
+
+def test_session_start_tells_claude_what_is_off(logdir):
+    # 둘 다 켜져 있으면 아무것도 안 쓴다(다른 이벤트도 늘 빈 stdout — test_record_never_fails_and_prints_nothing)
+    out = io.StringIO()
+    agent_log.record(io.StringIO('{"session_id":"s","hook_event_name":"SessionStart"}'), out)
+    assert out.getvalue() == ""
+    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "off", agent_log.LOG_SWITCH: "off"})
+    script = HOOKS / "agent_log.py"
+    for event in ("SessionStart", "UserPromptSubmit", "Stop"):
+        r = subprocess.run([sys.executable, str(script)], input=json.dumps({"session_id": "s", "hook_event_name": event}),
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0
+        if event == "SessionStart":
+            assert "역할 분리 워크플로우가 꺼져 있다" in r.stdout and "작업 기록 hook이 꺼져 있다" in r.stdout
+            assert r.stdout.count("[PortRAN 설정]") == 2
+        else:
+            assert r.stdout == ""
+    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "off"})
+    out = io.StringIO()
+    agent_log.record(io.StringIO('{"session_id":"s","hook_event_name":"SessionStart"}'), out)
+    assert "역할 분리" in out.getvalue() and "작업 기록" not in out.getvalue()
+    assert [r["event"] for r in lines(logdir / "s.jsonl")] == ["SessionStart", "SessionStart"]  # 기록은 켜져 있을 때만
+
+
+def test_guard_still_denies_but_does_not_log_when_log_off(logdir):
+    local_settings(logdir, {agent_log.LOG_SWITCH: "off"})
+    payload = {"session_id": "g", "hook_event_name": "PreToolUse", "agent_type": "reviewer", "tool_name": "Bash",
+               "tool_input": {"command": "rm -rf x"}}
+    r = subprocess.run([sys.executable, str(HOOKS / "readonly_guard.py")], input=json.dumps(payload),
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and '"permissionDecision": "deny"' in r.stdout
+    assert not (logdir / "g.jsonl").exists()
 
 
 def test_record_keeps_own_ts_event_and_survives_surrogates(logdir):

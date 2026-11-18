@@ -210,6 +210,8 @@ def main() -> int:
         if out is None:
             return 0
         print(json.dumps(out, ensure_ascii=False))
+        if not agent_log.switch_on(agent_log.LOG_SWITCH):  # 작업 기록을 끄면 막기만 하고 남기지 않는다(D207)
+            return 0
         try:  # 작업 기록에 남긴다
             rec = dict(payload, hook_event_name=agent_log.GUARD_EVENT,
                        reason=out["hookSpecificOutput"]["permissionDecisionReason"])

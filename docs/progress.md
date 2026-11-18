@@ -39,6 +39,11 @@
   - 로컬 Grafana 관리자 비밀번호를 `.env` 값으로 맞춤(`grafana cli admin reset-admin-password`, 사용자 확인). 쿼리 테스트 401 해결 — `tests/test_dashboards.py` 30 passed
   - 옛 대시보드 'PortRAN 실시간 관제'(`portran-realtime`)·'PortRAN 성능 검증'(`portran-evaluation`)을 API로 삭제. `disableDeletion: true`였던 때 파일이 지워져 provisioning이 풀린 일반 대시보드로 남아 있었다(그래서 지금 설정으로도 자동으로 안 지워짐)
 
+**2026-11-18 요약** — Claude Code 작업 흐름 (브랜치 `feat/agent-workflow`)
+- 작업 기록 hook: 프롬프트·도구 호출·결과·실패·서브에이전트를 `logs/agent/<세션 ID>.jsonl`에(비밀 값 가림), `agent_log.py list|show|errors`로 다시 보기·오류 추적(D196~D198)
+- 역할 분리: `.claude/agents/` researcher·planner·reviewer, CLAUDE.md 12절 10항. 읽기 전용 역할의 Bash 쓰기를 hook으로 막음(D199), Reviewer에게는 완료 조건·비교 기준만(D200)
+- 이 변경 자체를 실제 `reviewer`로 검증: 1차 수정 필요(비밀 값 가림 빈틈·가드 우회 등 10건) → 고침 → 2차 수정 필요(한글 조사 붙은 짧은 비밀 값, 가드 우회 등 8건) → 고침 → 3차 통과(낮음 4건도 고침) → 4차 통과(중간 1·낮음 6, 4차 뒤 고친 것은 검증 안 받음)
+
 ---
 
 ## 열린 항목
@@ -56,6 +61,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ~~② 단계 비교 재생 `X-Env`에 출처 붙이기~~(단계 비교를 없애 해당 없음, D173). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
 | Q23 | AWS 상시 KPM2의 `ext.UeCtxMax`가 **125까지** 올라 셀 한도 96(27_ §5.3, 대시보드 `CELL_LIMIT`)을 넘었다(11/11 15:53 공격). 한도가 이 테스트베드 셀의 실제 값인지, `UeCtxMax`가 한도를 넘는 대기 UE까지 세는지. 1·2단계 경보가 high가 되는 기준(90% = 86)과 관련. `hello`의 `cells[].max_conn`에 실제 한도가 오면 그 값을 쓰도록 바꿀 수 있음. 11/12 탐지 쪽 변경으로 `L3-01-V`의 절대 수 문턱 `f_abs`도 셀 한도 × 0.1(올림)이 되어, 한도가 틀리면 `C2a` 판정도 달라진다(D162) | 탐지 엔진·테스트베드 | 관제 "UE 컨텍스트 · 연결 UE 수", `grafana/build.py` `CELL_LIMIT` |
 | Q24 | AWS p4 셀이 **1개(6733824) → 4개(6733824~6733827)** 로 늘었고, 최근 3시간에 DU·CU 재시작(`f1_evt`)이 26번 왔다(11/11 오후). 의도한 테스트베드 변경·시험인지 | 테스트베드·탐지 엔진 | 관제 화면 셀 변수(셀을 하나 고르면 그 셀만 보임) |
+| Q25 | Claude Code 작업 기록 hook·읽기 전용 가드를 프로젝트 설정(`.claude/settings.json`)으로 커밋하면, 이 저장소에서 Claude Code를 쓰는 팀원 모두에게 적용된다(기록은 각자 PC의 `logs/agent/`에만, 비밀 값은 가림). 끄려면 `.claude/settings.local.json`에 `{"disableAllHooks": true}` | 이 저장소에서 Claude Code를 쓰는 팀원 (알림) | D198, `docs/agent-workflow.md` |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -1253,3 +1259,64 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 - [ ] 다음 AWS 공격 실험 때 실제 알림(🚨·✅·⚠️)이 오는지
 - [ ] 팀원 초대·채널 알림 설정('모든 새 메시지') — 각자
 - [ ] On-Premise를 받기 시작하면 알림 출처에 `lab` 더하기
+
+---
+
+## Claude Code 작업 기록 hook · 역할 분리 워크플로우 (2026-11-18, 브랜치 `feat/agent-workflow`)
+
+목표: ① AI 코딩 에이전트의 프롬프트와 실행 로그를 hook으로 남겨 작업 과정을 재현하고 오류 원인을 거슬러 찾는다. ② Researcher·Planner·Reviewer로 역할을 나눠, 구현 결과를 별도 Reviewer가 독립적으로 검증한다. 사람용 설명은 `docs/agent-workflow.md`.
+
+### 한 일
+
+| 파일 | 변경 |
+|---|---|
+| `.claude/settings.json` | hook 등록: 12개 이벤트(SessionStart·UserPromptSubmit·Pre/PostToolUse·PostToolUseFailure·PermissionDenied·SubagentStart/Stop·Stop·StopFailure·PreCompact·SessionEnd) → `agent_log.py`, PreToolUse `Bash` → `readonly_guard.py` |
+| `.claude/hooks/agent_log.py` | 작업 기록기(hook 입력 → `logs/agent/<세션 ID>.jsonl`, 비밀 값 가림, 긴 문자열 앞뒤만, 늘 exit 0·stdout 없음)이자 보기 도구(`list`·`show`·`errors`). 표준 라이브러리만 |
+| `.claude/hooks/readonly_guard.py` | researcher·planner·reviewer의 Bash 가운데 파일·git 상태를 바꾸는 명령을 거부하고 `GuardDenied`로 기록 |
+| `.claude/agents/researcher.md` · `planner.md` · `reviewer.md` | 역할별 서브에이전트: 도구 제한(Edit·Write 없음), 규칙, 보고 형식. Reviewer는 완료 조건 표·문제(심각도·파일:줄·실패 시나리오·재현 명령)·판정 |
+| `tests/test_agent_log.py` | 296개: 비밀 값 가림 33가지(짧은 `.env` 값·한글 조사·따옴표·이스케이프된 따옴표·닫지 않은 따옴표, 코드는 남기기 포함)·큰 입력 속도·깊은 중첩, 기록 형식, hook이 실패·출력하지 않음, 보기 명령(결과 없는 호출 포함), 가드 허용 58·거부 87가지(거부는 역할 2개씩)·반복 입력 속도, 설정·에이전트 정의 |
+| `CLAUDE.md` | 4절 디렉터리, 12절 10항(역할 분리 흐름), 11항(작업 기록) |
+| `docs/agent-workflow.md` | 흐름도, 역할, 독립성 장치, 기록 형식·보는 법·오류 추적 순서, 설정·끄기·한계 |
+| `README.md` | "AI 작업 흐름 (Claude Code)", 문제 해결(hook error), 디렉터리 |
+| `.gitignore` · `.dockerignore` | `logs/`·`.claude/settings.local.json` git 제외, 이미지에서 `.claude`·`logs` 제외 |
+
+### 결정 사항
+
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D196 | 기록 위치 `logs/agent/<세션 ID>.jsonl`(저장소 안, git·Docker 제외), 이벤트 하나 = 한 줄. 결과 줄에는 입력을 다시 쓰지 않고 `tool_use_id`로 짝짓는다 | 세션별로 다시 보기 쉽다. Claude Code 원본 대화(`transcript_path`)는 30일 뒤 지워지므로 오래 남을 기록이 따로 필요하다 | 불필요 |
+| D197 | 쓰기 전에 비밀 값을 가리고(`.env` 비밀 값 3자 이상 — 6자 미만은 ASCII 낱말 단위라 한글 조사가 붙어도 가림, 토큰·비밀번호 KEY=VALUE, `--password`·`curl -u`, Webhook, 개인 키, 키 형식, Authorization, 비밀 파일 내용), 긴 문자열은 4000자(앞 40%·뒤 60%)만. 코드(`os.environ.get(…)`)·`${…}` 참조는 남긴다 | 이 저장소는 `.env`·인증서·Slack Webhook을 다룬다. 로컬 관리자 비밀번호가 4자라 길이 문턱을 두면 README의 `reset-admin-password` 명령에서 새어 나간다(Reviewer 1차 지적) — 짧은 값은 낱말 단위로 가려 다른 글자를 지우지 않는다. 오류는 보통 출력 끝에 있다 | 불필요 |
+| D198 | hook을 프로젝트 설정(`.claude/settings.json`)으로 커밋 | 이 저장소에서 Claude Code를 쓰는 사람 모두에게 같은 기록·가드가 적용된다. 기록은 각자 PC에만 남는다 | **필요 — 이 저장소에서 Claude Code를 쓰는 팀원에게 알림** (끄는 법: `.claude/settings.local.json`에 `disableAllHooks`) |
+| D199 | 읽기 전용 역할의 Bash를 PreToolUse hook으로 거부. git은 전역 옵션(`-C`·`-c`)을 건너뛰고 하위 명령·인자로 판정(`stash list`·`tag -l`·`branch -a`는 허용). `bash -c`·`eval`·`docker exec` 안의 명령도 다시 검사. `pytest`·`build.py --check`·로컬 확인 요청(GET, `/ingest` POST)은 허용, curl DELETE·PUT·PATCH는 거부 | 도구 목록에서 Edit·Write를 빼도 Bash로는 바꿀 수 있고, 프롬프트 규칙만으로는 지켜지는지 알 수 없다. 서브에이전트 안의 호출에는 hook 입력에 `agent_type`이 실려 와 역할별로 가를 수 있다(실제 세션에서 확인). 검증에 필요한 명령은 막지 않는다 | 불필요 |
+| D200 | Reviewer에게 요구 원문·완료 조건·비교 기준만 넘기고, 다시 검증할 때는 새 Reviewer에 지난 문제 목록만 더 넘긴다 | 구현자의 설명·자기 평가를 받으면 그 시각으로 검증하게 된다 | 불필요 |
+| D201 | Reviewer 검증은 **최대 3차**. 3차에서도 수정 필요면 멈추고 사용자에게 묻는다. 마지막 검증 뒤에 고친 것은 '검증받지 않음'으로 적는다 | 사용자 결정(11/18). 이번 작업에서 통과 뒤 낮음 문제를 고치고 다시 검증하느라 4차까지 갔다 | 불필요 |
+
+### 확인 결과
+
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 572 passed, 4 skipped(로컬 Grafana·InfluxDB가 필요한 테스트 — 기존과 같음). 새 `tests/test_agent_log.py` 296 passed |
+| 가짜 hook 입력 | SessionStart·프롬프트·Bash 성공·`.env` 읽기·Bash 실패·Stop·JSON 아님 10가지: 모두 exit 0, stdout 없음. 토큰·Webhook·Authorization·`.env` 값이 `***` |
+| 실제 세션 1 | `dashboard/`에서 `claude -p`(haiku)로 researcher 서브에이전트 1회 + 실패하는 `ls` 1회: 15줄 기록. 서브에이전트 안 호출에 `agent_type`·`agent_id`, 결과에 `duration_ms`·`prompt_id`가 실려 옴. 실패는 `PostToolUseFailure`. `errors`가 실패 명령·프롬프트·오류를 보임. `_hook_errors.log` 없음 |
+| 실제 세션 2 | reviewer 서브에이전트에게 `touch /tmp/guard_probe_xyz`를 시킴 → 실행 전에 거부(파일 안 생김), 기록에 `GuardDenied`, `errors`에 나옴 |
+| 가드 판정 | (1차 수정 뒤) 허용 30가지(`git diff`, `git -C … log`, `git stash list`, `tag -l`, `pytest … 2>&1`, `> /dev/stderr`, heredoc 안 `>` 등)·거부 35가지(`rm`, 앞 공백 ` rm`, `then rm`, 백틱·`$( )`, `env`·`time`·`timeout` 뒤, `> 파일`, `sed -i`, `git -C . commit`, `git stash`, 새 브랜치·태그, `curl -o`, `wget`, `grafana cli admin`, `influx write`, `--check` 없는 `build.py` 등) — 테스트에 고정 |
+| Python 3.10 | `ast.parse(feature_version=(3, 10))` 통과(로컬에 3.10 없음 — CI matrix가 실제로 돌린다) |
+| Reviewer 1차 | **수정 필요**(실제 `reviewer` 서브에이전트, `claude -p`). 완료 조건 10개 중 8개 ✅, 4(비밀 값)·10(문서 일치) ❌. 중간 3: 4자 `.env` 비밀번호와 `PASSWORD=` 꼴이 안 가려짐, 가드 우회(앞 공백·`git -C`·`then rm`·백틱 등). 낮음 7: `git stash list` 등 오탐, 따옴표 안 공백 값, 입력의 `ts`·`event`가 덮어씀, 서로게이트 쓰기 오류, 코드 가림, 설정 테스트 9/12, 열린 항목 누락. 검증 중 Reviewer의 `git stash list`가 가드에 실제로 막힘 → **모두 고침**(D197·D199, Q25, 테스트 72 → 158) |
+| Reviewer 2차 | **수정 필요**(새 Reviewer, 1차 문제 목록만 더 받음). 1차 문제 10건 중 9건 고쳐짐 확인, 조건 4만 ❌. 중간 1: 짧은 `.env` 값의 낱말 경계가 유니코드 `\w`라 한글 조사가 붙으면(`<값>로`) 안 가려짐. 낮음 7: `bash -c "rm …"`·`eval`·`{ rm; }`·`/bin/rm`·`nice -n 10 rm`·`docker exec … rm`·`docker volume rm`·`git bisect`·`cd grafana && python build.py` 통과, curl 허용 범위 문서 불일치, 따옴표 붙은 `--password "…"`·스킴 없는 Webhook, 결과 없는(권한 거부) 호출이 `errors`에 안 나옴, 문서의 개수 불일치·중복 테스트 → **모두 고침**(경계 ASCII, 안쪽 명령 재검사, 테스트 158 → 225) |
+| Reviewer 3차 | **통과**(새 Reviewer, 2차 문제 목록만 더 받음). 완료 조건 10개 모두 ✅, 2차 문제 7건 해결 확인(8번 '흔한 낱말 오가림'은 한계로 문서화). 낮음 4: 이스케이프된 따옴표(`\"…\"`) 안 값이 샘, 감싸는 명령 반복(`nice -n 1 ` ×22)에서 정규식이 지수적으로 느려져 hook 제한 시간을 넘길 수 있음, `curl -X "DELETE"`·`curl -sSo x`·`git reflog expire`·`unlink`·`npm i`·`build.py --checkout` 통과, 거부 이유의 줄바꿈·`> >(cat)` 오탐 → 통과였지만 **모두 고침**(값 패턴, 해석이 하나뿐인 정규식 — 500번 반복도 10 ms 미만, 테스트 225 → 268) |
+| Reviewer 4차 (마지막) | **통과**(새 Reviewer, 3차 문제 목록만 더 받음 — 사용자가 허락한 마지막 검증, D201). 완료 조건 10개 모두 충족, 3차 낮음 4건 해결 확인, 가드 거부 대상 112가지 누락 0, 감싸는 명령 2000번 반복도 35 ms. 중간 1: build.py 규칙이 실행이 아니라 이름만 나와도 막아 `git diff -- grafana/build.py`·`git blame`·`grep … grafana/build.py` 같은 읽기가 거부됨(researcher.md 예시 명령 포함). 낮음 6: 문자열 속 `bash -c`·`curl -X DELETE` 글자로도 막힘, `git grep -o` 오탐, `.env`에 없는 값의 드문 꼴(두 번 이스케이프·`Authorization: Token "v"`·닫지 않은 따옴표·값 속 이스케이프·`$`로 시작), 80 KB 반복 명령 9초, 깊이 1000 넘는 중첩은 기록 안 됨, `pdftotext <파일>`이 저장소에 파일을 만듦 |
+| 4차 뒤 수정 (**Reviewer 검증 안 받음**, D201) | build.py는 실행할 때만 막음, `bash -c`·`eval`·curl 메서드는 명령 자리에서만 봄(heredoc 본문 제외), git `-o`를 `--output`으로 보지 않음, `Authorization` 따옴표 값·닫지 않은 따옴표·값 속 이스케이프 가림, 30,000자 넘는 명령은 판정 없이 거부(28 KB 1.1초), 깊은 중첩은 내용 없이 이벤트만 기록, `pdftotext`는 `<파일> -`만 허용·`pdftoppm` 거부(researcher.md도 고침). 남긴 한계: 두 번 이스케이프한 따옴표·`$`로 시작하는 값·소문자 키(`docs/agent-workflow.md`에 적음). 확인은 테스트로만: 268 → 296 passed, 전체 572 passed |
+
+확인하지 못한 것: Windows PowerShell에서 직접 실행한 Claude Code, `PermissionDenied`·`StopFailure`·`PreCompact`의 실제 입력(시험 세션에서 일어나지 않음 — 받은 필드를 그대로 남기므로 형식이 달라도 기록은 된다).
+
+### 환경 메모
+
+- hook은 Claude Code를 **이 폴더(`dashboard/`)에서 시작했을 때만** 돈다. 상위 폴더(`/mnt/c/portran`)에서 시작한 세션은 기록되지 않는다.
+- `claude -p`(비대화 모드)에서는 `--allowedTools`에 없는 Bash 명령이 조용히 거부된다. 기록에는 결과 없는 `PreToolUse`로 남는다(`show`의 "결과 없음(중단·거부)").
+
+### 남은 일
+
+- [x] 최신 `origin/dev`에서 만든 `feat/agent-workflow`에 이번 파일만 커밋(11/18, 사용자 확인). 작업 트리에 함께 있던 README 3번째 줄 수정·`docs/정리.md`·`탐지엔진-대시보드샘플/`은 이번 작업과 별개라 넣지 않음
+- [ ] push, `dev`로 PR (사용자 확인)
+- [ ] 팀원 알림(D198)
+- [ ] 다음 작업부터 12절 10항 흐름을 적용하고 Reviewer 판정을 이 문서 확인 결과에 남기기

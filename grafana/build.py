@@ -189,15 +189,18 @@ def kpm2_source(fields: list[str], extra: str = "") -> str:
 
 
 def alert_hover_query() -> str:
-    """경보 구간 어디에 마우스를 대도 툴팁에 경보가 보이게 하는 계열(사용자 요청 11/18, D204). Grafana 주석 글은 아래쪽 작은
-    마커에 마우스를 댈 때만 뜨고, 구간 영역에는 그런 기능이 없다(12.4.13 AnnotationMarker2). 그래서 경보마다 구간(win)을
-    빈틈없이 채운 계열을 그래프에는 그리지 않고(hideFrom.viz) 툴팁에만 둔다. 값 = 심각도(0·1·2 → 없음·medium·high),
-    이름 = 종류 — 공격 이름 · 셀 · 상태. 툴팁은 커서 칸 값이 null이면 15 px 안의 가장 가까운 값을 쓰므로, 구간 칸이 비면
-    안 보이고 구간 끝 바로 밖에서는 보일 수 있다. 구간 끝은 경보 구간 주석과 같다(열림 = 지금, 상태 불명 = 마지막 레코드).
+    """경보 구간을 칠하고, 그 안 어디에 마우스를 대도 툴팁에 경보가 보이게 하는 계열(refId B, D204·D209).
+    - 툴팁: Grafana 주석 글은 아래쪽 작은 마커에서만 뜨고 영역에는 그런 기능이 없다(12.4.13 AnnotationMarker2). 그래서 경보마다
+      구간(win)을 빈틈없이 채운 계열을 둔다. 툴팁은 커서 칸 값이 null이면 15 px 안의 가장 가까운 값을 쓰므로 구간 끝 바로
+      밖에서도 보일 수 있다.
+    - 칠하기: 처음에는 '경보 구간' 주석으로 칠했는데, 새로고침(5초)마다 깜빡였다 — 쿼리가 200 ms 안에 안 끝나면 Grafana가 '로딩 중,
+      빈 결과'를 먼저 내보내고(runRequest.ts timer(200)) 주석 레이어는 그것을 그대로 넘겨 그 순간 주석이 지워진다. 패널 데이터는
+      로딩 중에도 이전 값을 유지하므로, 이 계열로 칠한다(값 1 = 축 끝까지 채움, ALERT_HOVER_OVERRIDE).
+    - 이름 = 종류 — 공격 이름 · 셀 · 상태 · 심각도. 구간 끝 = 열림이면 지금, 상태 불명이면 마지막 레코드, 그 밖은 clear·end.
     경보 하나를 시작·끝 두 행으로 펴고(experimental.unpivot) interpolate.linear로 그 사이 구간 경계(win 배수 — KPM 구간과
-    같은 시각)를 채운다. 작업량이 경보 길이에 비례한다 — 처음에는 aggregateWindow(createEmpty)로 경보마다 화면 범위 전체를
-    채운 뒤 걸러 7일(2016칸 × 경보 73개)에서 패널 요청이 5~11초 걸렸다(Reviewer 1차). 요약 결과를 변수로 받아 두 갈래로
-    나눠 쓰면(union) 요약 계산을 두 번 해서 쓰지 않는다."""
+    같은 시각)를 채운다. 작업량이 경보 길이에 비례한다 — aggregateWindow(createEmpty)로 경보마다 화면 범위 전체를 채우면
+    7일(2016칸 × 경보 73개)에서 패널 요청이 5~11초 걸렸다. 요약 결과를 변수로 받아 두 갈래로 나눠 쓰면(union) 요약 계산을
+    두 번 해서 쓰지 않는다."""
     return f'''
 import "date"
 import "dict"
@@ -212,30 +215,41 @@ summary
   |> map(fn: (r) => {{
       end = if r.status == "열림" then now() else if r.status == "상태 불명" then r.active else r.last
       s = if r.start > v.timeRangeStart then r.start else v.timeRangeStart
-      return {{alert_id: r.alert_id, sev: float(v: r.sev), _time: s, s: s,
+      sev = if r.sev == 2 then "high" else if r.sev == 1 then "medium" else "심각도 없음"
+      return {{alert_id: r.alert_id, v: 1.0, _time: s, s: s,
         e: if end < v.timeRangeStop then end else v.timeRangeStop,
-        alert: r.class + " — " + dict.get(dict: names, key: r.rule, default: r.rule) + " · 셀 " + r.cell + " · " + r.status}}
+        alert: r.class + " — " + dict.get(dict: names, key: r.rule, default: r.rule) + " · 셀 " + r.cell + " · " + r.status
+          + " · " + sev}}
     }})
   |> filter(fn: (r) => r.e > r.s)
-  |> group(columns: ["alert_id", "alert", "sev"])
+  |> group(columns: ["alert_id", "alert", "v"])
   |> experimental.unpivot()
-  |> map(fn: (r) => ({{_time: r._value, _value: r.sev, alert_id: r.alert_id, alert: r.alert}}))
+  |> map(fn: (r) => ({{_time: r._value, _value: r.v, alert_id: r.alert_id, alert: r.alert}}))
   |> group(columns: ["alert_id", "alert"])
   |> sort(columns: ["_time"])
   |> interpolate.linear(every: win)
 '''
 
 
-# 경보 툴팁 계열(refId B): 그래프·범례에는 없고 툴팁에만, 자기 숨은 축(다른 계열의 y축 범위에 영향 없음)
+# 경보 계열(refId B): 경보 구간을 연한 주황으로 축 끝까지 칠하고(값 1, 자기 숨은 축 0~1 — 다른 계열의 y축 범위에 영향 없음),
+# 범례에는 없고 툴팁에는 나온다. 색·투명도는 예전 '경보 구간' 주석(rgba(255, 152, 48, 0.12))과 같게
 ALERT_HOVER_OVERRIDE = {"matcher": {"id": "byFrameRefID", "options": "B"}, "properties": [
     {"id": "displayName", "value": "${__field.labels.alert}"},
-    {"id": "custom.hideFrom", "value": {"legend": True, "tooltip": False, "viz": True}},
+    {"id": "custom.hideFrom", "value": {"legend": True, "tooltip": False, "viz": False}},
+    {"id": "custom.drawStyle", "value": "line"},
+    {"id": "custom.lineInterpolation", "value": "stepAfter"},
+    {"id": "custom.lineWidth", "value": 0},
+    {"id": "custom.fillOpacity", "value": 12},
+    {"id": "custom.gradientMode", "value": "none"},
+    {"id": "custom.showPoints", "value": "never"},
+    {"id": "custom.spanNulls", "value": False},
+    {"id": "custom.stacking", "value": {"mode": "none"}},
     {"id": "custom.axisPlacement", "value": "hidden"},
     {"id": "custom.thresholdsStyle", "value": {"mode": "off"}},
-    {"id": "min", "value": 0}, {"id": "max", "value": 3}, {"id": "decimals", "value": 0},
+    {"id": "min", "value": 0}, {"id": "max", "value": 1}, {"id": "decimals", "value": 0},
     {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}},
-    {"id": "mappings", "value": SEVERITY_MAPPINGS}]}
-ALERT_HOVER_NOTE = " 주황 영역 어디에 마우스를 대도 툴팁에 경보(종류 — 공격 이름 · 셀 · 상태, 값 = 심각도)가 보인다"
+    {"id": "mappings", "value": [{"type": "value", "options": {"1": {"text": "경보 구간", "index": 0}}}]}]}
+ALERT_HOVER_NOTE = " 주황 영역 = 경보 구간 — 영역 어디에 마우스를 대도 툴팁에 경보(종류 — 공격 이름 · 셀 · 상태 · 심각도)가 보인다"
 
 
 def target(query: str, ref: str = "A", hide: bool = False) -> dict:
@@ -353,7 +367,7 @@ def monitoring() -> dict:
                  "상시 KPM2(TeleRAN Table II) — 셀마다 3초 칸, 긴 시간 범위에서는 3초 배수 구간의 합(막대 하나 = 구간 하나). "
                  "위쪽 셀 선택으로 거른다. "
                  "셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다. "
-                 "주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)."
+                 "회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)."
                  + ALERT_HOVER_NOTE,
                  field_config={"defaults": {"unit": "none", "min": 0,
                                             "displayName": "${__field.name} · 셀 ${__field.labels.cell}",
@@ -682,18 +696,7 @@ from(bucket: v.defaultBucket)
     variables[2]["sort"] = 0
     variables[2]["hide"] = 2  # 위쪽 칸은 숨긴다(11/16) — 경보 목록에서 행을 눌러 고르고, 경보 상세 행 제목에 보인다
 
-    # 열린 경보만 지금까지, 상태 불명은 마지막 레코드(경보·근거)까지, 닫힌 경보는 clear·end까지 칠한다
-    alert_regions = f'''
-import "date"
-import "strings"
-{alert_summary("date.sub(d: 1h, from: v.timeRangeStart)", "date.sub(d: 1h, from: v.timeRangeStart)",
-               fields=("severity", "reason"))}
-summary
-  |> filter(fn: (r) => {CELL_REGEX})
-  |> map(fn: (r) => ({{_time: r.start,
-      timeEnd: if r.status == "열림" then now() else if r.status == "상태 불명" then r.active else r.last,
-      text: "경보 " + r.rule + " — " + r.status + " (" + r.class + ", 셀 " + r.cell + ")", tags: r.rule}}))
-'''
+    # 경보 구간은 주석이 아니라 KPM 두 패널의 경보 계열(refId B)로 칠한다 — 주석은 새로고침마다 깜빡였다(D209, alert_hover_query)
     gaps = f'''
 from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
@@ -740,7 +743,6 @@ from(bucket: v.defaultBucket)
   |> map(fn: (r) => ({{_time: r._time, timeEnd: time(v: r._value * 1000000), text: "데이터 없음 (gap)", tags: "gap"}}))
 '''
     annotations = [
-        annotation("경보 구간", alert_regions, "rgba(255, 152, 48, 0.12)", kpm_panels, region=True),
         annotation("데이터 없음 (gap)", gaps, "rgba(128, 128, 128, 0.25)", kpm_panels, region=True),
         annotation("칸 일부 없음", partial, "rgba(128, 128, 128, 0.12)", kpm_panels, region=True),
         annotation("세션 시작", sessions, "rgba(31, 120, 193, 1)", kpm_panels),

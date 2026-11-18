@@ -165,7 +165,7 @@ def test_alert_hover_fills_alert_window(flux):
         assert sorted(ms(r["_time"]) for r in rows) == [T0 + 1_001, T0 + 3_000, T0 + 6_000, T0 + 9_000, T0 + 12_000,
                                                         T0 + 13_000], title
         assert {r["_value"] for r in rows} == {1.0}
-        assert {r["alert"] for r in rows} == {"공격 — UE 컨텍스트 고갈 · 셀 1 · 해제"}
+        assert {r["alert"] for r in rows} == {"공격 — UE 컨텍스트 고갈 · 셀 1 · 해제 · medium"}
     rows = flux(panel_query("monitoring", "RRC 연결 시도 · 성공 · 무응답", ref="B"), window="5s")
     assert sorted(ms(r["_time"]) for r in rows) == [T0 + 1_001, T0 + 6_000, T0 + 12_000, T0 + 13_000]
 

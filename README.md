@@ -294,7 +294,7 @@ Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 
 
 이 저장소에서 Claude Code를 쓰면 아래 두 가지가 자동으로 적용된다. 자세한 설명은 [`docs/agent-workflow.md`](docs/agent-workflow.md).
 
-- **역할 분리**: 조사(`researcher`) → 계획(`planner`) → 구현 → 검증(`reviewer`, 1회). 작업 크기에 맞춰 필요한 단계만 쓴다(`docs/agent-workflow.md` 0절). 구현 결과는 별도 Reviewer가 완료 조건과 diff만 받아 독립적으로 검증한다. 세 역할은 읽기 전용이다([`.claude/agents/`](.claude/agents/)).
+- **역할 분리 (기본 꺼짐 — "역할 분리 켜고 해"라고 요청할 때만)**: 조사(`researcher`) → 계획(`planner`) → 구현 → 검증(`reviewer`, 1회). 작업 크기에 맞춰 필요한 단계만 쓴다(`docs/agent-workflow.md` 0절). 구현 결과는 별도 Reviewer가 완료 조건과 diff만 받아 독립적으로 검증한다. 세 역할은 읽기 전용이다([`.claude/agents/`](.claude/agents/)).
 - **작업 기록**: hook이 프롬프트·도구 호출·결과·실패를 `logs/agent/<세션 ID>.jsonl`에 남긴다(비밀 값은 가림, git 제외). Claude Code를 이 폴더에서 시작해야 기록된다.
 
 ```bash
@@ -303,7 +303,7 @@ python3 .claude/hooks/agent_log.py show [세션]     # 타임라인 (세션 생�
 python3 .claude/hooks/agent_log.py errors [세션]   # 실패한 호출과 그 프롬프트·입력·오류
 ```
 
-켜고 끄기(각자 PC, 기본 둘 다 켬, 다음 세션부터): `.claude/settings.local.json`(git 제외)에 `{"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "off"}}` — `PORTRAN_AGENT_LOG`는 작업 기록, `PORTRAN_ROLE_WORKFLOW`는 역할 분리(끄면 메인 에이전트가 서브에이전트 없이 작업). 읽기 전용 가드는 늘 켜져 있다. 자세히는 `docs/agent-workflow.md` 4절.
+켜고 끄기(각자 PC, 다음 세션부터): 작업 기록은 기본 켬, 역할 분리는 기본 꺼짐. `.claude/settings.local.json`(git 제외)에 `{"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "on"}}`처럼 바꾼다 — 역할 분리가 꺼져 있으면 메인 에이전트가 서브에이전트 없이 작업한다. 읽기 전용 가드는 늘 켜져 있다. 자세히는 `docs/agent-workflow.md` 4절.
 
 ## AWS 배포
 

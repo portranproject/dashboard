@@ -2,7 +2,7 @@
 
 이 저장소에서 Claude Code로 작업할 때의 흐름과 기록 장치다. Claude가 따르는 규칙은 `CLAUDE.md` 12절 10·11항이고, 이 문서는 사람이 읽는 설명이다.
 
-- **역할 분리**: 조사(Researcher) → 계획(Planner) → 구현(메인 에이전트) → 검증(Reviewer). 구현 결과는 구현하지 않은 Reviewer가 따로 검증한다. **작업 크기에 맞춰 필요한 단계만 쓰고, 검증은 1회**(아래 0절, 사용자 결정 11/18).
+- **역할 분리 (기본 꺼짐, 요청할 때만 켬 — D208)**: 조사(Researcher) → 계획(Planner) → 구현(메인 에이전트) → 검증(Reviewer). 구현 결과는 구현하지 않은 Reviewer가 따로 검증한다. 켠 동안에도 **작업 크기에 맞춰 필요한 단계만 쓰고, 검증은 1회**(아래 0절, 사용자 결정 11/18). 꺼져 있으면 메인 에이전트 하나가 조사·계획·구현하고 테스트로 확인한다.
 - **작업 기록**: hook이 프롬프트·도구 호출·결과·실패·서브에이전트 시작과 끝을 세션마다 JSONL로 남긴다. 작업 과정을 다시 보고, 오류가 어디서 났는지 거슬러 찾는다.
 
 ```mermaid
@@ -22,6 +22,8 @@ flowchart LR
 ```
 
 ## 0. 작업 크기별 단계 (11/18 사용자 결정)
+
+역할 분리는 **기본 꺼짐**이다(D208). "역할 분리 켜고 해"라고 요청하거나 `PORTRAN_ROLE_WORKFLOW=on`(4절)일 때만 아래 단계를 쓴다.
 
 서브에이전트는 매번 CLAUDE.md부터 새로 읽고 같은 파일을 다시 읽는다. 11/18 대시보드 수정에서 조사 16.6분·계획 16.3분·검증 12.6분이 걸렸고 서브에이전트 토큰이 메인의 36%였다(`docs/progress.md` D206). 그래서 필요한 단계만 쓴다.
 
@@ -87,7 +89,7 @@ flowchart LR
 - **비밀 값은 쓰기 전에 가린다**: `.env`에서 이름이 TOKEN·PASSWORD·WEBHOOK_URL 등인 3자 이상 값(명령·출력 어디에 나와도. 6자 미만은 앞뒤가 ASCII 낱말 글자가 아닐 때만 — `abcd로`처럼 한글 조사가 붙어도 가리고, `xabcd` 같은 다른 낱말 속 글자는 둔다. 값이 흔한 낱말이면 같은 낱말이 기록에서 `***`로 보일 수 있다), `KEY=VALUE`·`"KEY": "VALUE"` 형태의 토큰·비밀번호(`PASSWORD=`처럼 이름이 키워드뿐이어도, 따옴표 안 공백 포함), `--password`·`--token` 옵션 값(따옴표·`\"…\"` 이스케이프 포함 — `sh -c "… \"값\""`, JSON 안의 JSON)과 `curl -u`·`--user` 의 비밀번호, Slack Webhook 주소(스킴 없어도), 개인 키 블록, AWS·GitHub·Slack·Anthropic 키, `Authorization` 헤더. `.env`·`*.pem`·`*.key`를 읽거나 쓴 내용은 통째로 가린다. 3자 미만 `.env` 값은 `KEY=VALUE` 형태로 나올 때만 가린다. `os.environ.get(…)` 같은 코드·`${…}` 참조는 비밀 값이 아니어서 남긴다.
 - **긴 문자열은 앞 40%·뒤 60%만** 남긴다(기본 4000자, 오류 메시지는 보통 끝에 있다). 전체가 필요하면 `transcript_path`의 Claude Code 원본 대화를 본다. 원본은 Claude Code가 30일(`cleanupPeriodDays`) 뒤 지우므로 오래 남는 것은 이 기록이다.
 - `logs/`는 `.gitignore`·`.dockerignore`에 있다. 각자 PC에만 남는다.
-- hook은 작업을 막지 않는다: 기록에 실패해도 exit 0, stdout 없음 — 예외는 세션 시작(SessionStart) 때 꺼진 켬·끔 설정을 Claude에게 알리는 한두 줄(4절). 기록기 자체 오류는 `logs/agent/_hook_errors.log`.
+- hook은 작업을 막지 않는다: 기록에 실패해도 exit 0, stdout 없음 — 예외는 세션 시작(SessionStart) 때 기본값과 다른 켬·끔 설정을 Claude에게 알리는 한두 줄(4절). 기록기 자체 오류는 `logs/agent/_hook_errors.log`.
 
 ### 보는 법
 
@@ -129,8 +131,8 @@ Researcher도 원인을 모르는 오류를 조사할 때 이 명령으로 이�
 | 기록 위치 | 환경변수 `AGENT_LOG_DIR` (기본 `logs/agent/`) |
 | 문자열 최대 길이 | 환경변수 `AGENT_LOG_MAX_CHARS` (기본 4000) |
 | **작업 기록 켬·끔** | `.claude/settings.local.json`(git 제외)의 `env`에 `"PORTRAN_AGENT_LOG": "off"` — 기록만 멈추고 읽기 전용 가드는 그대로(막기만 하고 `GuardDenied`도 안 남김). 기본 켬 |
-| **역할 분리 켬·끔** | 같은 파일 `env`에 `"PORTRAN_ROLE_WORKFLOW": "off"` — 세션 시작 hook이 Claude에게 "역할 분리 꺼짐"을 알려, researcher·planner·reviewer 없이 메인이 조사·계획·구현하고 테스트로 확인한다. 계획 승인·커밋 확인 같은 사용자 확인은 그대로. 기본 켬 |
-| 둘 다 끄기 예 | `{"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "off"}}` — 다음 세션부터. 세션 중에는 "이번엔 역할 분리 끄고 해"처럼 말해도 된다 |
+| **역할 분리 켬·끔** | **기본 꺼짐**(D208) — researcher·planner·reviewer 없이 메인이 조사·계획·구현하고 테스트로 확인한다. 늘 켜려면 같은 파일 `env`에 `"PORTRAN_ROLE_WORKFLOW": "on"` — 세션 시작 hook이 Claude에게 "역할 분리 켜짐"을 알린다. 한 번만 켜려면 "역할 분리 켜고 해"라고 말한다. 계획 승인·커밋 확인 같은 사용자 확인은 늘 그대로 |
+| 예 (기록 끄고 역할 분리 켜기) | `{"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "on"}}` — 다음 세션부터. 값은 off·0·false·no·끔·꺼짐 / on·1·true·yes·켬·켜짐, 그 밖은 기본값 |
 | 모든 hook 끄기 | 같은 파일에 `{"disableAllHooks": true}` — 가드까지 꺼진다(권하지 않음) |
 | 확인·일시 해제 | Claude Code에서 `/hooks` |
 

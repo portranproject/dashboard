@@ -177,17 +177,25 @@ def local_settings(logdir, env):
     path.write_text(json.dumps({"env": env}), encoding="utf-8")
 
 
-def test_switch_defaults_on_then_env_then_local_settings(logdir, monkeypatch):
-    assert agent_log.switch_on(agent_log.LOG_SWITCH) and agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
-    local_settings(logdir, {agent_log.LOG_SWITCH: "off", agent_log.WORKFLOW_SWITCH: "끔"})
-    assert not agent_log.switch_on(agent_log.LOG_SWITCH) and not agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
+def test_switch_defaults_then_env_then_local_settings(logdir, monkeypatch):
+    # 기본: 작업 기록 켬, 역할 분리 꺼짐(D208 — 사용자가 요청할 때만 켬)
+    assert agent_log.switch_on(agent_log.LOG_SWITCH) and not agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
+    local_settings(logdir, {agent_log.LOG_SWITCH: "off", agent_log.WORKFLOW_SWITCH: "켬"})
+    assert not agent_log.switch_on(agent_log.LOG_SWITCH) and agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
     monkeypatch.setenv(agent_log.LOG_SWITCH, "on")  # 환경변수가 파일보다 먼저
     assert agent_log.switch_on(agent_log.LOG_SWITCH)
     for value in ("OFF", "0", "false", "No", "꺼짐"):
         monkeypatch.setenv(agent_log.LOG_SWITCH, value)
         assert not agent_log.switch_on(agent_log.LOG_SWITCH), value
+    for value in ("ON", "1", "true", "Yes", "켜짐"):
+        monkeypatch.setenv(agent_log.WORKFLOW_SWITCH, value)
+        assert agent_log.switch_on(agent_log.WORKFLOW_SWITCH), value
+    monkeypatch.setenv(agent_log.WORKFLOW_SWITCH, "모름")  # 알 수 없는 값은 기본값
+    assert not agent_log.switch_on(agent_log.WORKFLOW_SWITCH)
+    monkeypatch.delenv(agent_log.LOG_SWITCH)
+    monkeypatch.delenv(agent_log.WORKFLOW_SWITCH)
     (logdir.parent / "project" / ".claude" / "settings.local.json").write_text("{깨진 JSON", encoding="utf-8")
-    assert agent_log.switch_on(agent_log.WORKFLOW_SWITCH)  # 못 읽으면 켬
+    assert agent_log.switch_on(agent_log.LOG_SWITCH) and not agent_log.switch_on(agent_log.WORKFLOW_SWITCH)  # 못 읽으면 기본값
 
 
 def test_log_off_writes_nothing(logdir):
@@ -197,27 +205,31 @@ def test_log_off_writes_nothing(logdir):
     assert not logdir.exists() or not any(logdir.iterdir())
 
 
-def test_session_start_tells_claude_what_is_off(logdir):
-    # 둘 다 켜져 있으면 아무것도 안 쓴다(다른 이벤트도 늘 빈 stdout — test_record_never_fails_and_prints_nothing)
+def test_session_start_tells_claude_what_differs_from_default(logdir):
+    # 기본값(기록 켬, 역할 분리 꺼짐)이면 아무것도 안 쓴다(다른 이벤트도 늘 빈 stdout — test_record_never_fails_and_prints_nothing)
     out = io.StringIO()
     agent_log.record(io.StringIO('{"session_id":"s","hook_event_name":"SessionStart"}'), out)
     assert out.getvalue() == ""
-    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "off", agent_log.LOG_SWITCH: "off"})
+    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "on", agent_log.LOG_SWITCH: "off"})
     script = HOOKS / "agent_log.py"
     for event in ("SessionStart", "UserPromptSubmit", "Stop"):
         r = subprocess.run([sys.executable, str(script)], input=json.dumps({"session_id": "s", "hook_event_name": event}),
                            capture_output=True, text=True, timeout=30)
         assert r.returncode == 0
         if event == "SessionStart":
-            assert "역할 분리 워크플로우가 꺼져 있다" in r.stdout and "작업 기록 hook이 꺼져 있다" in r.stdout
+            assert "역할 분리 워크플로우가 켜져 있다" in r.stdout and "작업 기록 hook이 꺼져 있다" in r.stdout
             assert r.stdout.count("[PortRAN 설정]") == 2
         else:
             assert r.stdout == ""
-    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "off"})
+    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "on"})
     out = io.StringIO()
     agent_log.record(io.StringIO('{"session_id":"s","hook_event_name":"SessionStart"}'), out)
     assert "역할 분리" in out.getvalue() and "작업 기록" not in out.getvalue()
-    assert [r["event"] for r in lines(logdir / "s.jsonl")] == ["SessionStart", "SessionStart"]  # 기록은 켜져 있을 때만
+    local_settings(logdir, {agent_log.WORKFLOW_SWITCH: "off"})  # 기본값과 같으면 알리지 않음
+    out = io.StringIO()
+    agent_log.record(io.StringIO('{"session_id":"s","hook_event_name":"SessionStart"}'), out)
+    assert out.getvalue() == ""
+    assert [r["event"] for r in lines(logdir / "s.jsonl")] == ["SessionStart"] * 3  # 기록은 켜져 있을 때만
 
 
 def test_guard_still_denies_but_does_not_log_when_log_off(logdir):

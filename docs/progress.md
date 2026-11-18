@@ -44,6 +44,11 @@
 - 역할 분리: `.claude/agents/` researcher·planner·reviewer, CLAUDE.md 12절 10항. 읽기 전용 역할의 Bash 쓰기를 hook으로 막음(D199), Reviewer에게는 완료 조건·비교 기준만(D200)
 - 이 변경 자체를 실제 `reviewer`로 검증: 1차 수정 필요(비밀 값 가림 빈틈·가드 우회 등 10건) → 고침 → 2차 수정 필요(한글 조사 붙은 짧은 비밀 값, 가드 우회 등 8건) → 고침 → 3차 통과(낮음 4건도 고침) → 4차 통과(중간 1·낮음 6, 4차 뒤 고친 것은 검증 안 받음)
 
+
+**2026-11-18 요약** — 대시보드 로딩·표시 (브랜치 `fix/dashboard-loading-display`)
+- 관제 KPM 그래프가 7일 범위에서 비던 것(시간 초과·점 수 초과·5초 새로고침 취소): 셀 거르기를 정규식으로, 3초 원본을 화면 간격에 맞춘 구간으로 묶음. 성능 대시보드도 같은 원인이라 함께(D202). AWS 7일 쿼리 30초 초과 → 0.8초 이하
+- 표시: 대표 값 ratio를 %로, 판정 요약 모드 열 삭제, UE를 셀-uid로(D203). 경보 구간 어디에 마우스를 대도 툴팁에 경보가 보이게(D204)
+
 ---
 
 ## 열린 항목
@@ -1317,6 +1322,62 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 ### 남은 일
 
 - [x] 최신 `origin/dev`에서 만든 `feat/agent-workflow`에 이번 파일만 커밋(11/18, 사용자 확인). 작업 트리에 함께 있던 README 3번째 줄 수정·`docs/정리.md`·`탐지엔진-대시보드샘플/`은 이번 작업과 별개라 넣지 않음
-- [ ] push, `dev`로 PR (사용자 확인)
+- [x] push, `dev`로 PR — #54로 `dev`에 병합됨(11/18)
 - [ ] 팀원 알림(D198)
 - [ ] 다음 작업부터 12절 10항 흐름을 적용하고 Reviewer 판정을 이 문서 확인 결과에 남기기
+
+
+## 대시보드 로딩·표시 수정 (2026-11-18, 브랜치 `fix/dashboard-loading-display`)
+
+사용자 요구(11/18): ① 그래프 로딩이 오래 걸려서 불러오지 못하는 문제(관제, AWS, 최근 7일 — KPM 두 그래프가 경고 삼각형 + No data) ② 대표 값 ratio를 소수 셋째 자리에서 반올림해 ×100, %로 ③ 판정 요약의 모드 열 삭제 ④ 걸린 UE의 UE(cell-du_ue_id-uid)를 UE(cell-uid)로 ⑤ UE_EVENT 두 패널의 UE도 cell-uid로. 작업 중 추가: ⑥ 경보 구간 어디에 마우스를 대도 공격 정보가 보이게(보라 세모 키우기는 사용자 결정으로 그대로 둠).
+
+흐름(CLAUDE.md 12절 10항): Researcher(원인 측정) → Planner(완료 조건 24개) → 사용자 승인 → 구현 → Reviewer. ⑥은 작업 크기별 기준(사용자 결정 11/18 — CLAUDE.md 반영은 이번 작업 뒤 따로)에 따라 좁은 Researcher(Grafana 가능 여부) → 메인이 계획 → 구현.
+
+### 원인 (①, AWS Grafana 12.4.13에 `/api/ds/query`로 실측)
+- 셀 거르기 `contains(value: r.cell, set: ${cell:json})`가 range 바로 뒤 filter에 있어 InfluxDB가 저장소에서 거르지 못함 → 7일 kpm2를 다 읽어 30초 넘김 → Grafana 데이터 프록시 시간 제한(30초)
+- 3초 원본을 묶지 않고 가져옴 → 데이터가 꽉 찬 날은 24시간에도 프레임당 maxDataPoints × 10행을 넘어 `too many datapoints`
+- 관제 새로고침 5초가 진행 중인 쿼리를 취소하고 다시 보냄 → 5초 넘는 쿼리는 화면에 결과가 한 번도 안 옴
+- 성능 대시보드도 기본 24시간에서 시간 그래프 6개가 `too many datapoints`
+
+### 한 일
+| 파일 | 내용 |
+|---|---|
+| `grafana/build.py` | `WINDOW`(v.windowPeriod를 3초 배수로 올린 `win`), `window_by`(저장소에서 series마다 묶고 group 뒤 한 번 더 — 세션 합치기, 빈 구간 null), `kpm2_source`, `CELL_REGEX`. 관제 KPM 막대(구간 합, 막대가 자기 구간을 덮게 `barAlignment` 1)·UE 선(구간 최대, 평균 선은 평균)·'칸 일부 없음' 주석(구간마다 하나, 칸 수·가장 적은 n). 성능 시간 그래프 6개 + CPU · RRC 연결 시도: 필드를 구간 평균으로 먼저 묶고 계산(`overhead_windowed`, `null_unless` — `debug.null`), 링크는 증가분 구간 평균 ÷ 3초. `insertNulls` 삭제. 대표 값 ratio %(`math.round`), 판정 요약 mode 삭제, 걸린 UE·peers·UE_EVENT 두 패널 셀-uid. 경보 툴팁 계열(`alert_hover_query`, refId B, `ALERT_HOVER_OVERRIDE`) |
+| `grafana/dashboards/*.json` | build.py로 다시 만듦(`grafana/provisioning/alerting/portran.json`은 바뀌지 않음) |
+| `grafana/query_timing.py` (새 파일) | 저장소의 대시보드 JSON 쿼리를 실제 Grafana에 읽기로만 보내 시간·최대 행·상한을 재고, 오류·점 수 초과·시간 초과면 1로 끝남. `--parallel`은 동시에 보내 가장 늦은 응답 |
+| `tests/test_dashboards.py` | 바뀐 검사(선 끊기 = `createEmpty: true`, 셀 = `${cell:regex}`, 링크 ÷ 3.0, 모드 없음) + 새 검사 5개(range 뒤 첫 filter에 contains 없음, 원본 시간 그래프는 모두 win으로 묶음, 막대 정렬, 대표 값 %, UE 셀-uid, 경보 툴팁 계열) |
+| `tests/test_dashboard_flux.py` (새 파일) | 대시보드 Flux를 실제 InfluxDB 임시 bucket에서 돌려 값 확인 7개: 세션 합치기·구간 합, 3초 구간 = 원본, 빈 구간 null(관제 UE 선·성능 CPU 내역·CPU 사용률), 칸 일부 없음 끝 시각, ratio %, UE 셀-uid(du_ue_id를 uid와 다르게 넣어 가림), 경보 툴팁 계열이 경보 구간을 빈틈없이 채움 |
+| `tests/conftest.py`, `tests/test_influx_integration.py` | `temp_bucket` 픽스처를 conftest로 옮김(파일마다 따로 bucket — bucket 전체 점 수를 세는 통합 테스트와 안 섞이게) |
+| CLAUDE.md | 4절 트리, 9.1 KPM 행, 9.1 Flux 주의에 '긴 시간 범위' 규칙 4개, 9.2 묶음 설명 |
+| `docs/dashboard-design.md` | 2절(새로고침 5초 조건, KPM 묶음, 대표 값 %, 판정 정보, UE 셀-uid), 3.3절(성능 묶음), 4절(선 끊기 D156 → D202, 칸 일부 없음) |
+| README | 관제 표(긴 범위 묶음, ratio %, UE 셀-uid), '쿼리 시간 재기', 디렉터리 표 |
+
+### 결정 사항
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D202 | **긴 시간 범위 쿼리 규칙**: ① 셀은 정규식 `r.cell =~ /^${cell:regex}$/`(range 바로 뒤 filter에 contains 금지) ② 상시 KPM2·overhead 원본은 `win` = v.windowPeriod를 3초 배수로 올린 구간으로 range·filter 바로 뒤에서 묶고, group 뒤 한 번 더(세션 합치기) ③ 묶음 함수: KPM 막대 구간 합, UE 컨텍스트·RRC 연결 UE(최대) 구간 최대, RRC 연결 UE(평균)·성능 시간 그래프 모두 구간 평균(사용자 결정) ④ 선 끊기는 빈 구간 null 행(`createEmpty: true`, 선택 함수 뒤에는 mean으로 한 번 더) — D156 `insertNulls` 6000 대체. 1시간 화면에서는 칸 하나만 빠져도 끊김(사용자 승인) ⑤ '칸 일부 없음'은 고정값(agg_ms 3000, n < 30)으로 걸러 구간마다 하나 ⑥ KPM 막대 `barAlignment` 1(막대가 실제 칸 자리 — 3초 오른쪽, 사용자 승인) ⑦ 링크 초당 값 = 증가분 구간 평균 ÷ 3초(AWS 7일 217,834줄 모두 3000 ms) ⑧ 관제 새로고침 5초 유지 ⑨ 측정 도구 `grafana/query_timing.py`(사용자 승인) | 7일 kpm2 184만 점, 칸 일부 없음 6만 칸. contains·열끼리 비교·한 from 나눠 쓰기는 저장소 계산을 막아 수 초~30초. `max` + `createEmpty: true`는 7일 1~2초 | 불필요 |
+| D203 | **화면 표시**: 대표 값 `ratio`는 `math.round(x × 100)` % 정수(0.5714 → 57% — 둘째 자리 반올림 뒤 ×100은 56.99999…%), 다른 키는 그대로, 판정 근거 값의 원값도 그대로. 판정 요약 모드 열 삭제. UE·peers·UE_EVENT는 셀-uid(`6733824-63`), 열 이름 'UE (cell-uid)', 타임라인 행 이름은 앞에 'UE' 없이. '피해자 연결 (peers)' 열은 '피해자 연결'로(필드 이름은 화면에서 뜻이 없음, 사용자 결정 11/18 — Reviewer 검증 뒤 바꿈). InfluxDB `alert_ue.ue` 태그·peers 저장값은 그대로(덮어쓰기 방지 키). 타임라인은 (셀, du_ue_id, uid) 전체로 묶어 겹치는 셀-uid가 있어도 합치지 않음 | 사용자 요청·결정(11/18). uid는 세션 안에서 유일(27_), 경보 상세는 경보 하나(세션 하나)라 화면에서 구분됨 — AWS 30일 51행에서 겹침 0 | 불필요(화면만) |
+| D204 | **경보 툴팁 계열**: 관제 KPM 두 그래프에 refId B — 경보마다 시작·끝과 그 사이 구간 경계(win)를 채운 계열(값 = 심각도, 이름 = 종류 — 공격 이름 · 셀 · 상태)을 그래프·범례에서 숨기고(`hideFrom.viz`·`legend`) 툴팁에만, 자기 숨은 축. 구간 끝은 경보 구간 주석과 같다. 채우기는 `experimental.unpivot` + `interpolate.linear`(경보 길이에 비례). 경보 요약은 필요한 필드만 읽는다(B·경보 구간 주석 = severity·reason, 탐지 결과 = severity — 알림 규칙·경보 표는 그대로). 보라 세모(DU·CU 재시작)는 그대로. kpm2가 없는 출처(샘플)에서는 KPM 패널이 'No data' 대신 빈 그래프 | Grafana 12.4.13은 주석 마커 크기가 CSS 5 px 고정이고, 주석 글은 마커에서만 뜬다(구간 영역 호버 기능 없음, `AnnotationMarker2.tsx`). 툴팁은 커서 칸 값이 null이면 15 px 안의 가장 가까운 값을 쓰므로 구간 끝 바로 밖에서도 보일 수 있음. 보라 세모는 사용자 결정(11/18)으로 그대로. 처음 구현(경보마다 화면 범위 전체를 `aggregateWindow(createEmpty)`로 채움)은 7일 패널 요청 5~11초로 1번을 되살려 Reviewer 1차에서 걸림 → 위 방식으로 바꿈. 7일 프로파일: 경보 요약 2.9초 중 대부분이 경보 필드 읽기(경보 tag마다 series) | 불필요 |
+| D205 | **Reviewer 검증은 1회만** — '수정 필요'면 고치고 다시 검증하지 않으며, 고친 것은 'Reviewer 검증 안 받음'으로 적는다 (D201의 최대 3차를 바꿈) | 사용자 결정(11/18): 역할 분리 흐름이 너무 느리다. 이번 작업은 1차(수정 필요) 뒤 2차를 중단 | 불필요 |
+
+### 확인 결과
+| 확인 | 결과 |
+|---|---|
+| AWS 측정 — 바꾸기 전(Researcher, 셀 All) | RRC 연결 시도 1h 0.44 s / 24h 2.30 s / 꽉 찬 날 24h 9.61 s `too many datapoints` / 3d 13.54 s 같은 오류 / 7d 29.99 s 시간 초과. UE 컨텍스트 7d 30.04 s 시간 초과. 주석 '칸 일부 없음' 7d 30.03 s 시간 초과. 성능 24h: 시간 그래프 6개 `too many datapoints` |
+| AWS 측정 — 바꾼 뒤 (`grafana/query_timing.py --url http://3.39.170.31:3000 --source p4`, 배포 없이 읽기만, **패널 단위** — 패널의 쿼리 A·B를 한 요청으로) | Reviewer 1차 뒤 최종: 관제 19개 요청: **7d 패널마다 0.47 s 이하**(KPM 막대 A+B 0.22 s, UE 선 A+B 0.47 s, 경보 표 0.46 s), **동시에 보냈을 때 가장 늦은 응답 1.93 s**, 24h 동시 0.97 s, 1h 동시 1.00 s — 오류·점 수 초과 0. 성능 9개: 7d 최대 3.20 s('고른 시간 범위 요약' — 원본으로 평균·최대, 새로고침 1분), 24h 최대 0.49 s. 측정이 몰리면 AWS(t3.small)가 4~5배 느려진다 — Reviewer 1차 중 경보 표 0.44 → 1.5~2.8 s(CPU 크레딧 소진으로 보임, 확인은 못 함). 그 상태에서도 최종 쿼리는 7d 동시 2.96~3.07 s로 통과 |
+| AWS 실데이터 값 | 경보 목록 `ratio = 57%`·`83%`·`100%`, 다른 키 `victims = 1`·`stalls_w = 20` 그대로. 판정 요약에 모드 없음. Blind DoS 경보의 걸린 UE `6733824-63`, peers `6733824-62`, 타임라인 행 `6733824-63`, 메시지 표 `6733824-63`. 경보 툴팁 계열: 최근 3시간 경보 13개 모두 6초 구간마다 빈틈없이, 이름 '공격 — 인증 단계 고착 · 셀 6733824 · 해제' 꼴 |
+| `pytest` | 전체 589 passed(로컬 InfluxDB·Grafana 떠 있음, 건너뜀 0). `tests/test_dashboards.py` 42, `tests/test_dashboard_flux.py` 7. `python grafana/build.py --check` 0, 알림 provisioning(`portran.json`) 기준 커밋과 같음 |
+| Reviewer 1차 | **수정 필요**. 완료 조건 26개 중 25개 ✅, 17(관제 7d 동시 5 s) ❌ — 5회 모두 실패(동시 7.9~8.8 s). 높음 1: 경보 툴팁 계열(B)이 경보마다 화면 범위 전체를 채워 7일 패널 요청 5~11 s(1번 회귀). 중간 2: `query_timing.py`가 패널의 A·B를 따로 재 실제보다 낮게 잼, progress 수치 재현 안 됨. 낮음 5: 경보 툴팁이 README·설계·CLAUDE.md에 없음, kpm2 없는 출처는 빈 그래프, `kpm2_source` extra가 여러 필드면 마지막 필드에만 걸림, 3초·100 ms 고정 전제(D202에 적음), peers 형식 밖 값은 그대로 보임 → **고침**: B를 unpivot + interpolate로(경보 길이 비례), 경보 요약 필드 줄임, 측정을 패널 단위로, 문서 반영, `kpm2_source` 괄호. 3초 고정·peers는 그대로 두고 기록 |
+| Reviewer 2차 | **하지 않음** — 사용자 결정(11/18 "검증 한번만, 너무 느려")으로 시작한 2차 검증을 중단했다(D205). **1차 뒤 고친 것(경보 툴팁 쿼리 unpivot + interpolate, 경보 요약 필드 줄임, `query_timing.py` 패널 단위 측정, 문서, `kpm2_source` 괄호)은 Reviewer 검증을 받지 않았다** — 확인은 위 테스트(589 passed)와 AWS 측정으로만 |
+
+확인하지 못한 것: **화면에서 마우스를 대 본 것** — 경보 툴팁이 구간 어디서나 뜨는지, 숨긴 계열이 y축에 영향이 없는지, 막대 위치(barAlignment 1). 헤드리스 브라우저가 이 PC에서 실행되지 않음(`libasound.so.2` 없음, 설치에 sudo 필요). Grafana 12.4.13 소스(TooltipPlugin2·uPlot 1.6.32·`buildScaleKey`)와 쿼리 결과로만 확인했다 — 배포 뒤 AWS 화면에서 확인한다.
+
+### 환경 메모
+- 대시보드 쿼리를 바꾸면 배포 전에 `python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d --parallel`로 잰다. 로컬 데이터(샘플)는 양이 적어 이번 문제를 재현하지 못한다(로컬 쿼리 실행 테스트는 15분·샘플).
+- Flux에서 null 값을 내려면 `import "internal/debug"`의 `debug.null(type: "float")`(InfluxDB 2.7.12에서 확인). `array.from` 행처럼 타입이 정해진 레코드에서는 없는 열을 `r.x`로 읽으면 타입 오류다.
+
+### 남은 일
+- [ ] 커밋(README 3번째 줄 사용자 수정 포함 — 사용자 결정 11/18), push, `dev`로 PR, `main` 병합(= AWS 배포) — 모두 사용자 확인
+- [ ] 배포 뒤 AWS 관제 'Last 7 days' 화면 확인: KPM 두 그래프 표시, 경보 구간 툴팁, 막대 위치
+- [ ] 작업 크기별 단계 기준과 **Reviewer 검증 1회(D205)** 를 CLAUDE.md 12절 10항·`docs/agent-workflow.md`에 넣기(사용자 결정 — 이번 작업 뒤 따로)
+- [ ] 이번 범위 밖: '근거 KPM'(경보 하나의 100 ms 근거)은 30분 넘는 경보면 점 수 상한에 걸릴 수 있다(기록만, 측정에서 뺌)

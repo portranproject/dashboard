@@ -141,12 +141,14 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   ├── provisioning/dashboards/dashboards.yml
 │   ├── provisioning/alerting/portran.json   # Slack 알림 규칙·연락처·템플릿 (M12, build.py가 만든다)
 │   ├── build.py                  # 대시보드 JSON 생성기 (JSON은 이것으로만 고친다, M10)
+│   ├── query_timing.py           # 대시보드 쿼리를 실제 Grafana에 보내 시간·오류·점 수를 잰다 (읽기 전용, D202)
 │   ├── rule-names.json           # 룰 ID → 공격 이름 (27_ §5.3)
 │   └── dashboards/{monitoring.json, performance.json}   # 관제·성능 (grafana/build.py가 만든다)
 ├── recordings/                   # raw 녹화 (.gitignore)
 └── tests/
     └── data/detection/           # 탐지 쪽 경보 경로 샘플 32개 (11/05, 지금 탐지 엔진 코드 출력)
         data/overhead/            # 탐지 쪽 overhead 실제 출력 30줄 (11/13, M11)
+        test_dashboard_flux.py    # 대시보드 Flux를 실제 InfluxDB 임시 bucket에서 돌려 값 확인 (D202)
 ```
 
 ## 5. 메시지 스키마
@@ -255,7 +257,7 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 | 행 | 패널 |
 |---|---|
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표. 요약 줄 대신 성능에서 옮김(11/16) |
-| KPM (상시 KPM2) | 셀별 3초 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 경보 구간·gap·칸 일부 없음·세션 시작 주석 |
+| KPM (상시 KPM2) | 셀별 3초 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위는 3초 배수 구간으로 묶는다(막대 합, UE 수 최대·평균 선은 평균, 11/18). 경보 구간·gap·칸 일부 없음·세션 시작 주석. 경보 구간 어디에 마우스를 대도 툴팁에 경보(그래프에 안 그리는 계열 refId B, 11/18) |
 | 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 행을 누르면 경보 상세로. 표가 한 줄 가득(룰별 경보 수 막대는 11/16에 없앰) |
 | 경보 상세 | 변수 `alert_id`. 판정 요약, 판정 근거 값(cond·candidates·conditions·values·params·refs), 후보 공격, 걸린 UE(`alert_ue`), 근거 KPM(근거 KPM2 100 ms, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보). 줄·패널 제목은 짧게(11/16) |
 
@@ -263,8 +265,14 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 모양이 갈리므로 경보 합치기에는 쓰지 않는다. `reduce` 결과에 `join.left`를 쓰면 실패하고, `map` 결과에 그대로 옮긴 열이 하나도 없으면 조건식 값이 null이 된다(`grafana/build.py` 주석). **정렬은 `map` 앞에서, 원래 열로 한다** — `map`으로 만든 열로 `sort`하면 줄이 빠진다(관제 경보 목록에서 해제된 경보가 빠졌음, M11). `range`의 start와 stop은 같은 기준으로 준다 — 화면 시간 범위(`v.timeRangeStart`~`v.timeRangeStop`)끼리, 또는 지금 기준(`-5m`~`now()`)끼리. 섞으면 지난 범위를 골랐을 때 start > stop이 되어 `cannot query an empty range`로 패널이 깨진다(`tests/test_dashboards.py`가 검사). `map`이 만든 열은 순서가 정해져 있지 않으니, 표 패널에는 반드시 `column_order()`로 열 순서를 박는다(안 하면 새로고침마다 열이 뒤섞인다, 테스트가 검사).
 
+긴 시간 범위(11/18, D202 — 관제 KPM이 7일에서 시간 초과·점 수 초과로 비었음):
+- `range` 바로 뒤 `filter`에는 `contains()`를 쓰지 않는다 — InfluxDB가 저장소에서 거르지 못해 데이터를 다 읽는다(7일 30초 초과). 셀은 정규식 `r.cell =~ /^${cell:regex}$/`. 열끼리 비교(`r._value * 100 < int(v: r.agg_ms)`)도 저장소에서 안 되니 고정값으로 거른다. 한 `from`을 변수로 받아 두 갈래로 나눠 쓰지 말고 갈래마다 `from`을 둔다(같은 이유, 7일 15초). `test_storage_filters_have_no_contains`가 검사.
+- 상시 KPM2·overhead 원본(3초 칸)을 그리는 시간 그래프·주석은 `aggregateWindow(every: win, …)`로 묶는다. `win`은 `v.windowPeriod`를 3초 배수로 올린 값(`grafana/build.py` `WINDOW`), 묶기는 `range`·`filter` 바로 뒤(저장소에서 계산)에 두고, 세션 series는 `group` 뒤 한 번 더 묶는다(`window_by`). 원본을 다 가져오면 Grafana가 프레임당 maxDataPoints × 10행에서 자른다(`too many datapoints`). `test_raw_series_are_windowed`가 검사.
+- 선은 빈 구간을 null 행으로 남겨 끊는다 — 마지막에 `aggregateWindow(fn: mean, createEmpty: true)`(값은 그대로). `max` 같은 선택 함수에 `createEmpty: true`를 주면 느리다(7일 1~2초). 계산식에서 null을 내려면 `import "internal/debug"`의 `debug.null(type: "float")`(Flux에는 null 값 문법이 없다). `insertNulls`는 고정 ms라 묶은 구간 길이를 몰라 쓰지 않는다.
+- 관제는 5초마다 새로고침하고 새로고침은 진행 중인 쿼리를 취소한다 — 7일 범위도 패널마다 5초 안이어야 화면에 나온다(패널의 쿼리 A·B는 한 요청에서 차례로 돌아 시간이 더해진다). 경보 요약(`alert_summary`)은 경보 tag마다 series라 읽는 필드 수에 비례해 느려지니, 대표 값·UE 수가 필요 없는 곳은 `fields=("severity", "reason")`처럼 줄인다. 바꾼 쿼리는 배포 전에 `python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d --parallel`로 잰다(읽기만, 저장소의 JSON을 보냄).
+
 ### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
-`docs/dashboard-design.md` 3절. **CU 자원**만 남았다(줄 제목 'Overhead', 11/16)(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대, 오른쪽 범례 표에 평균·최대). 변수: `source`, `cell`(CPU 사용률 · RRC 연결 시도의 RRC 연결 시도만). 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과 줄(공격별 경보 수, 경보 길이, 공격별 경보 결과)은 관제 맨 위로 옮기고(종류별 경보 수는 없앰) 경보·입력 품질 줄(경보가 어떻게 끝났나·근거 손실·gap·상시 KPM2 칸 채움·일부만 측정된 지표)은 없앴다(11/16). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
+`docs/dashboard-design.md` 3절. **CU 자원**만 남았다(줄 제목 'Overhead', 11/16)(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대, 오른쪽 범례 표에 평균·최대). 시간 그래프는 긴 시간 범위에서 3초 배수 구간의 평균(연결 시도는 합, 11/18). 변수: `source`, `cell`(CPU 사용률 · RRC 연결 시도의 RRC 연결 시도만). 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과 줄(공격별 경보 수, 경보 길이, 공격별 경보 결과)은 관제 맨 위로 옮기고(종류별 경보 수는 없앰) 경보·입력 품질 줄(경보가 어떻게 끝났나·근거 손실·gap·상시 KPM2 칸 채움·일부만 측정된 지표)은 없앴다(11/16). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
 
 ### 9.3 Slack 알림 (M12, Grafana Alerting)
 알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).

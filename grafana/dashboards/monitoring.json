@@ -54,7 +54,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "Anno",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => contains(value: r.cell, set: ${cell:json}))\n  |> map(fn: (r) => ({_time: r.start,\n      timeEnd: if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last,\n      text: \"경보 \" + r.rule + \" — \" + r.status + \" (\" + r.class + \", 셀 \" + r.cell + \")\", tags: r.rule}))"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => r.cell =~ /^${cell:regex}$/)\n  |> map(fn: (r) => ({_time: r.start,\n      timeEnd: if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last,\n      text: \"경보 \" + r.rule + \" — \" + r.status + \" (\" + r.class + \", 셀 \" + r.cell + \")\", tags: r.rule}))"
         },
         "mappings": {
           "time": {
@@ -140,7 +140,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "Anno",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and contains(value: r.cell, set: ${cell:json}))\n  |> filter(fn: (r) => r._field == \"n\" or r._field == \"t_end_ms\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.n * 100 < int(v: r.agg_ms))\n  |> group()\n  |> map(fn: (r) => ({_time: r._time, timeEnd: time(v: r.t_end_ms * 1000000),\n      text: \"칸 일부 없음 (n \" + string(v: r.n) + \" / \" + string(v: int(v: r.agg_ms) / 100) + \", 셀 \" + r.cell + \")\", tags: \"partial\"}))"
+          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\npart = (fn) => from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and r.cell =~ /^${cell:regex}$/)\n  |> filter(fn: (r) => r._field == \"n\" and r.agg_ms == \"3000\" and r._value < 30)\n  |> aggregateWindow(every: win, fn: fn, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"cell\"])\nslots = part(fn: count) |> aggregateWindow(every: win, fn: sum, createEmpty: false, timeSrc: \"_start\") |> set(key: \"_field\", value: \"slots\")\nlow = part(fn: min) |> aggregateWindow(every: win, fn: min, createEmpty: false, timeSrc: \"_start\") |> set(key: \"_field\", value: \"low\")\nunion(tables: [slots, low])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> map(fn: (r) => ({_time: r._time, timeEnd: time(v: int(v: r._time) + int(v: win)),\n      text: \"칸 일부 없음 — 3초 칸 \" + string(v: r.slots) + \"개, 가장 적은 칸 n \" + string(v: r.low) + \" / 30 (셀 \" + r.cell + \")\",\n      tags: \"partial\"}))"
         },
         "mappings": {
           "time": {
@@ -405,7 +405,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"dict\"\nnames = [\"L3-01-V\": \"UE 컨텍스트 고갈\", \"L3-01-O\": \"인증 단계 고착\", \"L3-20\": \"Blind DoS\", \"L3-21\": \"상향 DoS\", \"L3-24\": \"하향 IMSI 추출\", \"L3-14\": \"UE 능력 탈취\", \"L3-06\": \"NAS 카운터 비동기화\", \"AN-01\": \"인증 동기 실패 재인증\", \"AN-02\": \"식별 요청 증가\", \"AN-04\": \"같은 UE의 짧은 연결 반복\", \"AN-06a\": \"보안 수립 뒤 재인증·SMC 재등장\", \"AN-07\": \"같은 S-TMSI의 Setup 반복·Complete 없음\", \"AN-08\": \"기존 UE들의 재등록 급증\", \"L3-11\": \"RRC 거절·해제 투옥\", \"L3-11-V1\": \"RRC 거절·해제 투옥\", \"L3-11-V2\": \"RRC 거절·해제 투옥\", \"L3-19-Va\": \"디바이스 강제 차단\", \"L3-23-O\": \"원격 등록 해제\", \"L3-28-V\": \"모바일 망 매핑 MNmap\", \"L3-07-OV\": \"인증 동기 실패 공격\", \"L3-25-OV\": \"상향 IMSI 추출\", \"L3-02-Oa\": \"배터리 소진·룰라비\", \"L3-34-OV\": \"TORPEDO\", \"L3-12-V\": \"은밀 강제분리\", \"L3-33-V\": \"TMSI·페이징·RNTI 노출\", \"L3-06-O1\": \"NAS 카운터 비동기화\", \"L3-17-OV\": \"SIB TAC 조작\", \"L3-26-O\": \"IMSI 캐처·가짜 기지국\"]\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r._field == \"severity\" and r.event == \"raise\" and r.env == \"${source}\"\n      and contains(value: r.cell, set: ${cell:json}))\n  |> group(columns: [\"rule\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: dict.get(dict: names, key: r.rule, default: r.rule), \"경보 수\": r._value}))\n  |> keep(columns: [\"공격\", \"경보 수\"])"
+          "query": "import \"dict\"\nnames = [\"L3-01-V\": \"UE 컨텍스트 고갈\", \"L3-01-O\": \"인증 단계 고착\", \"L3-20\": \"Blind DoS\", \"L3-21\": \"상향 DoS\", \"L3-24\": \"하향 IMSI 추출\", \"L3-14\": \"UE 능력 탈취\", \"L3-06\": \"NAS 카운터 비동기화\", \"AN-01\": \"인증 동기 실패 재인증\", \"AN-02\": \"식별 요청 증가\", \"AN-04\": \"같은 UE의 짧은 연결 반복\", \"AN-06a\": \"보안 수립 뒤 재인증·SMC 재등장\", \"AN-07\": \"같은 S-TMSI의 Setup 반복·Complete 없음\", \"AN-08\": \"기존 UE들의 재등록 급증\", \"L3-11\": \"RRC 거절·해제 투옥\", \"L3-11-V1\": \"RRC 거절·해제 투옥\", \"L3-11-V2\": \"RRC 거절·해제 투옥\", \"L3-19-Va\": \"디바이스 강제 차단\", \"L3-23-O\": \"원격 등록 해제\", \"L3-28-V\": \"모바일 망 매핑 MNmap\", \"L3-07-OV\": \"인증 동기 실패 공격\", \"L3-25-OV\": \"상향 IMSI 추출\", \"L3-02-Oa\": \"배터리 소진·룰라비\", \"L3-34-OV\": \"TORPEDO\", \"L3-12-V\": \"은밀 강제분리\", \"L3-33-V\": \"TMSI·페이징·RNTI 노출\", \"L3-06-O1\": \"NAS 카운터 비동기화\", \"L3-17-OV\": \"SIB TAC 조작\", \"L3-26-O\": \"IMSI 캐처·가짜 기지국\"]\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r._field == \"severity\" and r.event == \"raise\" and r.env == \"${source}\"\n      and r.cell =~ /^${cell:regex}$/)\n  |> group(columns: [\"rule\"])\n  |> count()\n  |> group()\n  |> sort(columns: [\"_value\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: dict.get(dict: names, key: r.rule, default: r.rule), \"경보 수\": r._value}))\n  |> keep(columns: [\"공격\", \"경보 수\"])"
         }
       ],
       "fieldConfig": {
@@ -465,7 +465,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and contains(value: r.cell, set: ${cell:json}))\nin_range\n  |> filter(fn: (r) => r.event == \"clear\" or r.event == \"end\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, \"경보 길이(초)\": float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0}))\n  |> keep(columns: [\"경보 길이(초)\"])"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and r.cell =~ /^${cell:regex}$/)\nin_range\n  |> filter(fn: (r) => r.event == \"clear\" or r.event == \"end\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, \"경보 길이(초)\": float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0}))\n  |> keep(columns: [\"경보 길이(초)\"])"
         }
       ],
       "fieldConfig": {
@@ -514,7 +514,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and contains(value: r.cell, set: ${cell:json}))\nin_range\n  |> map(fn: (r) => ({rule: r.rule, class: r.class,\n      high: if r.sev == 2 then 1 else 0,\n      cleared: if r.event == \"clear\" then 1 else 0,\n      ended: if r.event == \"end\" then 1 else 0,\n      open: if r.event == \"raise\" or r.event == \"update\" then 1 else 0,\n      secs: if r.event == \"clear\" or r.event == \"end\" then float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0 else 0.0}))\n  |> group(columns: [\"rule\", \"class\"])\n  |> reduce(identity: {n: 0, high: 0, cleared: 0, ended: 0, open: 0, secs: 0.0, longest: 0.0},\n      fn: (r, accumulator) => ({n: accumulator.n + 1, high: accumulator.high + r.high,\n        cleared: accumulator.cleared + r.cleared, ended: accumulator.ended + r.ended, open: accumulator.open + r.open,\n        secs: accumulator.secs + r.secs, longest: if r.secs > accumulator.longest then r.secs else accumulator.longest}))\n  |> group()\n  |> sort(columns: [\"n\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: r.rule, 종류: r.class, \"경보 수\": r.n,\n      \"high 도달\": r.high, 해제: r.cleared, \"강제 종료\": r.ended, \"끝이 안 옴\": r.open,\n      \"평균 길이(초)\": if r.cleared + r.ended > 0 then r.secs / float(v: r.cleared + r.ended) else 0.0,\n      \"최대 길이(초)\": r.longest}))"
+          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = alerts |> filter(fn: (r) => false)\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nin_range = summary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart and r.cell =~ /^${cell:regex}$/)\nin_range\n  |> map(fn: (r) => ({rule: r.rule, class: r.class,\n      high: if r.sev == 2 then 1 else 0,\n      cleared: if r.event == \"clear\" then 1 else 0,\n      ended: if r.event == \"end\" then 1 else 0,\n      open: if r.event == \"raise\" or r.event == \"update\" then 1 else 0,\n      secs: if r.event == \"clear\" or r.event == \"end\" then float(v: int(v: r.last) - int(v: r.start)) / 1000000000.0 else 0.0}))\n  |> group(columns: [\"rule\", \"class\"])\n  |> reduce(identity: {n: 0, high: 0, cleared: 0, ended: 0, open: 0, secs: 0.0, longest: 0.0},\n      fn: (r, accumulator) => ({n: accumulator.n + 1, high: accumulator.high + r.high,\n        cleared: accumulator.cleared + r.cleared, ended: accumulator.ended + r.ended, open: accumulator.open + r.open,\n        secs: accumulator.secs + r.secs, longest: if r.secs > accumulator.longest then r.secs else accumulator.longest}))\n  |> group()\n  |> sort(columns: [\"n\"], desc: true)\n  |> map(fn: (r) => ({rule: r.rule, 공격: r.rule, 종류: r.class, \"경보 수\": r.n,\n      \"high 도달\": r.high, 해제: r.cleared, \"강제 종료\": r.ended, \"끝이 안 옴\": r.open,\n      \"평균 길이(초)\": if r.cleared + r.ended > 0 then r.secs / float(v: r.cleared + r.ended) else 0.0,\n      \"최대 길이(초)\": r.longest}))"
         }
       ],
       "fieldConfig": {
@@ -845,7 +845,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "RRC 연결 시도 · 성공 · 무응답",
-      "description": "상시 KPM2(TeleRAN Table II) — 셀마다 3초 묶음, 위쪽 셀 선택으로 거른다. 셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다. 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt)",
+      "description": "상시 KPM2(TeleRAN Table II) — 셀마다 3초 칸, 긴 시간 범위에서는 3초 배수 구간의 합(막대 하나 = 구간 하나). 위쪽 셀 선택으로 거른다. 셀에 무슨 일이 일어나고 있나. UE 컨텍스트 고갈 공격(1단계)은 시도와 무응답이 함께 솟고 성공은 그대로다. 주황 영역 = 경보 구간, 회색 영역 = 데이터 없음(gap)·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작(hello), 보라 세로선 = DU·CU 재시작(f1_evt). 주황 영역 어디에 마우스를 대도 툴팁에 경보(종류 — 공격 이름 · 셀 · 상태, 값 = 심각도)가 보인다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -863,7 +863,15 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and contains(value: r.cell, set: ${cell:json}))\n  |> filter(fn: (r) => r._field == \"cc.RRC.ConnEstabAtt.total\" or r._field == \"cc.RRC.ConnEstabSucc.total\"\n      or r._field == \"cc.RRC.ConnEstabFailCause.NoReply\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, cell: r.cell,\n      _field: if r._field == \"cc.RRC.ConnEstabAtt.total\" then \"연결 시도\"\n              else if r._field == \"cc.RRC.ConnEstabSucc.total\" then \"연결 성공\" else \"무응답 (NoReply)\"}))\n  |> group(columns: [\"cell\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])"
+          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and r.cell =~ /^${cell:regex}$/)\n  |> filter(fn: (r) => r._field == \"cc.RRC.ConnEstabAtt.total\" or r._field == \"cc.RRC.ConnEstabSucc.total\" or r._field == \"cc.RRC.ConnEstabFailCause.NoReply\")\n  |> aggregateWindow(every: win, fn: sum, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"cell\", \"_field\"])\n  |> aggregateWindow(every: win, fn: sum, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, cell: r.cell,\n      _field: if r._field == \"cc.RRC.ConnEstabAtt.total\" then \"연결 시도\"\n              else if r._field == \"cc.RRC.ConnEstabSucc.total\" then \"연결 성공\" else \"무응답 (NoReply)\"}))\n  |> group(columns: [\"cell\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "B",
+          "query": "import \"date\"\nimport \"dict\"\nimport \"experimental\"\nimport \"interpolate\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nnames = [\"L3-01-V\": \"UE 컨텍스트 고갈\", \"L3-01-O\": \"인증 단계 고착\", \"L3-20\": \"Blind DoS\", \"L3-21\": \"상향 DoS\", \"L3-24\": \"하향 IMSI 추출\", \"L3-14\": \"UE 능력 탈취\", \"L3-06\": \"NAS 카운터 비동기화\", \"AN-01\": \"인증 동기 실패 재인증\", \"AN-02\": \"식별 요청 증가\", \"AN-04\": \"같은 UE의 짧은 연결 반복\", \"AN-06a\": \"보안 수립 뒤 재인증·SMC 재등장\", \"AN-07\": \"같은 S-TMSI의 Setup 반복·Complete 없음\", \"AN-08\": \"기존 UE들의 재등록 급증\", \"L3-11\": \"RRC 거절·해제 투옥\", \"L3-11-V1\": \"RRC 거절·해제 투옥\", \"L3-11-V2\": \"RRC 거절·해제 투옥\", \"L3-19-Va\": \"디바이스 강제 차단\", \"L3-23-O\": \"원격 등록 해제\", \"L3-28-V\": \"모바일 망 매핑 MNmap\", \"L3-07-OV\": \"인증 동기 실패 공격\", \"L3-25-OV\": \"상향 IMSI 추출\", \"L3-02-Oa\": \"배터리 소진·룰라비\", \"L3-34-OV\": \"TORPEDO\", \"L3-12-V\": \"은밀 강제분리\", \"L3-33-V\": \"TMSI·페이징·RNTI 노출\", \"L3-06-O1\": \"NAS 카운터 비동기화\", \"L3-17-OV\": \"SIB TAC 조작\", \"L3-26-O\": \"IMSI 캐처·가짜 기지국\"]\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => r.cell =~ /^${cell:regex}$/)\n  |> map(fn: (r) => {\n      end = if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last\n      s = if r.start > v.timeRangeStart then r.start else v.timeRangeStart\n      return {alert_id: r.alert_id, sev: float(v: r.sev), _time: s, s: s,\n        e: if end < v.timeRangeStop then end else v.timeRangeStop,\n        alert: r.class + \" — \" + dict.get(dict: names, key: r.rule, default: r.rule) + \" · 셀 \" + r.cell + \" · \" + r.status}\n    })\n  |> filter(fn: (r) => r.e > r.s)\n  |> group(columns: [\"alert_id\", \"alert\", \"sev\"])\n  |> experimental.unpivot()\n  |> map(fn: (r) => ({_time: r._value, _value: r.sev, alert_id: r.alert_id, alert: r.alert}))\n  |> group(columns: [\"alert_id\", \"alert\"])\n  |> sort(columns: [\"_time\"])\n  |> interpolate.linear(every: win)"
         }
       ],
       "fieldConfig": {
@@ -874,7 +882,7 @@
           "custom": {
             "drawStyle": "bars",
             "fillOpacity": 70,
-            "barAlignment": -1,
+            "barAlignment": 1,
             "lineWidth": 1,
             "spanNulls": false,
             "stacking": {
@@ -927,6 +935,88 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "${__field.labels.alert}"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": true
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 3
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "2": {
+                        "text": "high",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "medium",
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "0": {
+                        "text": "없음",
+                        "color": "green",
+                        "index": 2
+                      },
+                      "high": {
+                        "color": "red",
+                        "index": 3
+                      },
+                      "medium": {
+                        "color": "orange",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -946,7 +1036,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "UE 컨텍스트 · 연결 UE 수",
-      "description": "셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 96의 90%(1·2단계 경보가 high가 되는 기준). UE 컨텍스트 수는 완료를 기다리는 UE까지 센 탐지 쪽 확장 지표(ext.UeCtxMax)",
+      "description": "셀 자원이 고갈되고 있나. 빨간 선 = 셀 한도 96의 90%(1·2단계 경보가 high가 되는 기준). UE 컨텍스트 수는 완료를 기다리는 UE까지 센 탐지 쪽 확장 지표(ext.UeCtxMax). 셀마다 3초 칸, 긴 시간 범위에서는 3초 배수 구간의 최대(평균 선은 구간 평균). 데이터가 없는 구간에서 선이 끊긴다. 주황 영역 어디에 마우스를 대도 툴팁에 경보(종류 — 공격 이름 · 셀 · 상태, 값 = 심각도)가 보인다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -964,7 +1054,15 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and contains(value: r.cell, set: ${cell:json}))\n  |> filter(fn: (r) => r._field == \"ext.UeCtxMax\" or r._field == \"si.RRC.ConnMax\" or r._field == \"si.RRC.ConnMean\")\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, cell: r.cell,\n      _field: if r._field == \"ext.UeCtxMax\" then \"UE 컨텍스트 수 (최대)\"\n              else if r._field == \"si.RRC.ConnMax\" then \"RRC 연결 UE (최대)\" else \"RRC 연결 UE (평균)\"}))\n  |> group(columns: [\"cell\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])"
+          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\npeak = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and r.cell =~ /^${cell:regex}$/)\n  |> filter(fn: (r) => r._field == \"ext.UeCtxMax\" or r._field == \"si.RRC.ConnMax\")\n  |> aggregateWindow(every: win, fn: max, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"cell\", \"_field\"])\n  |> aggregateWindow(every: win, fn: max, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\navg = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"kpm2\" and r.env == \"${source}\" and r.cell =~ /^${cell:regex}$/)\n  |> filter(fn: (r) => r._field == \"si.RRC.ConnMean\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"cell\", \"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\nunion(tables: [peak, avg])\n  |> map(fn: (r) => ({_time: r._time, _value: r._value, cell: r.cell,\n      _field: if r._field == \"ext.UeCtxMax\" then \"UE 컨텍스트 수 (최대)\"\n              else if r._field == \"si.RRC.ConnMax\" then \"RRC 연결 UE (최대)\" else \"RRC 연결 UE (평균)\"}))\n  |> group(columns: [\"cell\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"_time\"])"
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "portran-influxdb"
+          },
+          "refId": "B",
+          "query": "import \"date\"\nimport \"dict\"\nimport \"experimental\"\nimport \"interpolate\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nnames = [\"L3-01-V\": \"UE 컨텍스트 고갈\", \"L3-01-O\": \"인증 단계 고착\", \"L3-20\": \"Blind DoS\", \"L3-21\": \"상향 DoS\", \"L3-24\": \"하향 IMSI 추출\", \"L3-14\": \"UE 능력 탈취\", \"L3-06\": \"NAS 카운터 비동기화\", \"AN-01\": \"인증 동기 실패 재인증\", \"AN-02\": \"식별 요청 증가\", \"AN-04\": \"같은 UE의 짧은 연결 반복\", \"AN-06a\": \"보안 수립 뒤 재인증·SMC 재등장\", \"AN-07\": \"같은 S-TMSI의 Setup 반복·Complete 없음\", \"AN-08\": \"기존 UE들의 재등록 급증\", \"L3-11\": \"RRC 거절·해제 투옥\", \"L3-11-V1\": \"RRC 거절·해제 투옥\", \"L3-11-V2\": \"RRC 거절·해제 투옥\", \"L3-19-Va\": \"디바이스 강제 차단\", \"L3-23-O\": \"원격 등록 해제\", \"L3-28-V\": \"모바일 망 매핑 MNmap\", \"L3-07-OV\": \"인증 동기 실패 공격\", \"L3-25-OV\": \"상향 IMSI 추출\", \"L3-02-Oa\": \"배터리 소진·룰라비\", \"L3-34-OV\": \"TORPEDO\", \"L3-12-V\": \"은밀 강제분리\", \"L3-33-V\": \"TMSI·페이징·RNTI 노출\", \"L3-06-O1\": \"NAS 카운터 비동기화\", \"L3-17-OV\": \"SIB TAC 조작\", \"L3-26-O\": \"IMSI 캐처·가짜 기지국\"]\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\nsummary\n  |> filter(fn: (r) => r.cell =~ /^${cell:regex}$/)\n  |> map(fn: (r) => {\n      end = if r.status == \"열림\" then now() else if r.status == \"상태 불명\" then r.active else r.last\n      s = if r.start > v.timeRangeStart then r.start else v.timeRangeStart\n      return {alert_id: r.alert_id, sev: float(v: r.sev), _time: s, s: s,\n        e: if end < v.timeRangeStop then end else v.timeRangeStop,\n        alert: r.class + \" — \" + dict.get(dict: names, key: r.rule, default: r.rule) + \" · 셀 \" + r.cell + \" · \" + r.status}\n    })\n  |> filter(fn: (r) => r.e > r.s)\n  |> group(columns: [\"alert_id\", \"alert\", \"sev\"])\n  |> experimental.unpivot()\n  |> map(fn: (r) => ({_time: r._value, _value: r.sev, alert_id: r.alert_id, alert: r.alert}))\n  |> group(columns: [\"alert_id\", \"alert\"])\n  |> sort(columns: [\"_time\"])\n  |> interpolate.linear(every: win)"
         }
       ],
       "fieldConfig": {
@@ -977,7 +1075,6 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "spanNulls": false,
-            "insertNulls": 6000,
             "thresholdsStyle": {
               "mode": "line+area"
             }
@@ -996,7 +1093,90 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "${__field.labels.alert}"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": true
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "off"
+                }
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 3
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "2": {
+                        "text": "high",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "medium",
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "0": {
+                        "text": "없음",
+                        "color": "green",
+                        "index": 2
+                      },
+                      "high": {
+                        "color": "red",
+                        "index": 3
+                      },
+                      "medium": {
+                        "color": "orange",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1027,7 +1207,7 @@
       "id": 9,
       "type": "table",
       "title": "경보",
-      "description": "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, UE 수·대표 값 = 마지막 값. 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, 2~4단계 90초 동안 아무것도 없음). 행을 누르면 아래 경보 상세가 바뀐다",
+      "description": "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, UE 수·대표 값 = 마지막 값(ratio는 % — 소수 셋째 자리에서 반올림). 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, 2~4단계 90초 동안 아무것도 없음). 행을 누르면 아래 경보 상세가 바뀐다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -1045,7 +1225,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// 정렬은 map 앞에서 한다 — map으로 만든 열(\"시작\")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> sort(columns: [\"start\"], desc: true)\n  |> limit(n: 300)\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      룰: r.rule,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\" else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))"
+          "query": "import \"date\"\nimport \"math\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// 정렬은 map 앞에서 한다 — map으로 만든 열(\"시작\")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> sort(columns: [\"start\"], desc: true)\n  |> limit(n: 300)\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      룰: r.rule,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\"\n                else if (r.key == \"ratio\") and r.rep != \"\" then r.key + \" = \" + string(v: math.round(x: float(v: r.rep) * 100.0)) + \"%\"\n                else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))"
         }
       ],
       "fieldConfig": {
@@ -1479,7 +1659,7 @@
       "id": 11,
       "type": "table",
       "title": "판정 요약",
-      "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 모드 dl_missing = 분석 엔진이 DL을 못 봐 축소 판정(1단계). 갈래(branch) 열은 없앴다(11/16) — 값은 InfluxDB·원본 녹화에 남아 있다",
+      "description": "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. 갈래(branch)·모드(mode) 열은 없앴다(11/16, 11/18) — 값은 InfluxDB·원본 녹화에 남아 있다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -1497,7 +1677,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"mode\" or r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity, 모드: r.mode,\n      세션: if exists r.session then r.session else \"\"}))"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"session\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> last(column: \"_time\")\n  |> map(fn: (r) => ({룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,\n      \"마지막 이벤트\": r.event, 심각도: r.severity,\n      세션: if exists r.session then r.session else \"\"}))"
         }
       ],
       "fieldConfig": {
@@ -1713,8 +1893,7 @@
               "셀": 3,
               "심각도": 4,
               "마지막 이벤트": 5,
-              "모드": 6,
-              "세션": 7
+              "세션": 6
             }
           }
         }
@@ -2005,7 +2184,7 @@
       "id": 14,
       "type": "table",
       "title": "걸린 UE",
-      "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 (셀, du_ue_id, uid)로 가리키고 세션 안에서만 유일, 같은 단말의 여러 연결은 S-TMSI로 묶는다. 관측 오류(uncertain) = 그 UE를 온전히 못 본 이유: mid_join(연결 중간부터 봄)·loss(입력 유실·한 방향 미관측)·late(늦은 줄). 비어 있으면 깨끗하게 봄 — 관측 오류뿐인 경보는 판정 보류. Blind DoS(L3-20)의 피해자 연결은 peers에 ID만 온다(근거 메시지는 오지 않음)",
+      "description": "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 셀-uid로 보인다(uid는 세션 안에서 유일, du_ue_id는 InfluxDB·원본 녹화에 남아 있다). 같은 단말의 여러 연결은 S-TMSI로 묶는다. 관측 오류(uncertain) = 그 UE를 온전히 못 본 이유: mid_join(연결 중간부터 봄)·loss(입력 유실·한 방향 미관측)·late(늦은 줄). 비어 있으면 깨끗하게 봄 — 관측 오류뿐인 경보는 판정 보류. 피해자 연결 = Blind DoS(L3-20)에서만 — 같은 S-TMSI를 원래 쓰던 단말의 연결(셀-uid, 근거 메시지는 오지 않음)",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -2023,7 +2202,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert_ue\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({\"걸린 시각\": r._time, \"UE (cell-du_ue_id-uid)\": r.ue,\n      \"S-TMSI\": if exists r.s_tmsi then r.s_tmsi else \"\",\n      \"C-RNTI\": if exists r.crnti then string(v: r.crnti) else \"\",\n      조건: if exists r.cond then r.cond else \"\",\n      \"관측 오류\": if exists r.uncertain then r.uncertain else \"\",\n      \"피해자 연결 (peers)\": if exists r.peers then r.peers else \"\",\n      근거: if exists r.evidence and r.evidence then \"있음\" else \"없음\",\n      \"UE 관측값\": if exists r.values_json then r.values_json else \"\",\n      이벤트: r.event}))"
+          "query": "import \"array\"\nimport \"date\"\nimport \"strings\"\nshort = (s) => strings.joinStr(arr: array.map(arr: strings.split(v: s, t: \"; \"), fn: (x) => {\n    p = strings.split(v: x, t: \"-\")\n    return if length(arr: p) == 3 then p[0] + \"-\" + p[2] else x\n  }), v: \"; \")\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert_ue\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({\"걸린 시각\": r._time, \"UE (cell-uid)\": string(v: r.cell) + \"-\" + string(v: r.uid),\n      \"S-TMSI\": if exists r.s_tmsi then r.s_tmsi else \"\",\n      \"C-RNTI\": if exists r.crnti then string(v: r.crnti) else \"\",\n      조건: if exists r.cond then r.cond else \"\",\n      \"관측 오류\": if exists r.uncertain then r.uncertain else \"\",\n      \"피해자 연결\": if exists r.peers then short(s: r.peers) else \"\",\n      근거: if exists r.evidence and r.evidence then \"있음\" else \"없음\",\n      \"UE 관측값\": if exists r.values_json then r.values_json else \"\",\n      이벤트: r.event}))"
         }
       ],
       "fieldConfig": {
@@ -2083,12 +2262,12 @@
             "renameByName": {},
             "indexByName": {
               "걸린 시각": 0,
-              "UE (cell-du_ue_id-uid)": 1,
+              "UE (cell-uid)": 1,
               "S-TMSI": 2,
               "C-RNTI": 3,
               "조건": 4,
               "관측 오류": 5,
-              "피해자 연결 (peers)": 6,
+              "피해자 연결": 6,
               "근거": 7,
               "UE 관측값": 8,
               "이벤트": 9
@@ -2199,7 +2378,7 @@
       "id": 16,
       "type": "state-timeline",
       "title": "UE_EVENT — UE별 메시지 흐름",
-      "description": "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나. UE마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). 자세한 값은 아래 표",
+      "description": "경보 근거로 온 UE 메시지(ue_evt, KPM1). 걸린 단말이 어떤 메시지를 어떤 순서로 주고받았나. UE(셀-uid)마다 한 줄, ↑ 단말 → 망(UL) / ↓ 망 → 단말(DL). 자세한 값은 아래 표",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -2217,7 +2396,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nmsgs = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> filter(fn: (r) => r._field == \"msg\" or r._field == \"dir\" or r._field == \"uid\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, _value: (if r.dir == \"UL\" then \"↑ \" else \"↓ \") + r.msg, ue: \"UE \" + string(v: r.uid)}))\n  |> group(columns: [\"ue\"])\n  |> sort(columns: [\"_time\"])\nends = msgs\n  |> last()\n  |> map(fn: (r) => ({_time: date.add(d: 1s, to: r._time), _value: \"\", ue: r.ue}))\nunion(tables: [msgs, ends])\n  |> group(columns: [\"ue\"])\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"date\"\nmsgs = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> filter(fn: (r) => r._field == \"msg\" or r._field == \"dir\" or r._field == \"uid\" or r._field == \"du_ue_id\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, _value: (if r.dir == \"UL\" then \"↑ \" else \"↓ \") + r.msg,\n      ue: r.cell + \"-\" + string(v: r.uid), key: r.cell + \"-\" + string(v: r.du_ue_id) + \"-\" + string(v: r.uid)}))\n  |> group(columns: [\"ue\", \"key\"])\n  |> sort(columns: [\"_time\"])\nends = msgs\n  |> last()\n  |> map(fn: (r) => ({_time: date.add(d: 1s, to: r._time), _value: \"\", ue: r.ue, key: r.key}))\nunion(tables: [msgs, ends])\n  |> group(columns: [\"ue\", \"key\"])\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -2281,7 +2460,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({시각: r._time, UE: \"UE \" + string(v: r.uid) + \" (du_ue_id \" + string(v: r.du_ue_id) + \")\",\n      방향: if r.dir == \"UL\" then \"↑ UL\" else \"↓ DL\", 프로토콜: r.proto, 메시지: r.msg, 구간: r.phase, 원본: r.raw_json}))\n  |> limit(n: 1000)"
+          "query": "import \"date\"\nfrom(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r.env == \"${source}\" and r.alert_id == \"${alert_id}\" and r.raw_type == \"ue_evt\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"])\n  |> map(fn: (r) => ({시각: r._time, \"UE (cell-uid)\": r.cell + \"-\" + string(v: r.uid),\n      방향: if r.dir == \"UL\" then \"↑ UL\" else \"↓ DL\", 프로토콜: r.proto, 메시지: r.msg, 구간: r.phase, 원본: r.raw_json}))\n  |> limit(n: 1000)"
         }
       ],
       "fieldConfig": {
@@ -2378,7 +2557,7 @@
             "renameByName": {},
             "indexByName": {
               "시각": 0,
-              "UE": 1,
+              "UE (cell-uid)": 1,
               "구간": 2,
               "방향": 3,
               "프로토콜": 4,

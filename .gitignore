@@ -14,3 +14,7 @@ venv/
 
 # /ingest TLS 인증서·개인 키 (서버에서 deploy/ingest-cert.sh가 만든다, M9)
 certs/
+
+# Claude Code 작업 기록 (.claude/hooks/agent_log.py가 쓴다. 비밀 값은 가리지만 개인 작업 내용이라 커밋하지 않는다)
+logs/
+.claude/settings.local.json

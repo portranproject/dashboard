@@ -126,14 +126,106 @@ def test_monitoring_layout():
 
 
 def test_kpm2_lines_break_where_data_is_missing():
-    """받지 않은 구간을 선으로 이으면 그 사이 값이 있었던 것처럼 보인다(M10 AWS 화면). 3초 묶음 2칸 넘게 비면 끊는다."""
+    """받지 않은 구간을 선으로 이으면 그 사이 값이 있었던 것처럼 보인다(M10 AWS 화면). 데이터가 없는 구간(win)은 쿼리가
+    null 행으로 남기고(createEmpty: true) 선을 거기서 끊는다 — insertNulls는 고정 ms라 묶은 구간 길이를 몰라 쓰지 않는다(D202)."""
     d = load(DASHBOARD_DIR / "monitoring.json")
     lines = [p for p in d["panels"] if p["type"] == "timeseries"
              and p["fieldConfig"]["defaults"]["custom"].get("drawStyle") == "line"]
     assert lines
     for panel in lines:
         custom = panel["fieldConfig"]["defaults"]["custom"]
-        assert custom["spanNulls"] is False and custom["insertNulls"] == 6000, panel["title"]
+        assert custom["spanNulls"] is False and "insertNulls" not in custom, panel["title"]
+        # 데이터 쿼리(A) — B는 경보 툴팁 계열(그래프에 안 그림)
+        assert all("createEmpty: true" in t["query"] for t in panel["targets"] if t["refId"] == "A"), panel["title"]
+
+
+def all_queries():
+    """두 대시보드와 알림 규칙의 (이름, 쿼리)."""
+    out = [(f"{name} {item}", q) for name in NEW_DASHBOARDS for item, q, _ in queries(load(DASHBOARD_DIR / name))]
+    out += [(f"alert {r['uid']}", r["data"][0]["model"]["query"]) for r in load(ALERTING)["groups"][0]["rules"]]
+    return out
+
+
+def first_filters(q):
+    """각 range( 바로 뒤의 filter( 호출 글(다음 |> 앞까지)."""
+    out = []
+    for m in re.finditer(r"\|> range\(", q):
+        f = q.find("|> filter(", m.end())
+        if f < 0:
+            continue
+        end = q.find("|>", f + 2)
+        out.append(q[f:end if end > 0 else len(q)])
+    return out
+
+
+def test_storage_filters_have_no_contains():
+    """range 바로 뒤 filter에 contains()를 쓰면 InfluxDB가 저장소에서 거르지 못해(pushdown 안 됨) 데이터를 다 읽는다 —
+    관제 KPM 그래프가 7일 범위에서 30초를 넘어 시간 제한에 걸렸다(11/18 AWS). 셀은 정규식 ${cell:regex}로 거른다(D202)."""
+    found = 0
+    for name, q in all_queries():
+        for text in first_filters(q):
+            found += 1
+            assert "contains(" not in text, (name, text)
+    assert found
+
+
+def raw_series_queries():
+    """상시 KPM2·overhead 원본(3초 칸)을 읽는 시간 그래프 쿼리와 주석 — 근거 KPM(경보 하나의 100 ms 근거)은 뺀다."""
+    out = []
+    for name in NEW_DASHBOARDS:
+        d = load(DASHBOARD_DIR / name)
+        for p in d["panels"]:
+            if p["type"] == "timeseries":
+                out += [(p["title"], t["query"]) for t in p["targets"]
+                        if re.search(r'_measurement == "(kpm2|overhead|overhead_link)"', t["query"])]
+        out += [(a["name"], a["target"]["query"]) for a in d["annotations"]["list"]
+                if "target" in a and '_measurement == "kpm2"' in a["target"]["query"]]
+    return out
+
+
+def test_raw_series_are_windowed():
+    """3초 원본을 그대로 가져오면 7일에 셀·지표 하나가 20만 점 — Grafana 점 수 상한(maxDataPoints × 10)에 걸린다(11/18 AWS).
+    화면 간격(v.windowPeriod)을 3초 배수로 올린 구간(win)으로 묶는다(D202)."""
+    items = raw_series_queries()
+    titles = {t for t, _ in items}
+    assert {"RRC 연결 시도 · 성공 · 무응답", "UE 컨텍스트 · 연결 UE 수", "칸 일부 없음", "CPU 사용률", "CPU 내역",
+            "메모리 사용량", "메모리 내역", "F1·N2 SCTP 트래픽", "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"} == titles
+    for title, q in items:
+        assert "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)" in q, title
+        assert "aggregateWindow(every: win," in q and "aggregateWindow(every: 3s" not in q, title
+        # 원본을 읽는 from마다 range·filter 바로 뒤에 묶는다(저장소에서 계산) — 앞에 pivot·map이 오면 다 읽는다
+        for m in re.finditer(r"from\(bucket: v\.defaultBucket\)", q):
+            rest = q[m.end():]
+            steps = [s.strip().split("(")[0] for s in rest.split("|>")[1:5]]
+            assert steps[0] == "range" and "pivot" not in steps[:3] and "aggregateWindow" in steps, (title, steps)
+
+
+def test_kpm_panels_show_alerts_in_tooltip():
+    """경보 구간 어디에 마우스를 대도 툴팁에 경보가 보인다(사용자 요청 11/18, D204) — Grafana 주석 글은 아래쪽 작은 마커에서만
+    뜬다. 경보 계열(refId B)은 그래프·범례에서 숨기고 툴팁에만, 자기 숨은 축에 둔다."""
+    panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
+    for title in ("RRC 연결 시도 · 성공 · 무응답", "UE 컨텍스트 · 연결 UE 수"):
+        p = panels[title]
+        [hover] = [t for t in p["targets"] if t["refId"] == "B"]
+        q = hover["query"]
+        # 경보 구간 주석과 같은 끝(열림 = 지금, 상태 불명 = 마지막 레코드), 구간(win)마다 빈틈없이 채움 —
+        # 경보 길이에 비례하는 interpolate로(화면 범위 전체를 채우는 createEmpty는 7일 5~11초, Reviewer 1차)
+        assert 'if r.status == "열림" then now() else if r.status == "상태 불명" then r.active else r.last' in q
+        assert "experimental.unpivot()" in q and "interpolate.linear(every: win)" in q and "createEmpty" not in q
+        assert "r.cell =~ /^${cell:regex}$/" in q
+        # 경보 필드는 severity·reason만 읽는다(읽는 시간이 필드 수에 비례 — 7일 2.9초가 대부분 이 읽기)
+        assert 'r._field == "severity" or r._field == "reason")' in q and 'r._field == "ues_total"' not in q
+        [override] = [o for o in p["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "B"}]
+        props = {x["id"]: x["value"] for x in override["properties"]}
+        assert props["custom.hideFrom"] == {"legend": True, "tooltip": False, "viz": True}
+        assert props["custom.axisPlacement"] == "hidden" and props["displayName"] == "${__field.labels.alert}"
+        assert p["options"]["tooltip"]["mode"] == "multi"
+
+
+def test_kpm_bars_cover_their_window():
+    """막대 시각 = 구간 시작이라 막대가 그 뒤(구간)를 덮어야 경보 구간 주석과 맞는다(-1이면 7일 화면에서 5분 앞에 그려짐)."""
+    p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p["title"] == "RRC 연결 시도 · 성공 · 무응답")
+    assert p["fieldConfig"]["defaults"]["custom"]["barAlignment"] == 1
 
 
 def test_tables_sort_before_renaming_map():
@@ -152,14 +244,44 @@ def test_tables_sort_before_renaming_map():
     assert "단계" not in order and min(order, key=order.get) == "시작"
 
 
+def test_alert_list_rep_percent():
+    """대표 값 ratio(0~1)는 %로 — 0.5714 → 57%(사용자 요청 11/18). ×100 뒤 반올림(둘째 자리 반올림 뒤 ×100은 56.99999…%)."""
+    q = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p.get("title") == "경보")["targets"][0]["query"]
+    assert 'import "math"' in q and 'r.key == "ratio"' in q
+    assert 'string(v: math.round(x: float(v: r.rep) * 100.0)) + "%"' in q
+
+
 def test_alert_detail_columns():
-    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고, 불확실은 '관측 오류'로(사용자 요청 11/16)."""
+    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고, 불확실은 '관측 오류'로(사용자 요청 11/16).
+    판정 요약의 모드 열도 없앤다(11/18)."""
     panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
     summary = panels["판정 요약"]["transformations"][0]["options"]["indexByName"]
-    assert "갈래" not in summary and "branch" not in panels["판정 요약"]["targets"][0]["query"]
+    q = panels["판정 요약"]["targets"][0]["query"]
+    assert "갈래" not in summary and "branch" not in q
+    assert "모드" not in summary and "모드" not in q and '"mode"' not in q and "r.mode" not in q
     ues = panels["걸린 UE"]["transformations"][0]["options"]["indexByName"]
     assert "관측 오류" in ues and not {"불확실", "전제"} & set(ues)
     assert "r.conditions" not in panels["걸린 UE"]["targets"][0]["query"]
+
+
+def test_ue_shown_as_cell_uid():
+    """UE는 화면에서 셀-uid로(사용자 요청 11/18) — 걸린 UE·peers·UE_EVENT 두 패널. InfluxDB의 ue 태그는 그대로다."""
+    panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
+    ues = panels["걸린 UE"]
+    order = ues["transformations"][0]["options"]["indexByName"]
+    assert "UE (cell-uid)" in order and "UE (cell-du_ue_id-uid)" not in order
+    q = ues["targets"][0]["query"]
+    assert '"UE (cell-uid)": string(v: r.cell) + "-" + string(v: r.uid)' in q and "r.ue," not in q
+    assert "short(s: r.peers)" in q
+    timeline = panels["UE_EVENT — UE별 메시지 흐름"]
+    q = timeline["targets"][0]["query"]
+    assert '"UE " +' not in q and 'ue: r.cell + "-" + string(v: r.uid)' in q
+    assert timeline["fieldConfig"]["defaults"]["displayName"] == "${__field.labels.ue}"
+    messages = panels["UE_EVENT — 메시지 흐름 상세"]
+    order = messages["transformations"][0]["options"]["indexByName"]
+    assert "UE (cell-uid)" in order and "UE" not in order
+    q = messages["targets"][0]["query"]
+    assert '"UE (cell-uid)": r.cell + "-" + string(v: r.uid)' in q and "du_ue_id" not in q
 
 
 def test_kpm1_timeline_ends_after_last_message():
@@ -190,9 +312,9 @@ def test_detection_rows_on_monitoring():
     assert "룰" not in order and "단계" not in order and min(order, key=order.get) == "공격"
     attack = next(o for o in table["fieldConfig"]["overrides"] if o["matcher"]["options"] == "공격")
     assert attack["properties"][0]["value"][0]["options"]["L3-01-V"]["text"] == "UE 컨텍스트 고갈"
-    # 셀로 거른다
+    # 셀로 거른다(정규식 — contains는 저장소에서 거르지 못함, D202)
     for p in panels.values():
-        assert all("${cell:json}" in t["query"] for t in p["targets"]), p["title"]
+        assert all("${cell:regex}" in t["query"] for t in p["targets"]), p["title"]
 
 
 def test_performance_layout():
@@ -210,7 +332,7 @@ def test_performance_layout():
     for p in panels.values():
         for t in p.get("targets", []):
             node_level = 'r._measurement == "overhead' in t["query"] and '"kpm2"' not in t["query"]
-            assert node_level or "${cell:json}" in t["query"], p["title"]
+            assert node_level or "${cell:regex}" in t["query"], p["title"]
 
 
 def test_performance_overhead_row():
@@ -226,19 +348,20 @@ def test_performance_overhead_row():
                          "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"]
     for title, p in row.items():
         if p["type"] == "timeseries":
-            # 3초 구간이 6초 넘게 비면 선을 끊는다(상시 KPM2와 같게)
-            assert p["fieldConfig"]["defaults"]["custom"]["insertNulls"] == 6000, title
+            # 데이터가 없는 구간은 null 행으로 남겨 선을 끊는다(상시 KPM2와 같게, D202)
+            assert "insertNulls" not in p["fieldConfig"]["defaults"]["custom"], title
+            assert "createEmpty: true" in p["targets"][0]["query"], title
     load_panel = row["CPU 사용률 · RRC 연결 시도"]
     assert [t["refId"] for t in load_panel["targets"]] == ["A", "B"]
     # 두 계열을 한곳에, 이름과 평균·최대가 붙게(목록이면 오른쪽 축 계열만 따로 가고, 아래 표는 너무 벌어짐)
     legend = load_panel["options"]["legend"]
     assert (legend["displayMode"], legend["placement"], legend["calcs"]) == ("table", "right", ["mean", "max"])
     assert '"overhead"' in load_panel["targets"][0]["query"] and '"kpm2"' in load_panel["targets"][1]["query"]
-    # 링크: 바이트/초와 패킷/초, 둘 다 구간 길이로 나눈 초당 값
+    # 링크: 바이트/초와 패킷/초, 둘 다 구간 증가분(구간 평균)을 구간 길이 3초로 나눈 초당 값
     for title, field, unit in (("F1·N2 SCTP 트래픽", "wire_bytes", "binBps"),
                                ("F1·N2 SCTP 패킷", "sctp_packets", "pps")):
         q = row[title]["targets"][0]["query"]
-        assert '"overhead_link"' in q and f"ingress_{field}" in q and f"egress_{field}" in q and "/ r.secs" in q, title
+        assert '"overhead_link"' in q and f"ingress_{field}" in q and f"egress_{field}" in q and "r._value / 3.0" in q, title
         assert row[title]["fieldConfig"]["defaults"]["unit"] == unit, title
         # 범례 = 'F1 들어옴 (DU → CU)' — NIC 이름은 범례에서 뺀다
         assert row[title]["fieldConfig"]["defaults"]["displayName"] == "${__field.labels.link} ${__field.labels.dir}"
@@ -389,6 +512,7 @@ def test_alerting_provisioning():
 VARIABLE_VALUES = {
     "${source}": "sample",
     "${cell:json}": '["1"]',
+    "${cell:regex}": "1",
     "${cell}": "1",
     "${alert_id}": "alert-not-exist",
 }

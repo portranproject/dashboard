@@ -5,10 +5,37 @@ InfluxDB·Grafana가 필요한 테스트는 서비스가 없으면 건너뛴다(
 PORTRAN_REQUIRE_SERVICES=1이면 건너뛴 테스트를 실패로 바꾼다. CI(.github/workflows/ci.yml)가 켠다.
 """
 import os
+import uuid
 
 import pytest
 
 REQUIRE_SERVICES = os.environ.get("PORTRAN_REQUIRE_SERVICES") == "1"
+
+
+@pytest.fixture(scope="module")
+def temp_bucket():
+    """테스트 파일(module)마다 따로 만드는 임시 bucket — 끝나면 지운다. InfluxDB가 없거나 .env가 없으면 건너뛴다.
+    파일마다 따로라서, bucket 전체 점 수를 세는 통합 테스트가 다른 파일의 데이터와 섞이지 않는다.
+    돌려주는 값: (InfluxDBClient, InfluxSettings — bucket만 임시 bucket)."""
+    from common.config import ENV_PATH, InfluxSettings, influx_settings
+
+    if not ENV_PATH.exists():
+        pytest.skip(".env 없음")
+    from influxdb_client import InfluxDBClient
+
+    s = influx_settings()
+    client = InfluxDBClient(url=s.url, token=s.token, org=s.org, timeout=10000, retries=False)
+    try:
+        if not client.ping():
+            pytest.skip("InfluxDB에 접속할 수 없음")
+    except Exception:
+        pytest.skip("InfluxDB에 접속할 수 없음")
+    bucket = client.buckets_api().create_bucket(bucket_name=f"portran_test_{uuid.uuid4().hex[:8]}", org=s.org)
+    try:
+        yield client, InfluxSettings(url=s.url, org=s.org, bucket=bucket.name, token=s.token)
+    finally:
+        client.buckets_api().delete_bucket(bucket)
+        client.close()
 
 
 @pytest.hookimpl(hookwrapper=True)

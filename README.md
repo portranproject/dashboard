@@ -1,6 +1,6 @@
 # PortRAN Observability
 
-O-RAN 기반 5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드 · 검증 파이프라인**.
+5G 기지국 위협 탐지 솔루션의 **수집기 · 대시보드 · 검증 파이프라인**.
 
 ```mermaid
 flowchart LR
@@ -141,9 +141,9 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 행 | 패널 |
 |---|---|
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표 |
-| KPM (상시 KPM2) | 셀별 3초 RRC 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 주황 영역 = 경보 구간, 회색 = 데이터 없음·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작, 보라 세로선 = DU·CU 재시작 |
-| 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
-| 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE, 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
+| KPM (상시 KPM2) | 셀별 3초 RRC 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위(예: 7일)는 3초 배수 구간으로 묶는다 — 막대는 구간 합, UE 수는 구간 최대(평균 선은 평균). 주황 영역 = 경보 구간(영역 어디에 마우스를 대도 툴팁에 경보 — 종류·공격 이름·셀·상태·심각도), 회색 = 데이터 없음·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작, 보라 세로선 = DU·CU 재시작 |
+| 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 대표 값 `ratio`는 %(0.5714 → 57%). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
+| 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
 
 - 위쪽 변수: **데이터 출처**(AWS = 실측 `p4` / On-Premise = 연구실 `lab`, 아직 받지 않음 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
 - 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음).
@@ -172,6 +172,17 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 - 이상 유형·판정 보류 경보와 재생·샘플 데이터는 알리지 않는다.
 - 켜는 법: Slack에서 채널에 **Incoming Webhooks** 앱을 추가해 받은 주소를 `.env`의 `SLACK_WEBHOOK_URL`에 넣고 `docker compose up -d grafana`. 링크 주소는 `GRAFANA_ROOT_URL`. Grafana → Alerting → Contact points → `PortRAN Slack` → **Test**로 시험 메시지를 보낼 수 있다.
 - 규칙은 `grafana/build.py`가 `grafana/provisioning/alerting/portran.json`으로 만든다(UI에서 고쳐도 저장되지 않음).
+
+**쿼리 시간 재기** — 대시보드 쿼리를 바꾸면 배포 전에 실제 데이터로 잰다. 저장소의 JSON에서 쿼리를 꺼내 Grafana에 읽기로만 보낸다(배포하지 않은 쿼리도 잴 수 있음).
+
+```bash
+python grafana/query_timing.py --dashboard monitoring --range 7d                    # 로컬 Grafana
+python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d \
+    --max-seconds 2 --parallel --parallel-max-seconds 5                           # AWS 실데이터
+python grafana/query_timing.py --url http://<탄력적 IP>:3000 --dashboard performance --range 24h
+```
+
+관제는 5초마다 새로고침하고, 새로고침은 진행 중인 쿼리를 취소한다 — 5초 넘게 걸리는 패널은 화면에 안 나온다(경고 삼각형 + No data). 브라우저처럼 패널 하나의 쿼리(A·B)는 한 요청으로 보내(시간이 더해짐) 패널·주석마다 시간·최대 행 수·상한(maxDataPoints × 10)을 출력하고, 오류·점 수 초과·시간 초과가 있으면 1로 끝난다. 계정은 `.env`의 Grafana 관리자.
 
 ## 개발·시연 데이터 (replay)
 
@@ -324,9 +335,9 @@ validation_errors({"type": "alert", ...})   # [] 이면 통과, 아니면 사유
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
 | `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), `POST /ingest` HTTP 수신·중복 키(`ingest.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
 | `replay/` | 녹화·샘플을 지금 시각으로 옮겨 `/ingest`로 재생 (`replay.py`) |
-| `grafana/` | datasource·대시보드 provisioning, 대시보드 생성기(`build.py`)·룰 이름(`rule-names.json`), 대시보드 JSON |
+| `grafana/` | datasource·대시보드 provisioning, 대시보드 생성기(`build.py`)·룰 이름(`rule-names.json`), 대시보드 JSON, 쿼리 시간 재기(`query_timing.py`) |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
-| `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈), 탐지 쪽 샘플 `data/detection/` |
+| `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈·임시 InfluxDB bucket), 탐지 쪽 샘플 `data/detection/` |
 | `.github/workflows/` | CI (`ci.yml`) |
 | `.claude/` | Claude Code 설정: hook 등록(`settings.json`), 작업 기록기·읽기 전용 가드(`hooks/`), 역할별 서브에이전트(`agents/`) |
 | `docs/agent-workflow.md` | AI 작업 흐름: 역할 분리 · 작업 기록 |

@@ -1,36 +1,11 @@
 """실제 InfluxDB에 쓰고 읽어 보는 통합 테스트.
 
-임시 bucket을 만들어 쓰고 끝나면 지운다. InfluxDB가 떠 있지 않거나 .env가 없으면 건너뛴다.
+임시 bucket(tests/conftest.py temp_bucket)을 만들어 쓰고 끝나면 지운다. InfluxDB가 떠 있지 않거나 .env가 없으면 건너뛴다.
 """
-import uuid
 from collections import Counter
-
-import pytest
 
 from collector.collector import Collector
 from collector.influx_writer import InfluxWriter
-from common.config import ENV_PATH, InfluxSettings, influx_settings
-
-
-@pytest.fixture(scope="module")
-def temp_bucket():
-    if not ENV_PATH.exists():
-        pytest.skip(".env 없음")
-    from influxdb_client import InfluxDBClient
-
-    s = influx_settings()
-    client = InfluxDBClient(url=s.url, token=s.token, org=s.org, timeout=3000, retries=False)
-    try:
-        if not client.ping():
-            pytest.skip("InfluxDB에 접속할 수 없음")
-    except Exception:
-        pytest.skip("InfluxDB에 접속할 수 없음")
-    bucket = client.buckets_api().create_bucket(bucket_name=f"portran_test_{uuid.uuid4().hex[:8]}", org=s.org)
-    try:
-        yield client, InfluxSettings(url=s.url, org=s.org, bucket=bucket.name, token=s.token)
-    finally:
-        client.buckets_api().delete_bucket(bucket)
-        client.close()
 
 
 def test_detection_samples_to_influx(temp_bucket, tmp_path):

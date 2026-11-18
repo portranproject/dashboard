@@ -66,7 +66,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ~~② 단계 비교 재생 `X-Env`에 출처 붙이기~~(단계 비교를 없애 해당 없음, D173). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
 | Q23 | AWS 상시 KPM2의 `ext.UeCtxMax`가 **125까지** 올라 셀 한도 96(27_ §5.3, 대시보드 `CELL_LIMIT`)을 넘었다(11/11 15:53 공격). 한도가 이 테스트베드 셀의 실제 값인지, `UeCtxMax`가 한도를 넘는 대기 UE까지 세는지. 1·2단계 경보가 high가 되는 기준(90% = 86)과 관련. `hello`의 `cells[].max_conn`에 실제 한도가 오면 그 값을 쓰도록 바꿀 수 있음. 11/12 탐지 쪽 변경으로 `L3-01-V`의 절대 수 문턱 `f_abs`도 셀 한도 × 0.1(올림)이 되어, 한도가 틀리면 `C2a` 판정도 달라진다(D162) | 탐지 엔진·테스트베드 | 관제 "UE 컨텍스트 · 연결 UE 수", `grafana/build.py` `CELL_LIMIT` |
 | Q24 | AWS p4 셀이 **1개(6733824) → 4개(6733824~6733827)** 로 늘었고, 최근 3시간에 DU·CU 재시작(`f1_evt`)이 26번 왔다(11/11 오후). 의도한 테스트베드 변경·시험인지 | 테스트베드·탐지 엔진 | 관제 화면 셀 변수(셀을 하나 고르면 그 셀만 보임) |
-| Q25 | Claude Code 작업 기록 hook·읽기 전용 가드를 프로젝트 설정(`.claude/settings.json`)으로 커밋하면, 이 저장소에서 Claude Code를 쓰는 팀원 모두에게 적용된다(기록은 각자 PC의 `logs/agent/`에만, 비밀 값은 가림). 끄려면 각자 `.claude/settings.local.json`의 `env`에 `"PORTRAN_AGENT_LOG": "off"`(작업 기록)·`"PORTRAN_ROLE_WORKFLOW": "off"`(역할 분리) — 읽기 전용 가드는 그대로(D207). `disableAllHooks`는 가드까지 꺼서 권하지 않음 | 이 저장소에서 Claude Code를 쓰는 팀원 (알림) | D198·D207, `docs/agent-workflow.md` 4절 |
+| Q25 | Claude Code 작업 기록 hook·읽기 전용 가드를 프로젝트 설정(`.claude/settings.json`)으로 커밋하면, 이 저장소에서 Claude Code를 쓰는 팀원 모두에게 적용된다(기록은 각자 PC의 `logs/agent/`에만, 비밀 값은 가림). 역할 분리는 기본 꺼짐(D208, 켜려면 `"PORTRAN_ROLE_WORKFLOW": "on"` 또는 요청), 작업 기록은 기본 켬(끄려면 각자 `.claude/settings.local.json`의 `env`에 `"PORTRAN_AGENT_LOG": "off"`) — 읽기 전용 가드는 그대로(D207). `disableAllHooks`는 가드까지 꺼서 권하지 않음 | 이 저장소에서 Claude Code를 쓰는 팀원 (알림) | D198·D207, `docs/agent-workflow.md` 4절 |
 
 ### 미정 (확정 전까지 TODO로 둠)
 
@@ -1298,6 +1298,7 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | D201 | (**D206에서 1회로 바꿈**) Reviewer 검증은 **최대 3차**. 3차에서도 수정 필요면 멈추고 사용자에게 묻는다. 마지막 검증 뒤에 고친 것은 '검증받지 않음'으로 적는다 | 사용자 결정(11/18). 이번 작업에서 통과 뒤 낮음 문제를 고치고 다시 검증하느라 4차까지 갔다 | 불필요 |
 | D206 | **작업 크기별 단계 · Reviewer 검증 1회** (CLAUDE.md 12절 10항 고침, D201의 최대 3차를 바꿈): 오타·문서 = 구현만 / 작은 화면·문구·설정 = 구현 → 검증 / 원인 모르는 문제 = 좁은 조사(질문 목록) → 메인이 계획(사용자 승인) → 구현 → 검증 / 마일스톤·스키마·여러 파일 설계 = 조사 → `planner` → 구현 → 검증. 검증은 1회 — 수정 필요면 고치고 '검증 안 받음'으로 적음. 역할 정의에 질문 범위만·보고 짧게·외부 서버 측정 1회·논문 PDF는 필요할 때만을 더함. Researcher 모델은 그대로(Opus) | 사용자 결정(11/18 "하네스 도입 전보다 느려졌고 토큰도 늘었다", "검증 한번만"). 11/18 대시보드 수정 세션 실측은 아래 확인 결과 '하네스 비용' | 불필요 |
 | D207 | **작업 기록·역할 분리 켬·끔**: 각자 `.claude/settings.local.json`(git 제외)의 `env`에 `PORTRAN_AGENT_LOG`·`PORTRAN_ROLE_WORKFLOW` = `off`. 기본 켬. 기록 끔 = `agent_log.py`가 아무것도 안 씀(가드는 막기만 하고 `GuardDenied`도 안 남김). 역할 분리 끔 = SessionStart hook이 Claude 컨텍스트에 "[PortRAN 설정] 역할 분리 워크플로우가 꺼져 있다"를 넣고, CLAUDE.md 12절 10항이 서브에이전트 없이 메인이 하라고 정함. hook이 env를 못 받아도 같게 파일을 직접 읽음. 읽기 전용 가드는 끄지 않음(`disableAllHooks`는 가드까지 꺼서 권하지 않음) | 사용자 요청(11/18) — 두 기능을 켜고 끌 수 있게. 가드는 서브에이전트에만 작동해 끌 이유가 없다 | 불필요 |
+| D208 | **역할 분리 기본 꺼짐** — 사용자가 "역할 분리 켜고"라고 요청하거나 `PORTRAN_ROLE_WORKFLOW=on`일 때만 서브에이전트를 쓴다. 기본은 메인 에이전트 하나가 조사·계획·구현하고 테스트로 확인(사용자 확인 규칙은 그대로). SessionStart 알림은 기본값과 다른 설정만(역할 분리 켜짐, 작업 기록 꺼짐). 켬 값 on·1·true·yes·켬·켜짐, 알 수 없는 값은 기본값 | 사용자 결정(11/18) — 하네스가 느려서 단일 에이전트를 기본으로 | 불필요 |
 
 ### 확인 결과
 

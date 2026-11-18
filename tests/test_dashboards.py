@@ -106,7 +106,9 @@ def test_monitoring_layout():
     assert d["panels"][i + 2]["type"] == "row"
     assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell", "alert_id"]
     names = {a["name"] for a in d["annotations"]["list"]}
-    assert {"경보 구간", "데이터 없음 (gap)", "칸 일부 없음", "세션 시작", "DU·CU 재시작"} <= names
+    assert {"데이터 없음 (gap)", "칸 일부 없음", "세션 시작", "DU·CU 재시작"} <= names
+    # 경보 구간은 주석이 아니라 KPM 패널의 경보 계열(refId B)로 칠한다 — 주석은 새로고침마다 깜빡였다(D209)
+    assert "경보 구간" not in names
     # 세션 시작(hello)과 DU·CU 재시작(f1_evt)은 색이 달라야 구분된다
     colors = {a["name"]: a["iconColor"] for a in d["annotations"]["list"]}
     assert colors["세션 시작"] != colors["DU·CU 재시작"]
@@ -202,7 +204,8 @@ def test_raw_series_are_windowed():
 
 def test_kpm_panels_show_alerts_in_tooltip():
     """경보 구간 어디에 마우스를 대도 툴팁에 경보가 보인다(사용자 요청 11/18, D204) — Grafana 주석 글은 아래쪽 작은 마커에서만
-    뜬다. 경보 계열(refId B)은 그래프·범례에서 숨기고 툴팁에만, 자기 숨은 축에 둔다."""
+    뜬다. 경보 계열(refId B)이 경보 구간을 직접 칠하고(주석은 새로고침마다 깜빡임, D209) 툴팁에도 나온다. 범례에는 없고,
+    자기 숨은 축(0~1, 값 1 = 축 끝까지)이라 다른 계열의 y축에 영향이 없다."""
     panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
     for title in ("RRC 연결 시도 · 성공 · 무응답", "UE 컨텍스트 · 연결 UE 수"):
         p = panels[title]
@@ -217,8 +220,13 @@ def test_kpm_panels_show_alerts_in_tooltip():
         assert 'r._field == "severity" or r._field == "reason")' in q and 'r._field == "ues_total"' not in q
         [override] = [o for o in p["fieldConfig"]["overrides"] if o["matcher"] == {"id": "byFrameRefID", "options": "B"}]
         props = {x["id"]: x["value"] for x in override["properties"]}
-        assert props["custom.hideFrom"] == {"legend": True, "tooltip": False, "viz": True}
+        assert props["custom.hideFrom"] == {"legend": True, "tooltip": False, "viz": False}
         assert props["custom.axisPlacement"] == "hidden" and props["displayName"] == "${__field.labels.alert}"
+        # 구간을 계단 모양으로 축 끝까지 칠한다(선은 안 보이게), 예전 주석 색 rgba(255, 152, 48, 0.12)
+        assert (props["custom.drawStyle"], props["custom.lineInterpolation"], props["custom.lineWidth"]) == ("line", "stepAfter", 0)
+        assert (props["min"], props["max"], props["custom.fillOpacity"]) == (0, 1, 12)
+        assert props["color"] == {"mode": "fixed", "fixedColor": "orange"} and props["custom.spanNulls"] is False
+        assert "_value: r.v" in q and "v: 1.0" in q
         assert p["options"]["tooltip"]["mode"] == "multi"
 
 

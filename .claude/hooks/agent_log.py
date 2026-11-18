@@ -11,7 +11,10 @@
 
 원칙
 - hook은 Claude 작업을 막지 않는다. 어떤 오류든 삼키고 exit 0. stdout에는 아무것도 쓰지 않는다
-  (UserPromptSubmit·SessionStart hook의 stdout은 Claude 컨텍스트에 들어간다). 기록기 자체 오류는 `_hook_errors.log`로.
+  (UserPromptSubmit·SessionStart hook의 stdout은 Claude 컨텍스트에 들어간다). 예외 하나: SessionStart에서 아래 켬·끔 설정
+  가운데 기본값과 다른 것이 있으면 그 사실을 한 줄씩 쓴다. 기록기 자체 오류는 `_hook_errors.log`로.
+- 켬·끔(D207·D208): `PORTRAN_AGENT_LOG`(작업 기록, 기본 켬), `PORTRAN_ROLE_WORKFLOW`(역할 분리, 기본 꺼짐) — 각자
+  `.claude/settings.local.json`의 `env`에 `"off"`·`"on"`(`switch_on`).
 - 비밀 값은 쓰기 전에 가린다: `.env`의 비밀 값, 토큰·비밀번호 이름의 KEY=VALUE, Slack Webhook, 개인 키, AWS·GitHub·Slack·Anthropic 키,
   Authorization 헤더. 비밀 파일(.env, *.pem 등)을 읽고 쓴 내용은 통째로 가린다.
 - 긴 문자열은 앞·뒤만 남긴다(오류 메시지는 보통 끝에 있어 뒤를 더 남긴다). 전체는 SessionStart 줄의 `transcript_path`에 있다
@@ -50,6 +53,47 @@ def log_dir() -> Path:
 
 def max_chars() -> int:
     return _env_int("AGENT_LOG_MAX_CHARS", 4000)
+
+
+# ── 켜기·끄기 (사용자 요청 11/18, D207·D208) ─────────────────────────────────
+# 작업 기록은 기본 켬, 역할 분리 워크플로우는 기본 꺼짐(D208 — 사용자가 요청할 때만 켬).
+# 바꾸려면 각자 PC의 .claude/settings.local.json(git 제외)에
+#   {"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "on"}}
+# 다음 세션부터 적용된다. Claude Code가 그 env를 hook에도 넘기지만, 넘기지 않는 경우에도 같게 파일을 직접 읽는다.
+LOG_SWITCH = "PORTRAN_AGENT_LOG"           # 작업 기록(이 기록기와 가드의 GuardDenied 줄)
+WORKFLOW_SWITCH = "PORTRAN_ROLE_WORKFLOW"  # 역할 분리 워크플로우(CLAUDE.md 12절 10항) — 켜면 세션 시작 때 Claude에게 알린다
+DEFAULTS = {LOG_SWITCH: True, WORKFLOW_SWITCH: False}
+OFF_VALUES = {"off", "0", "false", "no", "끔", "꺼짐"}
+ON_VALUES = {"on", "1", "true", "yes", "켬", "켜짐"}
+
+
+def switch_on(name: str) -> bool:
+    """켬·끔 설정. 환경변수가 먼저, 없으면 .claude/settings.local.json의 env, 둘 다 없거나 알 수 없는 값이면 기본값."""
+    value = os.environ.get(name)
+    if value is None:
+        try:
+            local = json.loads((project_dir() / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
+            value = (local.get("env") or {}).get(name)
+        except Exception:
+            value = None
+    text = str(value).strip().lower() if value is not None else ""
+    if text in OFF_VALUES:
+        return False
+    if text in ON_VALUES:
+        return True
+    return DEFAULTS.get(name, True)
+
+
+def session_notice() -> str:
+    """세션 시작 때 Claude 컨텍스트에 넣을 글(SessionStart hook의 stdout). 기본값과 다른 설정만 알린다 — 기본이면 빈 글."""
+    lines = []
+    if switch_on(WORKFLOW_SWITCH):
+        lines.append(f"역할 분리 워크플로우가 켜져 있다({WORKFLOW_SWITCH}=on): CLAUDE.md 12절 10항대로 작업 크기에 맞춰 "
+                     "researcher·planner·reviewer 서브에이전트를 쓴다.")
+    if not switch_on(LOG_SWITCH):
+        lines.append(f"작업 기록 hook이 꺼져 있다({LOG_SWITCH}=off): 이 세션은 logs/agent/에 기록되지 않는다 "
+                     "(agent_log.py errors·show로 이 세션을 볼 수 없다). 읽기 전용 가드는 그대로 돈다.")
+    return "\n".join(f"[PortRAN 설정] {line}" for line in lines)
 
 
 # ── 비밀 값 가리기 ───────────────────────────────────────────────────────────
@@ -228,8 +272,9 @@ def append_line(path: Path, rec: dict[str, Any]) -> None:
         f.write(line)
 
 
-def record(stdin=None) -> int:
-    """hook 진입점. 무슨 일이 있어도 0을 돌려준다."""
+def record(stdin=None, stdout=None) -> int:
+    """hook 진입점. 무슨 일이 있어도 0을 돌려준다. SessionStart에서 기본값과 다른 설정이 있으면 그 사실만 stdout에 쓴다
+    (Claude 컨텍스트에 들어감) — 그 밖에는 stdout에 아무것도 쓰지 않는다."""
     try:
         raw = (stdin or sys.stdin).read()
         try:
@@ -238,6 +283,12 @@ def record(stdin=None) -> int:
             payload = None
         if not isinstance(payload, dict):
             payload = {"hook_event_name": "unparsed", "raw": raw}
+        if payload.get("hook_event_name") == "SessionStart":
+            notice = session_notice()
+            if notice:
+                print(notice, file=stdout or sys.stdout)
+        if not switch_on(LOG_SWITCH):
+            return 0
         now = datetime.now().astimezone().isoformat(timespec="milliseconds")
         rec = build_record(payload, now, env_secret_values(project_dir()), max_chars())
         append_line(session_file(payload.get("session_id")), rec)

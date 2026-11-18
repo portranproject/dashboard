@@ -146,7 +146,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
 
 - 위쪽 변수: **데이터 출처**(AWS = 실측 `p4` / On-Premise = 연구실 `lab`, 아직 받지 않음 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
-- 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음).
+- 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음). 경보 구간은 주석이 아니라 그래프 계열로 칠해 새로고침 때 깜빡이지 않는다.
 - 경보 목록의 상태 '상태 불명' = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(탐지 엔진이 죽었거나 다시 떴을 수 있음).
 - 맨 위 '요약 — 지금' 줄(열린 경보·최고 심각도·수집 상태·세션)은 없애고, 성능 대시보드에 있던 탐지 결과 줄을 옮겨 왔다(11/16). 수집이 멈추면 Slack '수집 멈춤' 알림이 온다.
 - **대시보드 JSON은 [`grafana/build.py`](grafana/build.py)로 만든다.** UI에서 고쳐도 저장되지 않고, JSON을 손으로 고치면 다음 생성 때 사라진다. `build.py`를 고치고 `python grafana/build.py`로 다시 쓴 뒤 커밋한다(테스트가 어긋남을 잡는다). 룰 ID → 공격 이름은 [`grafana/rule-names.json`](grafana/rule-names.json). 설계는 [`docs/dashboard-design.md`](docs/dashboard-design.md).
@@ -294,7 +294,7 @@ Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 
 
 이 저장소에서 Claude Code를 쓰면 아래 두 가지가 자동으로 적용된다. 자세한 설명은 [`docs/agent-workflow.md`](docs/agent-workflow.md).
 
-- **역할 분리**: 조사(`researcher`) → 계획(`planner`) → 구현 → 검증(`reviewer`). 구현 결과는 별도 Reviewer가 완료 조건과 diff만 받아 독립적으로 검증한다. 세 역할은 읽기 전용이다([`.claude/agents/`](.claude/agents/)).
+- **역할 분리 (기본 꺼짐 — "역할 분리 켜고 해"라고 요청할 때만)**: 조사(`researcher`) → 계획(`planner`) → 구현 → 검증(`reviewer`, 1회). 작업 크기에 맞춰 필요한 단계만 쓴다(`docs/agent-workflow.md` 0절). 구현 결과는 별도 Reviewer가 완료 조건과 diff만 받아 독립적으로 검증한다. 세 역할은 읽기 전용이다([`.claude/agents/`](.claude/agents/)).
 - **작업 기록**: hook이 프롬프트·도구 호출·결과·실패를 `logs/agent/<세션 ID>.jsonl`에 남긴다(비밀 값은 가림, git 제외). Claude Code를 이 폴더에서 시작해야 기록된다.
 
 ```bash
@@ -303,7 +303,7 @@ python3 .claude/hooks/agent_log.py show [세션]     # 타임라인 (세션 생�
 python3 .claude/hooks/agent_log.py errors [세션]   # 실패한 호출과 그 프롬프트·입력·오류
 ```
 
-나만 끄려면 `.claude/settings.local.json`(git 제외)에 `{"disableAllHooks": true}`.
+켜고 끄기(각자 PC, 다음 세션부터): 작업 기록은 기본 켬, 역할 분리는 기본 꺼짐. `.claude/settings.local.json`(git 제외)에 `{"env": {"PORTRAN_AGENT_LOG": "off", "PORTRAN_ROLE_WORKFLOW": "on"}}`처럼 바꾼다 — 역할 분리가 꺼져 있으면 메인 에이전트가 서브에이전트 없이 작업한다. 읽기 전용 가드는 늘 켜져 있다. 자세히는 `docs/agent-workflow.md` 4절.
 
 ## AWS 배포
 

@@ -16,3 +16,5 @@ docs
 tests
 grafana
 deploy
+.claude
+logs

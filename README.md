@@ -240,6 +240,10 @@ M10 전에 띄운 Grafana에 남은 것이다. 지금 대시보드는 'PortRAN �
 Grafana 관리자 비밀번호도 InfluxDB 값처럼 **최초 기동 때만** 적용된다. 그 뒤에 `.env`의 `GRAFANA_ADMIN_PASSWORD`를 바꾸면 테스트(와 브라우저 로그인)는 새 비밀번호를 쓰지만 Grafana에는 옛 비밀번호가 남아 있다.
 `docker compose exec grafana grafana cli admin reset-admin-password "<.env의 비밀번호>"`로 맞춘다(대시보드·데이터는 그대로).
 
+**Claude Code에서 도구를 쓸 때마다 `hook error`가 뜬다**
+hook은 bash와 `python3`로 돈다. Windows PowerShell에서 Claude Code를 직접 실행했거나 `python3`가 없는 경우다. WSL 터미널에서 이 폴더로 와서 실행한다.
+작업은 계속되지만 기록이 남지 않는다. 기록기 자체 오류는 `logs/agent/_hook_errors.log`에 있다.
+
 ## 브랜치 규칙
 
 | 브랜치 | 용도 |
@@ -275,6 +279,21 @@ Grafana가 막 뜬 직후에는 응답이 늦어 Grafana 테스트가 실패할 
 
 `aws-compose` 작업은 AWS 배포 구성(`docker-compose.aws.yml`)을 서버와 같은 방식으로 띄워, InfluxDB·collector 포트가 서버 안에만 열렸는지, replay·UDP → collector → InfluxDB 경로, HTTPS `/ingest`(nginx) 경로를 확인한다.
 
+## AI 작업 흐름 (Claude Code)
+
+이 저장소에서 Claude Code를 쓰면 아래 두 가지가 자동으로 적용된다. 자세한 설명은 [`docs/agent-workflow.md`](docs/agent-workflow.md).
+
+- **역할 분리**: 조사(`researcher`) → 계획(`planner`) → 구현 → 검증(`reviewer`). 구현 결과는 별도 Reviewer가 완료 조건과 diff만 받아 독립적으로 검증한다. 세 역할은 읽기 전용이다([`.claude/agents/`](.claude/agents/)).
+- **작업 기록**: hook이 프롬프트·도구 호출·결과·실패를 `logs/agent/<세션 ID>.jsonl`에 남긴다(비밀 값은 가림, git 제외). Claude Code를 이 폴더에서 시작해야 기록된다.
+
+```bash
+python3 .claude/hooks/agent_log.py list           # 세션 목록
+python3 .claude/hooks/agent_log.py show [세션]     # 타임라인 (세션 생략 = 마지막)
+python3 .claude/hooks/agent_log.py errors [세션]   # 실패한 호출과 그 프롬프트·입력·오류
+```
+
+나만 끄려면 `.claude/settings.local.json`(git 제외)에 `{"disableAllHooks": true}`.
+
 ## AWS 배포
 
 대시보드 스택(InfluxDB + Grafana + collector)을 EC2 한 대에 올린다. 절차는 [`docs/deploy.md`](docs/deploy.md).
@@ -309,3 +328,6 @@ validation_errors({"type": "alert", ...})   # [] 이면 통과, 아니면 사유
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
 | `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈), 탐지 쪽 샘플 `data/detection/` |
 | `.github/workflows/` | CI (`ci.yml`) |
+| `.claude/` | Claude Code 설정: hook 등록(`settings.json`), 작업 기록기·읽기 전용 가드(`hooks/`), 역할별 서브에이전트(`agents/`) |
+| `docs/agent-workflow.md` | AI 작업 흐름: 역할 분리 · 작업 기록 |
+| `logs/agent/` | Claude Code 작업 기록 (git 제외) |

@@ -96,6 +96,12 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 .
 ├── CLAUDE.md
 ├── README.md                     # 실행 방법 (처음 보는 팀원 기준)
+├── .claude/                      # Claude Code 설정 (12절 10·11항, 설명은 docs/agent-workflow.md)
+│   ├── settings.json             # hook 등록: 모든 작업 이벤트 → agent_log.py, 읽기 전용 역할의 Bash → readonly_guard.py
+│   ├── hooks/agent_log.py        # 작업 기록기(logs/agent/<세션 ID>.jsonl, 비밀 값 가림)이자 보기 도구(list·show·errors)
+│   ├── hooks/readonly_guard.py   # researcher·planner·reviewer가 Bash로 파일·git 상태를 바꾸지 못하게 막음
+│   └── agents/                   # 역할별 서브에이전트: researcher.md · planner.md · reviewer.md
+├── logs/agent/                   # Claude Code 작업 기록 (.gitignore)
 ├── reference/                    # 참고 논문 (0절). 작업 전에 읽는다
 │   ├── README.md                 # 논문 요약, 이 저장소와의 대응 관계
 │   ├── TeleRAN.pdf
@@ -103,6 +109,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   └── detection/                # 탐지 엔진 담당 명세 27_(레코드 형식 기준, 5절)와 샘플 분석표
 ├── docs/
 │   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
+│   ├── agent-workflow.md         # AI 작업 흐름: 역할 분리 · 작업 기록 (12절 10·11항, 사람용 설명)
 │   ├── deploy.md                 # AWS(EC2) 배포 절차 (M7·M9)
 │   └── dashboard-design.md       # 관제·성능 대시보드 설계도 (M10, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만)
 ├── .github/
@@ -314,6 +321,25 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
    - `dev`: 개발 통합 브랜치 (GitHub default 브랜치).
    - `feat/dashboard-M<n>`: 마일스톤 작업 브랜치. 항상 최신 `dev`에서 만들고, 끝나면 `dev`로 PR을 연다. 마일스톤이 아닌 작은 수정은 `fix/<내용>`, `docs/<내용>`.
    - push, PR 생성·병합은 사용자 확인을 받고 한다.
+10. **역할을 나눠 일한다 — Researcher → Planner → 구현 → Reviewer.** 역할 정의는 `.claude/agents/`, 사람용 설명은 `docs/agent-workflow.md`.
+
+    | 단계 | 누가 | 하는 일 | 다음으로 넘기는 것 |
+    |---|---|---|---|
+    | 1 조사 | `researcher` 서브에이전트 | 관련 코드·스키마·참고 문서·결정 이력·이전 작업 기록을 읽고 근거 달린 사실만 보고 | 조사 보고 |
+    | 2 계획 | `planner` 서브에이전트 | 바꿀 파일·단계·테스트, 번호 붙은 **완료 조건**, 사용자 확인이 필요한 결정 | 계획 → **사용자 승인** |
+    | 3 구현 | 메인 에이전트 | 계획대로 고치고 테스트, README·progress 갱신 | 변경(diff) |
+    | 4 검증 | `reviewer` 서브에이전트 | 완료 조건과 diff만으로 독립 검증, 테스트 직접 실행 | 판정: 통과 / 수정 필요 |
+
+    - Reviewer에게는 **요구 원문, 계획의 완료 조건, 비교 기준(브랜치·커밋)만** 넘긴다. 구현하며 한 판단·설명·자기 평가("테스트 다 통과함")는 넘기지 않는다(구현자 시각에 끌려가지 않게).
+    - "수정 필요"면 고친 뒤 **새 Reviewer**로 다시 검증한다. 지난 판정의 문제 목록(파일:줄, 실패 시나리오)만 더 넘긴다. 같은 문제로 두 번 넘게 막히면 멈추고 사용자에게 묻는다.
+    - **검증은 최대 3차까지 한다**(사용자 결정 2026-11-18). 3차에서도 "수정 필요"면 4차를 돌리지 말고 멈춘 뒤, 남은 문제를 사용자에게 보고하고 어떻게 할지 묻는다. 마지막 검증 뒤에 고친 것은 "Reviewer 검증을 받지 않음"이라고 보고와 `docs/progress.md`에 적는다.
+    - 사용자 보고와 `docs/progress.md` 확인 결과에 Reviewer 판정(몇 번째에 통과했나, 찾은 문제와 고친 것)을 적는다.
+    - 줄여도 되는 것: 오타·문서 몇 줄 같은 작은 수정은 1·2단계를 생략한다. **코드·설정·대시보드 생성기·테스트를 바꾸면 4단계는 생략하지 않는다.**
+    - 세 역할은 읽기 전용이다. Edit·Write 도구가 없고, Bash로 파일·git 상태를 바꾸는 명령은 `.claude/hooks/readonly_guard.py`가 막는다.
+    - Reviewer가 통과시켜도 커밋·push·PR은 지금처럼 사용자 확인을 받는다(9항).
+11. **작업 기록(hook).** `.claude/settings.json`의 hook이 프롬프트·도구 호출(입력·결과·소요 시간)·실패·서브에이전트 시작과 끝·응답 끝을 `logs/agent/<세션 ID>.jsonl`에 남긴다(비밀 값은 가림, git 제외).
+    - 원인을 모르는 오류는 추측하기 전에 기록부터 본다: `python3 .claude/hooks/agent_log.py errors [세션]`(실패한 호출과 그 프롬프트·입력·오류), `show [세션]`(타임라인), `list`(세션 목록). 세션은 ID 앞 몇 글자, 생략하면 마지막 세션.
+    - hook과 가드를 끄거나 고치지 않는다. 바꿔야 하면 먼저 묻는다.
 
 ## 13. 마일스톤
 

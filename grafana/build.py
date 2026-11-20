@@ -573,23 +573,21 @@ from(bucket: v.defaultBucket)
       "S-TMSI": if exists r.s_tmsi then r.s_tmsi else "",
       "C-RNTI": if exists r.crnti then string(v: r.crnti) else "",
       조건: if exists r.cond then r.cond else "",
-      "관측 오류": if exists r.uncertain then r.uncertain else "",
       "피해자 연결": if exists r.peers then short(s: r.peers) else "",
-      근거: if exists r.evidence and r.evidence then "있음" else "없음",
       "UE 관측값": if exists r.values_json then r.values_json else "",
       이벤트: r.event}}))
 '''
     b.add("table", "걸린 UE", 0, 24, 8, [target(ues)],
           "어느 단말 연결이 걸렸나. raise·update에 실린 UE를 모두 모은 것(update에는 새로 걸린 UE만 옴). UE는 셀-uid로 보인다"
-          "(uid는 세션 안에서 유일, du_ue_id는 InfluxDB·원본 녹화에 남아 있다). 같은 단말의 여러 연결은 S-TMSI로 묶는다. 관측 오류(uncertain) = 그 UE를 온전히 못 본 이유: "
-          "mid_join(연결 중간부터 봄)·loss(입력 유실·한 방향 미관측)·late(늦은 줄). 비어 있으면 깨끗하게 봄 — 관측 오류뿐인 경보는 판정 보류. "
-          "피해자 연결 = Blind DoS(L3-20)에서만 — 같은 S-TMSI를 원래 쓰던 단말의 연결(셀-uid, 근거 메시지는 오지 않음)",
+          "(uid는 세션 안에서 유일, du_ue_id는 InfluxDB·원본 녹화에 남아 있다). 같은 단말의 여러 연결은 S-TMSI로 묶는다. "
+          "피해자 연결 = Blind DoS(L3-20)에서만 — 같은 S-TMSI를 원래 쓰던 단말의 연결(셀-uid, 근거 메시지는 오지 않음). "
+          "관측 오류(uncertain)·근거(evidence) 열은 없앴다(11/20) — 값은 InfluxDB·원본 녹화에 남아 있다",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("걸린 시각", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                                       override("UE 관측값", ("custom.cellOptions", {"type": "json-view"}))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
-          transformations=column_order(["걸린 시각", "UE (cell-uid)", "S-TMSI", "C-RNTI", "조건", "관측 오류",
-                                        "피해자 연결", "근거", "UE 관측값", "이벤트"]),
+          transformations=column_order(["걸린 시각", "UE (cell-uid)", "S-TMSI", "C-RNTI", "조건", "피해자 연결",
+                                        "UE 관측값", "이벤트"]),
           new_line=True)
 
     ev_kpm2 = f'''

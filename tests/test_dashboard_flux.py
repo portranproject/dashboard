@@ -24,8 +24,8 @@ GAP = (T0 + 6_000, T0 + 15_000)  # 이 사이(3초 칸 4개)는 상시 KPM2·ove
 L3_20 = "20261105T100800Z-L3-20-1-77"
 
 
-def kpm2(session, t, att, succ, n=30, ue_ctx=1.0):
-    return {"type": "kpm2", "ver": 1, "agg_ms": 3000, "session": session, "cell_id": 1, "t_start_ms": t,
+def kpm2(session, t, att, succ, n=30, ue_ctx=1.0, cell=1):
+    return {"type": "kpm2", "ver": 1, "agg_ms": 3000, "session": session, "cell_id": cell, "t_start_ms": t,
             "t_end_ms": t + 3000, "n": n, "seq_from": 1, "seq_to": 2,
             "cc": {"RRC.ConnEstabAtt": {"total": att}, "RRC.ConnEstabSucc": {"total": succ},
                    "RRC.ConnEstabFailCause": {"NetworkReject": 0, "NoReply": att - succ, "Other": 0}},
@@ -36,6 +36,11 @@ def overhead(seq, t, busy):
     return {"type": "overhead", "ver": 1, "session": "OH", "seq": seq, "node_id": "cu", "process_scope": "self",
             "t_start_ms": t, "t_end_ms": t + 3000, "cpu": {"count": 4, "node_busy_cores": busy, "process_cores": 0.5},
             "memory": {"total_bytes": 8_000, "used_bytes": 4_000, "process_rss_bytes": 1_000}, "link": []}
+
+
+def hello(session, period_ms):
+    return {"type": "hello", "ver": 1, "session": session, "seq": 1, "producer": "PortRAN", "node_id": "cu",
+            "period_ms": period_ms, "noreply_timeout_ms": 1000, "si_sample_ms": 100, "clock": "realtime", "ue_evt": True}
 
 
 def ratio_alert(i, ratio):
@@ -68,6 +73,9 @@ def flux(temp_bucket, tmp_path_factory):
     client, settings = temp_bucket
     records = [kpm2("A", T0, 2, 2), kpm2("A", T0 + 3_000, 3, 1), kpm2("B", T0 + 3_000, 5, 5),
                kpm2("A", T0 + 18_000, 1, 1, n=20, ue_ctx=3.0),
+               # 셀 2: 보고 주기 1,000 ms 세션(가득 찬 칸 n 3)과 주기를 모르는 세션(hello 없음 → 100 ms) — 칸 일부 없음 판정
+               hello("SLOW", 1000), kpm2("SLOW", T0, 1, 1, n=3, cell=2), kpm2("SLOW", T0 + 3_000, 1, 1, n=2, cell=2),
+               hello("FAST", 100), kpm2("FAST", T0 + 9_000, 1, 1, n=29, cell=2), kpm2("FAST", T0 + 12_000, 1, 1, cell=2),
                overhead(1, T0, 1.0), overhead(2, T0 + 3_000, 2.0), overhead(3, T0 + 18_000, 3.0),
                ratio_alert(1, 0.5714285714285714), ratio_alert(2, 0.9230769230769231), ratio_alert(3, 1.0),
                {"type": "alert", "fmt": 1, "alert_id": "S1-L3-01-V-1-1", "event": "clear", "rule": "L3-01-V", "stage": 1,
@@ -85,10 +93,10 @@ def flux(temp_bucket, tmp_path_factory):
     def iso(ms):
         return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-    def run(query, window="2s", alert_id=L3_20):
+    def run(query, window="2s", alert_id=L3_20, cell="1"):
         q = (query.replace("v.defaultBucket", json.dumps(settings.bucket)).replace("v.timeRangeStart", iso(T0))
              .replace("v.timeRangeStop", iso(STOP)).replace("v.windowPeriod", window)
-             .replace("${source}", ENV).replace("${cell:regex}", "1").replace("${alert_id}", alert_id))
+             .replace("${source}", ENV).replace("${cell:regex}", cell).replace("${alert_id}", alert_id))
         assert not re.findall(r"\$\{[^}]+\}", q)
         return [rec.values for table in client.query_api().query(q, org=settings.org) for rec in table.records]
 
@@ -122,21 +130,32 @@ def test_kpm_bars_equal_raw_at_3s_window(flux):
 
 
 def test_lines_null_in_empty_windows(flux):
-    """데이터가 없는 구간은 값이 null인 행으로 남아 선이 끊긴다(0이 아님) — 관제 UE 선, 성능 CPU 내역."""
+    """데이터가 없는 구간은 값이 null인 행으로 남아 선이 끊긴다(0이 아님) — 관제 UE 선, 성능 CPU·메모리."""
     rows = {ms(r["_time"]): r for r in flux(panel_query("monitoring", "UE 컨텍스트 · 연결 UE 수"), window="2s")}
     for t in range(GAP[0], GAP[1] + 1, 3_000):
         assert t in rows and rows[t]["UE 컨텍스트 수 (최대)"] is None and rows[t]["RRC 연결 UE (평균)"] is None, t
     assert rows[T0]["UE 컨텍스트 수 (최대)"] == 1.0 and rows[T0 + 18_000]["UE 컨텍스트 수 (최대)"] == 3.0
     assert rows[T0 + 3_000]["RRC 연결 UE (평균)"] == 0.5  # 세션 A·B 두 칸의 평균
-    rows = {ms(r["_time"]): r for r in flux(panel_query("performance", "CPU 내역"), window="2s")}
-    columns = ("분석 엔진", "그 밖 (탐지 엔진·전송기·CU 등)", "코어 수")
-    for t in range(GAP[0], GAP[1] + 1, 3_000):
-        assert t in rows and all(rows[t][c] is None for c in columns), (t, rows.get(t))
-    assert [rows[T0 + 3_000][c] for c in columns] == [0.5, 1.5, 4.0]
-    assert {r["node"] for r in rows.values()} == {"CU"}
+    # 분석 엔진 = 분석 엔진 코어 0.5 / 노드 코어 4 = 12.5%, RSS 1,000 바이트. 노드 구분 없이 한 계열(D215)
+    for title, column, value in (("CPU 사용률(분석 엔진)", "분석 엔진", 12.5),
+                                 ("메모리 사용량(분석 엔진)", "분석 엔진 (RSS)", 1_000.0),
+                                 ("메모리 사용량(전체)", "사용 중", 4_000.0)):
+        rows = {ms(r["_time"]): r for r in flux(panel_query("performance", title), window="2s")}
+        for t in range(GAP[0], GAP[1] + 1, 3_000):
+            assert t in rows and rows[t][column] is None, (title, t, rows.get(t))
+        assert rows[T0 + 3_000][column] == value, title
+        assert set(rows[T0]) == {"_time", column, "result", "table"}, title
     # 6초 구간이면 두 칸(busy 1·2)의 평균 1.5 → CPU 사용률 37.5%
-    rows = {ms(r["_time"]): r for r in flux(panel_query("performance", "CPU 사용률"), window="5s")}
+    rows = {ms(r["_time"]): r for r in flux(panel_query("performance", "CPU 사용률(전체)"), window="5s")}
     assert rows[T0]["CPU 사용률"] == 37.5 and rows[T0 + 6_000]["CPU 사용률"] is None
+
+
+def test_overhead_summary_in_percent(flux):
+    """Cpu/Memory 평균 사용률(평균 넷, 사용자 요청 11/20): CPU busy 1·2·3 / 4코어 → 평균 50%, 메모리 4,000 / 8,000 = 50%,
+    분석 엔진 0.5 / 4코어 = 12.5%(코어가 아니라 %), RSS 평균 1,000."""
+    [row] = flux(panel_query("performance", "Cpu/Memory 평균 사용률"))
+    assert {k: v for k, v in row.items() if k not in ("result", "table")} == {
+        "CPU 평균 사용률": 50.0, "메모리 평균 사용률": 50.0, "분석 엔진 평균 CPU": 12.5, "분석 엔진 평균 메모리": 1_000.0}
 
 
 def test_partial_annotation_ends_at_slot_end(flux):
@@ -144,6 +163,16 @@ def test_partial_annotation_ends_at_slot_end(flux):
     [row] = flux(annotation_query("칸 일부 없음"), window="2s")
     assert (ms(row["_time"]), ms(row["timeEnd"])) == (T0 + 18_000, T0 + 21_000)
     assert "3초 칸 1개" in row["text"] and "n 20 / 30" in row["text"] and "셀 1" in row["text"]
+
+
+def test_partial_annotation_uses_session_period(flux):
+    """가득 찬 n = 3000 ÷ 그 세션의 hello.period_ms(D214). 1,000 ms 세션은 n 3이 가득 — n 2 칸만 일부 없음이고, 그 세션은 n < 30
+    칸 수가 일부 없는 칸 수가 아니라 칸 수를 빼고 주기를 적는다. 100 ms 세션(FAST)은 n 29 칸이 일부 없음, 30 칸은 아님."""
+    rows = sorted(flux(annotation_query("칸 일부 없음"), window="2s", cell="2"), key=lambda r: r["_time"])
+    assert [(ms(r["_time"]), ms(r["timeEnd"])) for r in rows] == [(T0 + 3_000, T0 + 6_000), (T0 + 9_000, T0 + 12_000)]
+    assert rows[0]["text"] == "칸 일부 없음 — 가장 적은 칸 n 2 / 3 (보고 주기 1000 ms) (셀 2)"
+    assert rows[1]["text"] == "칸 일부 없음 — 3초 칸 1개, 가장 적은 칸 n 29 / 30 (셀 2)"
+    assert set(rows[0]) == {"_time", "timeEnd", "text", "tags", "result", "table"}
 
 
 def test_rep_ratio_shown_as_percent(flux):

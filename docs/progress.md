@@ -51,6 +51,11 @@
 
 - 배포 뒤(11/18): 관제 KPM 그래프의 경보 구간이 새로고침(5초)마다 깜빡이던 것 — 경보 구간을 주석 대신 경보 계열(refId B)로 칠함(D209, 브랜치 `fix/alert-region-flicker`)
 
+
+**2026-11-20** — 관제 경보 상세 '걸린 UE' 표에서 관측 오류·근거 열 삭제(D210, 브랜치 `fix/alert-ue-columns`)
+
+**2026-11-20** — 성능 대시보드에 수집 지연(받은 시각 − 데이터 시각) p50·p95·p99 줄, collector가 `ingest_delay`로 잼(D211, 브랜치 `feat/ingest-delay`)
+
 ---
 
 ## 열린 항목
@@ -1437,3 +1442,59 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 
 ### 남은 일
 - [ ] 커밋·push·PR(사용자 확인), 배포 뒤 화면 확인
+
+
+## 걸린 UE 열 정리 (2026-11-20, 브랜치 `fix/alert-ue-columns`)
+
+사용자 요구(11/20): "걸린 UE 패널에서 근거랑 관측오류 없애자". 역할 분리 꺼짐(D208)이라 서브에이전트 없이 진행.
+
+### 한 일
+| 파일 | 내용 |
+|---|---|
+| `grafana/build.py` | '걸린 UE' 쿼리에서 `관측 오류`(`uncertain`)·`근거`(`evidence`) 열을 빼고 열 순서·패널 설명 고침 |
+| `grafana/dashboards/monitoring.json` | build.py로 다시 만듦 |
+| `tests/test_dashboards.py` | `test_alert_detail_columns`: 두 열 없음, 열 순서 고정 |
+| `docs/dashboard-design.md` 2.2 | 걸린 UE 열 목록 |
+
+### 결정 사항
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D210 | 걸린 UE 표의 관측 오류·근거 열 삭제. 값은 InfluxDB `alert_ue`(`uncertain`·`evidence` 필드)와 원본 녹화에 그대로 남는다. 관측 오류뿐인 경보는 경보 목록의 종류 '판정 보류'로 보인다 | 사용자 요청(11/20) | 불필요 |
+
+### 확인 결과
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 처음엔 Docker Desktop이 꺼져 있어(WSL에서 `docker` 없음) 39 passed, 10 skipped. Docker를 켠 뒤 전체 테스트 건너뜀 없이 통과(아래 커밋 전). `python grafana/build.py --check` 통과 |
+| AWS Grafana(읽기만) | 바뀐 '걸린 UE' 쿼리를 최근 경보 `20261119T070012Z-L3-06-6733831-629`로 실행: 오류 없음, 열 8개(걸린 시각·UE (cell-uid)·S-TMSI·C-RNTI·조건·피해자 연결·UE 관측값·이벤트) |
+
+
+## 수집 지연 측정 (2026-11-20, 브랜치 `feat/ingest-delay`)
+
+사용자 요구(11/20): "대시보드에 데이터가 표시되는 지연시간도 중요하려나" → "표시되는 순간의 p50, p95, p99를 보여줘야 하나" → 진행. 역할 분리 꺼짐(D208)이라 서브에이전트 없이 진행.
+
+### 한 일
+| 파일 | 내용 |
+|---|---|
+| `collector/influx_writer.py` | `ingest_delay_point`, `DELAY_REFERENCE` — 받은 시각 − 데이터 시각(kpm2·overhead = `t_end_ms`, alert = `t`, f1_evt = `t_ms`) |
+| `collector/collector.py` | `/ingest` 요청에서 받아들인 줄마다 지연 점을 레코드 점과 같은 쓰기에 더함(503이면 함께 빠짐, 중복은 재지 않음) |
+| `grafana/build.py`, `performance.json` | 성능 대시보드 줄 '수집 지연': '수집 지연 백분위' 표(한 행 = 'KPM 지연'(상시 KPM2)·'경보 지연', 열 p50·p95·p99·개수 — 처음 stat 숫자 6개를 사용자 요청으로 표로 바꾸고 최대 열은 뺌), '수집 지연 추이'(그래프 구간마다 평균 — 'KPM 지연' 파란 선·'경보 지연' 주황 선. 처음의 최대 계열은 사용자 요청으로 뺌) |
+| `tests/test_ingest.py` | 지연 점(값·태그·겹치지 않는 시각·중복·503), 레코드 점 수를 세던 테스트는 지연 점을 빼고 셈 |
+| `tests/test_dashboards.py`, `tests/test_dashboard_flux.py` | 성능 줄 배치, 백분위·추이 값(실제 InfluxDB) |
+| CLAUDE.md 6절·9.2, `schema/SCHEMA.md` 5절, `docs/dashboard-design.md` 3.4절, README | `ingest_delay` 저장 형태와 패널 |
+
+### 결정 사항
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D211 | **수집 지연 = collector가 받은 시각 − 데이터 시각**, 줄마다 `ingest_delay` 점 하나(tags env·type·event, field delay_ms, 시각 = 받은 시각 + 요청 안 순번 ns). 기준 시각: 상시 KPM2·overhead는 칸 끝(칸 시작으로 재면 3초 묶음이 섞임), 경보는 판정 시각. evidence(지난 원본 줄)·gap·hello는 재지 않음. 화면까지 더해지는 새로고침 대기(최대 5초)·쿼리 시간은 재지 않고 설명에 적음(서버에서 잴 수 없음). 백분위 표: 종류마다 p50·p95·p99·개수(경보는 개수가 적어 p99가 맨 위 값에 가까워 개수를 같이 보임). 추이는 추세만 — 구간 평균 한 계열씩(사용자 요청 11/20). 메시지 형식(스키마)은 그대로 — 새 measurement만 | 발표에서 "공격이 몇 초 만에 대시보드에 오나"를 실측 숫자로 말하려고(5G-Spector도 탐지 지연을 평가). 대시보드 구간은 우리 담당이라 지금 잴 수 있다 | 불필요 — 단, 두 서버 시계 동기화(Q8)는 탐지 쪽·테스트베드 확인 필요 |
+
+### 확인 결과
+| 확인 | 결과 |
+|---|---|
+| `pytest` | Docker를 켜고 전체 597 passed(로컬 InfluxDB·Grafana, 건너뜀 0 — 새 `test_ingest_delay_percentiles_and_trend` 포함). `python grafana/build.py --check` 통과 |
+| 로컬 시연 | 목 송신기(상시 KPM2 셀 2개 3초 칸·overhead·40초마다 경보, 레코드마다 지연 0.2~1.5초 · 5%는 2~6초)로 `X-Env: sample`을 8분 동안 `/ingest`에 보냄 → 수집 지연 백분위(8분 끝, 505줄 모두 저장): 상시 KPM2 320개 p50 718·p95 2470·p99 5411 ms, 경보 24개 p50 600·p95 2067·p99 2174 ms(송신기가 준 지연 — 5%는 2~6초 — 과 맞음). `query_timing.py --source sample --range 15m`: 성능·관제 모두 통과 |
+| AWS Grafana(읽기만, 가짜 데이터) | 두 패널 쿼리의 `from`을 `array.from`(상시 KPM2 지연 10~1000 ms 100개, 경보 300·800·1200·5000 ms)으로 바꿔 실행: 백분위 = 500·950·990 / 800·1200·5000(기대값과 같음), 추이 = 6초 구간 601행, 빈 구간 null, 경보 점이 같은 구간 행에 들어감 |
+
+확인하지 못한 것: 실측 지연 값과 7일 범위 쿼리 시간은 배포 뒤 데이터가 쌓여야 잴 수 있다(`grafana/query_timing.py --dashboard performance --range 7d`). 두 서버 시계 동기화(Q8).
+
+### 남은 일
+- [ ] 커밋·push·PR(사용자 확인), 배포 뒤 실측 지연 값과 7일 쿼리 시간 확인

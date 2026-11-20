@@ -260,16 +260,18 @@ def test_alert_list_rep_percent():
 
 
 def test_alert_detail_columns():
-    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고, 불확실은 '관측 오류'로(사용자 요청 11/16).
-    판정 요약의 모드 열도 없앤다(11/18)."""
+    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고(사용자 요청 11/16), 판정 요약의 모드 열(11/18)과
+    걸린 UE의 관측 오류·근거 열(11/20)도 없앤다."""
     panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
     summary = panels["판정 요약"]["transformations"][0]["options"]["indexByName"]
     q = panels["판정 요약"]["targets"][0]["query"]
     assert "갈래" not in summary and "branch" not in q
     assert "모드" not in summary and "모드" not in q and '"mode"' not in q and "r.mode" not in q
     ues = panels["걸린 UE"]["transformations"][0]["options"]["indexByName"]
-    assert "관측 오류" in ues and not {"불확실", "전제"} & set(ues)
-    assert "r.conditions" not in panels["걸린 UE"]["targets"][0]["query"]
+    assert not {"관측 오류", "근거", "불확실", "전제"} & set(ues)
+    q = panels["걸린 UE"]["targets"][0]["query"]
+    assert "r.conditions" not in q and "r.uncertain" not in q and "r.evidence" not in q
+    assert list(ues) == ["걸린 시각", "UE (cell-uid)", "S-TMSI", "C-RNTI", "조건", "피해자 연결", "UE 관측값", "이벤트"]
 
 
 def test_ue_shown_as_cell_uid():
@@ -326,21 +328,46 @@ def test_detection_rows_on_monitoring():
 
 
 def test_performance_layout():
-    """성능 대시보드 = CU 자원(수집 오버헤드, M11)만 (docs/dashboard-design.md 3절)."""
+    """성능 대시보드 = CU 자원(수집 오버헤드, M11)과 수집 지연(D211) (docs/dashboard-design.md 3절)."""
     d = load(DASHBOARD_DIR / "performance.json")
     assert d["uid"] == "portran-performance"
     rows = [p["title"].split(" — ")[0] for p in d["panels"] if p["type"] == "row"]
     # '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과는 관제로 옮기고 경보·입력 품질은 없앴다(11/16)
-    assert rows == ["Overhead"]  # CU 자원 — 수집 오버헤드(제목은 짧게, 11/16)
+    assert rows == ["Overhead", "수집 지연"]  # CU 자원 — 수집 오버헤드(제목은 짧게, 11/16), 수집 지연(11/20)
     # 단계 비교(1~4단계 vs 1단계만)는 없앴다(사용자 결정 11/13)
     assert [v["name"] for v in d["templating"]["list"]] == ["source", "cell"]
     panels = {p["title"]: p for p in d["panels"] if p["type"] != "row"}
     assert not any("단계 비교" in title or "kpm_only" in json.dumps(p) for title, p in panels.items())
-    # CU 자원(overhead)은 노드 값이라 셀과 무관, 상시 KPM2를 함께 그리는 패널만 셀로 거른다
+    # CU 자원(overhead)·수집 지연은 셀과 무관, 상시 KPM2를 함께 그리는 패널만 셀로 거른다
     for p in panels.values():
         for t in p.get("targets", []):
-            node_level = 'r._measurement == "overhead' in t["query"] and '"kpm2"' not in t["query"]
+            node_level = ('r._measurement == "overhead' in t["query"] or 'r._measurement == "ingest_delay"' in t["query"]) \
+                and '"kpm2"' not in t["query"].replace('r.type == "kpm2"', "")
             assert node_level or "${cell:regex}" in t["query"], p["title"]
+
+
+def test_performance_ingest_delay_row():
+    """수집 지연(D211): 받은 시각 − 데이터 시각의 백분위 표(종류마다 한 행 — p50·p95·p99·개수, 11/20)와 추이(구간 평균)."""
+    d = load(DASHBOARD_DIR / "performance.json")
+    start = next(i for i, p in enumerate(d["panels"]) if p["type"] == "row" and p["title"] == "수집 지연")
+    row = {p["title"]: p for p in d["panels"][start + 1:] if p["type"] != "row"}
+    assert list(row) == ["수집 지연 백분위", "수집 지연 추이"]
+    stat = row["수집 지연 백분위"]
+    q = stat["targets"][0]["query"]
+    assert 'r._measurement == "ingest_delay"' in q and 'r.type == "kpm2"' in q and 'r.type == "alert"' in q
+    # 백분위는 정렬 뒤 순위로(한 번 읽기) — 백분위마다 quantile을 부르면 데이터를 그만큼 다시 읽는다
+    assert q.count('sort(columns: ["_value"])') == 2 and "quantile(" not in q
+    assert stat["type"] == "table" and '종류: "KPM 지연"' in q and '종류: "경보 지연"' in q
+    order = stat["transformations"][0]["options"]["indexByName"]
+    assert list(order) == ["종류", "p50", "p95", "p99", "개수"] and "최대" not in q
+    assert stat["fieldConfig"]["defaults"]["unit"] == "ms"
+    trend = row["수집 지연 추이"]
+    q = trend["targets"][0]["query"]
+    # 추세만 — KPM 지연과 경보 지연 두 계열(구간 평균)(11/20)
+    assert "aggregateWindow(every: win," in q and q.count("from(bucket: v.defaultBucket)") == 2
+    assert '_field: "KPM 지연"' in q and '_field: "경보 지연"' in q and "fn: max" not in q
+    assert 'pivot(rowKey: ["_time"], columnKey: ["_field"]' in q
+    assert trend["fieldConfig"]["defaults"]["unit"] == "ms"
 
 
 def test_performance_overhead_row():

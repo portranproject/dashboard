@@ -296,6 +296,25 @@ def alert_ue_points(msg: dict, env: str) -> list[Point]:
     return points
 
 
+# 수집 지연(D211): /ingest로 받은 시각 − 레코드의 데이터 시각. 종류마다 기준 시각이 다르다 — kpm2·overhead는 칸이 끝난 시각
+# (칸 시작으로 재면 3초 묶음이 섞인다), alert는 탐지 엔진이 판정한 시각, f1_evt는 재시작을 본 시각. evidence(지난 원본 줄)·
+# gap·hello(데이터 시각 없음)는 재지 않는다. 두 시계(분석 엔진 노드·대시보드 서버)가 어긋나면 그만큼 틀린다(음수도 가능)
+DELAY_REFERENCE = {"kpm2": "t_end_ms", "overhead": "t_end_ms", "alert": "t", "f1_evt": "t_ms"}
+
+
+def ingest_delay_point(msg: dict, env: str, received_ns: int, offset: int) -> Point | None:
+    """measurement ingest_delay — 받은 줄 하나 = 점 하나. 시각 = 받은 시각 + offset ns(같은 요청의 줄끼리 겹치지 않게),
+    tags env·type(·event: alert), field delay_ms(실수). 기준 시각이 없는 종류면 None."""
+    key = DELAY_REFERENCE.get(msg["type"])
+    if key is None or not _is_int(msg.get(key)):
+        return None
+    p = (Point("ingest_delay").time(received_ns + offset, WritePrecision.NS)
+         .tag("env", env).tag("type", msg["type"]).field("delay_ms", received_ns / MS - msg[key]))
+    if msg["type"] == "alert":
+        p.tag("event", msg["event"])
+    return p
+
+
 def to_point(msg: dict, env: str = "unknown", session: str | None = None, received_ns: int | None = None) -> Point:
     """스키마 검증을 통과한 메시지를 Point로. 숫자 필드는 타입을 고정한다
     (InfluxDB는 같은 필드에 정수·실수가 섞이면 쓰기를 거부하므로).

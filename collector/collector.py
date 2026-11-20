@@ -31,7 +31,8 @@ from common.config import env_int, influx_settings, load_env
 from common.schema import validation_errors
 from common.transport import UdpSource, open_source, parse_address
 
-from .influx_writer import InfluxWriter, WriteError, alert_ue_points, overhead_link_points, session_point, to_point
+from .influx_writer import (InfluxWriter, WriteError, alert_ue_points, ingest_delay_point, overhead_link_points,
+                            session_point, to_point)
 from .ingest import DEFAULT_ENV, BoundedDict, IngestRequest, IngestSource, dedup_key, parse_env
 
 log = logging.getLogger("collector")
@@ -192,7 +193,12 @@ class Collector:
                     duplicates += 1
                     continue
                 batch_keys.add(key)
-            accepted.append(_Accepted(line, msg, key, self._points_for(msg, env, received_ns, staged)))
+            points = self._points_for(msg, env, received_ns, staged)
+            # 수집 지연(받은 시각 − 데이터 시각)도 같은 쓰기에 — 저장에 실패하면(503) 함께 빠진다(D211)
+            delay = ingest_delay_point(msg, env, received_ns, len(accepted))
+            if delay is not None:
+                points.append(delay)
+            accepted.append(_Accepted(line, msg, key, points))
 
         failed: list[tuple[_Accepted, str]] = []
         if self.writer is not None and accepted:

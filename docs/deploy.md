@@ -339,7 +339,7 @@ EC2: git fetch → 그 커밋 checkout → deploy/server-deploy.sh (빌드·기�
 
 ```
 p4 CU 박스 (탄력적 IP 43.202.191.147)
-  │ HTTPS POST https://<대시보드 탄력적 IP>/ingest  (X-Env: p4, 토큰 없음)
+  │ HTTPS POST https://<대시보드 탄력적 IP>/ingest  (X-Env: aws — 11/20 전 p4, 토큰 없음)
   ▼
 보안 그룹 portran-dashboard ── 443은 p4 CU 박스 IP만
   ▼

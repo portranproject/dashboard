@@ -2,7 +2,7 @@
 
 약속은 reference/detection/27_ §3 (11/02 합의, 대시보드 2차 답변서 D1~D3):
   - 본문: JSON Lines 여러 줄(`Content-Type: application/x-ndjson`), 요청 하나 최대 COLLECTOR_HTTP_MAX_BYTES
-  - 헤더 `X-Env`: 환경(p4·lab·replay-kpm-only 등). 없으면 `unknown`. 모든 중복 키 앞에 붙인다
+  - 헤더 `X-Env`: 환경(aws·on-premise·replay·sample 등 — 11/20 전 AWS는 p4). 없으면 `unknown`. 모든 중복 키 앞에 붙인다
   - 응답: 원본 녹화와 InfluxDB 저장이 끝난 뒤에 답한다
       200 {"accepted", "rejected", "duplicates"}  줄 단위 오류는 rejected로 세고 나머지는 저장
       400 본문 전체를 읽을 수 없음(UTF-8 아님, 길이 불일치, X-Env 형식 오류) — 전송기는 다시 보내지 않음

@@ -1,7 +1,7 @@
 """대시보드 쿼리를 실제 Grafana에 보내 걸린 시간·오류·점 수를 잰다 (읽기 전용, D202).
 
-    python grafana/query_timing.py --dashboard monitoring --range 7d                       # 로컬 Grafana, AWS(p4)
-    python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d \\
+    python grafana/query_timing.py --dashboard monitoring --range 7d                       # 로컬 Grafana, AWS(aws)
+    python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source aws --range 7d \\
         --max-seconds 2 --parallel --parallel-max-seconds 5
 
 저장소의 grafana/dashboards/<이름>.json(build.py가 만든 것)에서 패널·주석 쿼리를 꺼내, Grafana `/api/ds/query`로 보낸다.
@@ -157,7 +157,7 @@ def main(argv: list[str]) -> int:
     env = load_env()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--url", default=f"http://localhost:{env.get('GRAFANA_PORT', '3000')}")
-    ap.add_argument("--source", default="p4", help="데이터 출처(env 태그): p4·replay·sample")
+    ap.add_argument("--source", default="aws", help="데이터 출처(env 태그): aws·on-premise·p4(11/20 전 AWS)·replay·sample")
     ap.add_argument("--dashboard", choices=["monitoring", "performance"], default="monitoring")
     ap.add_argument("--range", default="7d", help="지금부터 거꾸로 잴 범위: 1h·24h·7d")
     ap.add_argument("--max-seconds", type=float, default=5.0, help="요청(패널 하나·주석 하나)의 시간 상한")

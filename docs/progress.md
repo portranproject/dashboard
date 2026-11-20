@@ -56,6 +56,9 @@
 
 **2026-11-20** — 성능 대시보드에 수집 지연(받은 시각 − 데이터 시각) p50·p95·p99 줄, collector가 `ingest_delay`로 잼(D211, 브랜치 `feat/ingest-delay`)
 
+
+**2026-11-20** — 관제 경보 목록에서 룰 ID 열 삭제(D212), 데이터 출처를 탐지 쪽 새 `X-Env` `aws`·`on-premise`로 바꾸고 Slack에 On-Premise 추가(D213) — 브랜치 `fix/alert-list-rule-column`
+
 ---
 
 ## 열린 항목
@@ -70,7 +73,6 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q8 | 노드 간 시계 동기화(NTP/PTP). 분석 엔진이 붙인 데이터 시각과 대시보드의 '지금'을 비교하는 화면(수집 상태, 상태 불명)이 시계에 기댄다. 27_ D6: 실험 노트북·p4 CU 박스는 NTP를 켜 둠 | 전 파트 (테스트베드 담당) | M3 D29 |
 | Q16 | AWS에는 대시보드 스택(InfluxDB·Grafana·collector)만 올리고, 탐지 엔진은 테스트베드(p4 CU 박스·실험 노트북)에 둔다. 탐지 엔진 전송기가 HTTPS `/ingest`로 AWS에 보낸다(11/02 합의, 27_ §3) | 탐지 엔진 (합의됨, M9에서 연동 시험) | M7 D85 |
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
-| Q21 | 대시보드 **데이터 출처 선택**은 AWS(`p4`) / On-Premise(`lab`)로 하되 **우선 AWS만 받는다**(사용자 결정 11/09). On-Premise를 더할 때 필요한 것: ① 연구실 공인 IP·고정 여부(On-Premise → AWS `/ingest`) ~~② 단계 비교 재생 `X-Env`에 출처 붙이기~~(단계 비교를 없애 해당 없음, D173). 그 전까지는 묻지 않음 | 탐지 엔진 (On-Premise를 더할 때) | `docs/dashboard-design.md` 1절 |
 | Q23 | AWS 상시 KPM2의 `ext.UeCtxMax`가 **125까지** 올라 셀 한도 96(27_ §5.3, 대시보드 `CELL_LIMIT`)을 넘었다(11/11 15:53 공격). 한도가 이 테스트베드 셀의 실제 값인지, `UeCtxMax`가 한도를 넘는 대기 UE까지 세는지. 1·2단계 경보가 high가 되는 기준(90% = 86)과 관련. `hello`의 `cells[].max_conn`에 실제 한도가 오면 그 값을 쓰도록 바꿀 수 있음. 11/12 탐지 쪽 변경으로 `L3-01-V`의 절대 수 문턱 `f_abs`도 셀 한도 × 0.1(올림)이 되어, 한도가 틀리면 `C2a` 판정도 달라진다(D162) | 탐지 엔진·테스트베드 | 관제 "UE 컨텍스트 · 연결 UE 수", `grafana/build.py` `CELL_LIMIT` |
 | Q24 | AWS p4 셀이 **1개(6733824) → 4개(6733824~6733827)** 로 늘었고, 최근 3시간에 DU·CU 재시작(`f1_evt`)이 26번 왔다(11/11 오후). 의도한 테스트베드 변경·시험인지 | 테스트베드·탐지 엔진 | 관제 화면 셀 변수(셀을 하나 고르면 그 셀만 보임) |
 | Q25 | Claude Code 작업 기록 hook·읽기 전용 가드를 프로젝트 설정(`.claude/settings.json`)으로 커밋하면, 이 저장소에서 Claude Code를 쓰는 팀원 모두에게 적용된다(기록은 각자 PC의 `logs/agent/`에만, 비밀 값은 가림). 역할 분리는 기본 꺼짐(D208, 켜려면 `"PORTRAN_ROLE_WORKFLOW": "on"` 또는 요청), 작업 기록은 기본 켬(끄려면 각자 `.claude/settings.local.json`의 `env`에 `"PORTRAN_AGENT_LOG": "off"`) — 읽기 전용 가드는 그대로(D207). `disableAllHooks`는 가드까지 꺼서 권하지 않음 | 이 저장소에서 Claude Code를 쓰는 팀원 (알림) | D198·D207, `docs/agent-workflow.md` 4절 |
@@ -87,6 +89,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 해결 |
 |---|---|---|
+| Q21 | 데이터 출처 선택 AWS / On-Premise — 우선 AWS만 받고 On-Premise는 나중(11/09) | 2026-11-20 해결: 탐지 쪽이 `X-Env`를 `aws`·`on-premise`로 바꿈. 대시보드 출처 `aws`·`on-premise`(+ 11/20 전 AWS 실측 'AWS (이전 p4)'), Slack도 출처마다 규칙(D213). On-Premise는 연구실이 아니라 우리 실물 장비에서 보내고, 그 공인 IP는 보안 그룹에 열어 둠(사용자) |
 | Q1·Q2·Q4·T5 | 처음 메시지(`metric`·`detection`·`attack_run`)의 모르는 필드 거부·`labels` 제한·`attack_type` 열거형, mock 절차 타이밍 | M10에서 mock·evaluator와 함께 처음 메시지를 지워 해당 없음(D144·D145). 모르는 필드 거부는 `overhead`에만 남음 |
 | Q22 | `L3-20`(Blind DoS) 피해자 연결(`ues[].peers`)의 근거가 오지 않음 | 사용자 결정(11/09): 피해자 쪽은 `peers` ID만 '걸린 UE' 표에 보이고 탐지 쪽에 요청하지 않음(D146) |
 | Q20 | 탐지 쪽에 알릴 것: ① 상시 레코드 중복 키와 모든 키 앞 `X-Env`(27_ §3 '우리 요청', 답 대기) 반영 ② 단독 `ue_evt`·100 ms 원본 `kpm2` 거부 ③ `Content-Length` 없으면 `411` | 2026-11-09 사용자 정리: ① 탐지 쪽에 전달함 ② 탐지 쪽은 `send_ue_evt`를 끈 채 보내지 않기로 해 알릴 필요 없음 ③ 전송기(파이썬)가 늘 길이를 보내 문제없음 (M8 D116·D121) |
@@ -1498,3 +1501,26 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 
 ### 남은 일
 - [ ] 커밋·push·PR(사용자 확인), 배포 뒤 실측 지연 값과 7일 쿼리 시간 확인
+
+
+## 경보 목록 룰 열 삭제 (2026-11-20, 브랜치 `fix/alert-list-rule-column`)
+
+사용자 요구(11/20): "관제 대시보드의 경보 목록에서 룰 항목은 없애줘". 역할 분리 꺼짐(D208).
+
+| 구분 | 내용 |
+|---|---|
+| 한 일 | `grafana/build.py` 경보 목록 쿼리·열 순서·열 너비에서 `룰` 삭제, `monitoring.json` 다시 만듦, `tests/test_dashboards.py`(룰 열 없음), CLAUDE.md 9.1·README·`docs/dashboard-design.md` 2.2 |
+| 결정 D212 | 경보 목록의 룰 ID 열 삭제 — 공격 열이 같은 룰을 짧은 공격 이름으로 보인다. 룰 ID는 경보 상세 '판정 요약'과 alert_id에 남는다. 사용자 요청, 팀 확인 불필요 |
+| 확인 | `pytest` 전체 597 passed(로컬 InfluxDB·Grafana), `python grafana/build.py --check` 통과 |
+
+## 데이터 출처 aws·on-premise, Slack On-Premise (2026-11-20, 같은 브랜치)
+
+사용자 요구(11/20): "탐지 쪽에서 node-id: cu, X-env: aws, X-env: on-premise로 바꿨는데 그거에 맞게 되어 있어?" → 맞지 않아 고침. 결정: ① 이전 `p4` 데이터는 'AWS (이전 p4)'로 따로 보임(`aws`로 받되) ② On-Premise 공격 경보·수집 멈춤도 Slack으로 ③ On-Premise는 연구실이 아니라 우리 장비에서 보내고, IP는 이미 열어 둠. 역할 분리 꺼짐(D208).
+
+| 구분 | 내용 |
+|---|---|
+| 확인 | AWS 서버 최근 30일 `env` 값: `lab`·`minwoo-probe`·`p1`·`p1-probe`·`p4`·`portran-p1`·`sample` — `aws`·`on-premise`는 아직 없음(11/20 17:37까지 `p4`, 노드 `p4-e2e`). collector는 형식 검사(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)로 `aws`·`on-premise`를 받는다. 노드 `cu`는 이미 'CU'로 보임 |
+| 한 일 | `grafana/build.py` `SOURCES`(AWS `aws`·On-Premise `on-premise`·AWS (이전 p4) `p4`·재생·샘플, 기본 AWS), 알림 `NOTIFY_SOURCES` — 출처마다 공격 경보·수집 멈춤 규칙(AWS UID 예전 그대로, On-Premise `-onprem`), 라벨 `source`·`env`, 메시지 제목 끝에 출처·경보 상세 링크 `var-source`를 그 출처로. `grafana/query_timing.py` 기본 `--source aws`. `collector/ingest.py` 설명. 테스트: 출처 변수, 알림 4규칙·라벨·템플릿, `X-Env` `aws`·`on-premise` 받음. 문서: CLAUDE.md 1.1·4·6·7·9·9.3·13절, README(그림·변수·Slack), `docs/dashboard-design.md` 1절·열린 질문, `schema/SCHEMA.md` 2절, `docs/deploy.md`. 열린 항목 Q21 → 해결됨 |
+| 결정 D213 | 데이터 출처 = 탐지 쪽 `X-Env` 그대로: AWS `aws`, On-Premise `on-premise`. 11/20 전 AWS 실측(`p4`)은 쿼리를 바꾸지 않고 선택지 'AWS (이전 p4)'로 따로. Slack은 출처마다 규칙 — 재생·샘플·이전 p4는 알리지 않음. 사용자 결정, 팀 확인 불필요(탐지 쪽이 정한 값) |
+| 확인 결과 | `pytest` 전체 599 passed(로컬 InfluxDB·Grafana — 알림 4규칙 쿼리 실행 포함), `python grafana/build.py --check` 통과. 실제 `aws`·`on-premise` 데이터는 아직 서버에 없어 화면·Slack은 탐지 쪽이 보내기 시작한 뒤 확인 |
+

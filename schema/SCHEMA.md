@@ -41,7 +41,7 @@ collector가 받는 메시지 형식이다. **기계 검증의 단일 기준은 
 | 주소 | `POST /ingest` |
 | 본문 | 파일의 줄을 바이트 그대로 `\n`으로 이은 것. 빈 줄은 건너뛴다 |
 | 크기 | 요청 하나 최대 1 MiB(`COLLECTOR_HTTP_MAX_BYTES`). `Content-Length` 필수 |
-| `X-Env` | 환경(`p4`·`lab`·`replay-kpm-only` 등). 없으면 `unknown`. 영숫자로 시작하고 영숫자·`.`·`_`·`-`만 쓴 64자 이하 |
+| `X-Env` | 환경(`aws`·`on-premise`·`replay`·`sample` 등 — 11/20 전 AWS는 `p4`). 없으면 `unknown`. 영숫자로 시작하고 영숫자·`.`·`_`·`-`만 쓴 64자 이하 |
 | 인증 | 토큰 없음 — HTTPS + 보안 그룹 IP 제한(11/02 합의) |
 
 ### 2.2 응답 — 원본 녹화와 InfluxDB 저장이 끝난 뒤에 답한다

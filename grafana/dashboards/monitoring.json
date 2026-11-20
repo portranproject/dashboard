@@ -253,20 +253,25 @@
         "name": "source",
         "label": "데이터 출처",
         "type": "custom",
-        "query": "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample",
+        "query": "AWS : aws, On-Premise : on-premise, AWS (이전 p4) : p4, 재생 : replay, 샘플 : sample",
         "current": {
           "text": "AWS",
-          "value": "p4"
+          "value": "aws"
         },
         "options": [
           {
             "text": "AWS",
-            "value": "p4",
+            "value": "aws",
             "selected": true
           },
           {
             "text": "On-Premise",
-            "value": "lab",
+            "value": "on-premise",
+            "selected": false
+          },
+          {
+            "text": "AWS (이전 p4)",
+            "value": "p4",
             "selected": false
           },
           {
@@ -281,7 +286,7 @@
           }
         ],
         "hide": 0,
-        "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
+        "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · AWS (이전 p4) = 11/20 전에 p4로 받은 AWS 실측 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
       },
       {
         "name": "cell",
@@ -1212,7 +1217,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"date\"\nimport \"math\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// 정렬은 map 앞에서 한다 — map으로 만든 열(\"시작\")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> sort(columns: [\"start\"], desc: true)\n  |> limit(n: 300)\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      룰: r.rule,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\"\n                else if (r.key == \"ratio\") and r.rep != \"\" then r.key + \" = \" + string(v: math.round(x: float(v: r.rep) * 100.0)) + \"%\"\n                else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))"
+          "query": "import \"date\"\nimport \"math\"\nimport \"strings\"\nalerts = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"alert\" and r.env == \"${source}\")\n  |> filter(fn: (r) => r._field == \"severity\" or r._field == \"ues_total\" or r._field == \"rep_value\"\n      or r._field == \"rep_key\" or r._field == \"reason\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: r.rule, stage: r.stage, kind: r.kind, cell: r.cell, event: r.event,\n      t: r._time, f: r._field, s: string(v: r._value), a: true}))\n  |> group()\nevidence = from(bucket: v.defaultBucket)\n  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"evidence\" and r._field == \"seq\" and r.env == \"${source}\")\n  |> group(columns: [\"alert_id\"])\n  |> max(column: \"_time\")\n  |> map(fn: (r) => ({alert_id: r.alert_id, rule: \"\", stage: \"\", kind: \"\", cell: \"\", event: \"\", t: r._time, f: \"evidence\",\n      s: \"\", a: false}))\n  |> group()\nsummary = union(tables: [alerts, evidence])\n  |> group(columns: [\"alert_id\"])\n  |> sort(columns: [\"t\"])\n  |> reduce(identity: {rule: \"\", stage: \"\", kind: \"\", cell: \"\", start: time(v: 0), last: time(v: 0), active: time(v: 0),\n                       event: \"\", sev: 0, ues: \"\", rep: \"\", key: \"\", reason: \"\", n: 0},\n      fn: (r, accumulator) => ({\n        rule: if r.a then r.rule else accumulator.rule,\n        stage: if r.a then r.stage else accumulator.stage,\n        kind: if r.a then r.kind else accumulator.kind,\n        cell: if r.a then r.cell else accumulator.cell,\n        start: if r.a and accumulator.n == 0 then r.t else accumulator.start,\n        last: if r.a then r.t else accumulator.last,\n        active: if r.t > accumulator.active then r.t else accumulator.active,\n        event: if r.a then r.event else accumulator.event,\n        sev: if r.f == \"severity\" and r.s == \"high\" then 2\n             else if r.f == \"severity\" and r.s == \"medium\" and accumulator.sev < 1 then 1 else accumulator.sev,\n        ues: if r.f == \"ues_total\" then r.s else accumulator.ues,\n        rep: if r.f == \"rep_value\" then r.s else accumulator.rep,\n        key: if r.f == \"rep_key\" then r.s else accumulator.key,\n        reason: if r.f == \"reason\" then r.s else accumulator.reason,\n        n: if r.a then accumulator.n + 1 else accumulator.n}))\n  |> filter(fn: (r) => r.n > 0)\n  |> group()\n  |> map(fn: (r) => {\n      idle = int(v: now()) - int(v: r.active)\n      limit = if r.stage == \"1\" then 15000000000 else 90000000000\n      return {r with\n        status: if r.event == \"clear\" then \"해제\" else if r.event == \"end\" then \"강제 종료 (\" + r.reason + \")\"\n                else if idle > limit then \"상태 불명\" else \"열림\",\n        class: if r.kind == \"attack\" then \"공격\" else if strings.hasPrefix(v: r.rule, prefix: \"AN-\") then \"이상 유형\" else \"판정 보류\"}\n    })\n\n// 정렬은 map 앞에서 한다 — map으로 만든 열(\"시작\")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)\nsummary\n  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == \"열림\" or r.status == \"상태 불명\")\n  |> sort(columns: [\"start\"], desc: true)\n  |> limit(n: 300)\n  |> map(fn: (r) => ({\n      시작: r.start,\n      셀: r.cell,\n      공격: r.rule,\n      종류: r.class,\n      심각도: string(v: r.sev),\n      \"UE 수\": r.ues,\n      \"대표 값\": if r.key == \"\" then \"\"\n                else if (r.key == \"ratio\") and r.rep != \"\" then r.key + \" = \" + string(v: math.round(x: float(v: r.rep) * 100.0)) + \"%\"\n                else r.key + \" = \" + r.rep,\n      상태: r.status,\n      \"길이(초)\": float(v: int(v: if r.event == \"raise\" or r.event == \"update\" then now() else r.last) - int(v: r.start)) / 1000000000.0,\n      alert_id: r.alert_id}))"
         }
       ],
       "fieldConfig": {
@@ -1257,18 +1262,6 @@
               {
                 "id": "custom.width",
                 "value": 50
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "룰"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 80
               }
             ]
           },
@@ -1615,15 +1608,14 @@
             "indexByName": {
               "시작": 0,
               "셀": 1,
-              "룰": 2,
-              "공격": 3,
-              "종류": 4,
-              "심각도": 5,
-              "UE 수": 6,
-              "대표 값": 7,
-              "상태": 8,
-              "길이(초)": 9,
-              "alert_id": 10
+              "공격": 2,
+              "종류": 3,
+              "심각도": 4,
+              "UE 수": 5,
+              "대표 값": 6,
+              "상태": 7,
+              "길이(초)": 8,
+              "alert_id": 9
             }
           }
         }

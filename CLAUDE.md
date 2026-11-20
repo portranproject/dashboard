@@ -42,15 +42,15 @@
 │ 사설 IP는 고정(F1·E2에 사용), 공인 IP는 껐다 켜면 바뀜                       │
 └───────────────────────────────────────────────────────────┬───────────────┘
                                                             ├──> 대시보드
-┌ On-Premise · 연구실 ─────────────────────────────────────┐ │
+┌ On-Premise · 우리 실물 장비 ──────────────────────────────┐ │
 │ 실물 테스트베드 (노트북 여러 대 + 무선 장비)                ├─┘
 └───────────────────────────────────────────────────────────┘
 ```
 
 | 출처 | 무엇 | `X-Env` | 대시보드 선택지 | 지금 |
 |---|---|---|---|---|
-| **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `p4` | AWS | **받는다** |
-| **On-Premise** | 연구실 실물 테스트베드(실험 노트북) | `lab` | On-Premise (선택지만 있음) | 나중 (2026-11-09 사용자 결정 — 우선 AWS만) |
+| **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `aws` (11/20부터 — 그 전 실측은 `p4`) | AWS · AWS (이전 p4) | **받는다** |
+| **On-Premise** | 우리 실물 장비로 꾸린 테스트베드(노트북 + 무선 장비). 장비의 공인 IP는 보안 그룹에 열어 둠(사용자 11/20) | `on-premise` | On-Premise | **받는다** (11/20부터, D213) |
 
 - 분석 엔진(eBPF)·탐지 엔진·전송기는 CU 인스턴스에서 돈다(27_ §9 R5 "p4 CU 박스"). 전송기가 HTTPS `POST /ingest`로 **대시보드 EC2**(테스트베드 세트와 별개, t3.small, `docs/deploy.md`)에 보낸다.
 - 두 출처는 같은 대시보드에서 데이터 출처 선택(`env` 태그)으로 고른다. 설계는 `docs/dashboard-design.md` 1절.
@@ -111,7 +111,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   ├── progress.md               # 마일스톤별 진행 기록 (12절 8항)
 │   ├── agent-workflow.md         # AI 작업 흐름: 역할 분리 · 작업 기록 (12절 10·11항, 사람용 설명)
 │   ├── deploy.md                 # AWS(EC2) 배포 절차 (M7·M9)
-│   └── dashboard-design.md       # 관제·성능 대시보드 설계도 (M10, 데이터 출처 선택 AWS / On-Premise — 우선 AWS만)
+│   └── dashboard-design.md       # 관제·성능 대시보드 설계도 (M10, 데이터 출처 선택 AWS / On-Premise)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
@@ -202,7 +202,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 
-- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`p4`)·On-Premise(`lab`)·재생(`replay`)·샘플(`sample`)이다. On-Premise는 선택지만 있고 **지금은 AWS만 받는다**. 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`aws`)·On-Premise(`on-premise`)·AWS (이전 p4)(`p4` — 11/20 전 AWS 실측)·재생(`replay`)·샘플(`sample`)이다(D213). 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
 - **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
 - `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
 - `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
@@ -229,9 +229,9 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 |---|---|---|
 | 탐지 쪽 샘플 32개 (경보 경로, 탐지 엔진 실제 코드 출력·합성 입력) | `tests/data/detection/` | `python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --retime <시각>` |
 | collector 녹화 (실측·연동 시험) | `recordings/raw-<시각>-<환경>.jsonl` | `python -m replay.replay recordings/raw-…-p4.jsonl --env replay` |
-| 실측 | `X-Env: p4` | 탐지 쪽 전송기 |
+| 실측 | `X-Env: aws`·`on-premise` (11/20 전 AWS는 `p4`) | 탐지 쪽 전송기 |
 
-- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`p4`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / 재생 / 샘플)이 이 값으로 거른다.
+- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`aws`·`on-premise`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / AWS (이전 p4) / 재생 / 샘플)이 이 값으로 거른다.
 - 상시 KPM2(`kpm2` 3초 묶음) 샘플은 저장소에 없다(연동 시험 때 서버 녹화에만 있음, progress Q19).
 
 ## 8. collector 요구사항
@@ -253,14 +253,14 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 - **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3).
 - 설계(패널마다 답하는 질문과 쓰는 레코드, 데이터 없음 처리)는 `docs/dashboard-design.md`.
-- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`p4`)·On-Premise(`lab`, 아직 받지 않음)·재생(`replay`)·샘플(`sample`).
+- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·AWS (이전 p4)(`p4`)·재생(`replay`)·샘플(`sample`).
 
 ### 9.1 관제 (`monitoring.json`, uid `portran-monitoring`), 새로고침 5초
 | 행 | 패널 |
 |---|---|
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표. 요약 줄 대신 성능에서 옮김(11/16) |
 | KPM (상시 KPM2) | 셀별 3초 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위는 3초 배수 구간으로 묶는다(막대 합, UE 수 최대·평균 선은 평균, 11/18). gap·칸 일부 없음·세션 시작·DU·CU 재시작 주석. 경보 구간은 주석이 아니라 경보 계열(refId B)로 칠한다 — 영역 어디에 마우스를 대도 툴팁에 경보(11/18). 주석으로 칠하면 쿼리가 200 ms를 넘을 때 새로고침마다 깜빡인다(Grafana가 로딩 중 빈 결과를 먼저 넘김, D209) |
-| 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 행을 누르면 경보 상세로. 표가 한 줄 가득(룰별 경보 수 막대는 11/16에 없앰) |
+| 경보 목록 | 경보 하나 = 한 행(시작·셀·공격 이름·종류·심각도·UE 수·대표 값·상태·길이 — 룰 ID 열은 11/20에 없앰). 행을 누르면 경보 상세로. 표가 한 줄 가득(룰별 경보 수 막대는 11/16에 없앰) |
 | 경보 상세 | 변수 `alert_id`. 판정 요약, 판정 근거 값(cond·candidates·conditions·values·params·refs), 후보 공격, 걸린 UE(`alert_ue`), 근거 KPM(근거 KPM2 100 ms, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보). 줄·패널 제목은 짧게(11/16) |
 
 변수: `source`, `cell`, `alert_id`(위쪽 칸은 숨김 — 경보 목록 행을 눌러 고른다, 11/16). 그래프 위 주석은 늘 켜 두고 토글을 숨긴다(11/16). 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(27_ §7). 화면에는 단계(1~4)를 표시하지 않는다(11/13 — 열·제목에서 뺌, 판정 기준에만 씀). 공격 이름은 두 대시보드 모두 짧은 이름(`grafana/build.py` `short_rule_name` — '#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)' → 'UE 컨텍스트 고갈').
@@ -280,11 +280,12 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).
 | 규칙 | 언제 | Slack |
 |---|---|---|
-| 공격 경보 (AWS) | AWS(p4)의 공격 경보(`kind` `attack`)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
-| 수집 멈춤 (AWS) | 마지막 레코드(상시 KPM2·오버헤드·경보·근거·hello) 뒤 5분 넘게 아무것도 없을 때. 최근 1시간에 아무것도 없으면(테스트베드를 끈 것) 울리지 않음 | 멈춤만 알리고 다시 들어올 때는 알리지 않음 |
+| 공격 경보 (AWS)·(On-Premise) | 그 출처(`aws`·`on-premise`)의 공격 경보(`kind` `attack`)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
+| 수집 멈춤 (AWS)·(On-Premise) | 출처마다 마지막 레코드(상시 KPM2·오버헤드·경보·근거·hello) 뒤 5분 넘게 아무것도 없을 때. 최근 1시간에 아무것도 없으면(테스트베드를 끈 것) 울리지 않음 | 멈춤만 알리고 다시 들어올 때는 알리지 않음 |
 
 - 10초마다 조회한다. 알림 하나 = 경보 하나(`group_by alert_id`), 같은 알림 다시 보내기 24시간.
-- 이상 유형·판정 보류 경보, 재생·샘플·On-Premise 데이터는 알리지 않는다(11/13 사용자 결정). On-Premise는 받기 시작하면 더한다.
+- 출처마다 규칙이 따로다(AWS 규칙 UID는 예전 그대로 `portran-attack`·`portran-collect-stop`, On-Premise는 `-onprem`). 메시지 제목 끝에 출처(AWS·On-Premise), 경보 상세 링크는 그 출처로.
+- 이상 유형·판정 보류 경보, 재생·샘플·이전 p4 데이터는 알리지 않는다(11/13 사용자 결정). On-Premise는 받기 시작해 더했다(11/20, D213).
 - Webhook 주소는 `.env`의 `SLACK_WEBHOOK_URL`(비밀 값, 서버 `.env`에만). 비어 있으면 아무 데도 안 가는 주소로 두어 전송 실패 로그만 남는다. 링크 앞부분은 `GRAFANA_ROOT_URL`(Grafana `root_url`).
 - provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.Values`만). 조회 결과가 없을 때 템플릿이 깨지지 않게 `.Values`는 `{{ with .Values }}` 안에서만 쓴다.
 
@@ -377,4 +378,4 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
 | M9 | 탐지 엔진 연동 2 — AWS 앞단 TLS(자체 서명 인증서, IP SAN), 443·보안 그룹, 탐지 쪽 전송기와 연동 시험 | 탐지 쪽 전송기가 EC2 `https://<IP>/ingest`로 보낸 레코드가 InfluxDB에 저장됨 |
 | M10 | 대시보드 재구성 — 관제(상시 KPM2·경보 목록·경보 상세: 근거 KPM2 그래프·KPM1 타임라인)·성능 대시보드를 탐지 엔진 레코드로. replay를 새 형식으로 바꾸고 mock·evaluator·처음 메시지(`metric`·`detection`·`attack_run`)·옛 대시보드를 지운다. 평가는 27_ §9에 따라 탐지 쪽과 정한 뒤 | 27_ §7 '화면과 레코드'의 화면이 샘플·replay 데이터로 표시됨 |
 | M11 | 수집 오버헤드 — 탐지 쪽 `overhead` 형식(11/13)으로 스키마 v0.5, collector 저장(`overhead`·`overhead_link`), replay, 성능 대시보드 CU 자원 줄 | 새 형식이 스키마·`/ingest`·InfluxDB(실제 InfluxDB 통합 테스트)를 통과하고, CU 자원 줄이 실제 Grafana에서 표시됨 |
-| M12 | Slack 알림 — AWS(p4) 공격 경보 발생·끝, 수집 멈춤을 Grafana Alerting으로(provisioning `grafana/provisioning/alerting/portran.json`, `grafana/build.py`가 만든다) | 알림 규칙이 실제 Grafana에서 돌고, 시험용 수신기로 발생·해제·강제 종료·수집 멈춤 메시지가 옴 |
+| M12 | Slack 알림 — AWS(당시 `p4`, 11/20부터 `aws`·`on-premise`) 공격 경보 발생·끝, 수집 멈춤을 Grafana Alerting으로(provisioning `grafana/provisioning/alerting/portran.json`, `grafana/build.py`가 만든다) | 알림 규칙이 실제 Grafana에서 돌고, 시험용 수신기로 발생·해제·강제 종료·수집 멈춤 메시지가 옴 |

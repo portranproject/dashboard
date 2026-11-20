@@ -85,8 +85,9 @@ def test_new_dashboards_filter_by_source(name):
     """모든 쿼리가 데이터 출처(env)로 거른다 — 출처끼리 섞이지 않게 (docs/dashboard-design.md 1절)."""
     d = load(DASHBOARD_DIR / name)
     source = next(v for v in d["templating"]["list"] if v["name"] == "source")
-    assert source["type"] == "custom" and source["current"]["value"] == "p4"
-    assert source["query"] == "AWS : p4, On-Premise : lab, 재생 : replay, 샘플 : sample"
+    # 탐지 쪽이 11/20부터 X-Env aws·on-premise로 보낸다. 11/20 전 AWS 실측(p4)은 'AWS (이전 p4)'로 따로(D213)
+    assert source["type"] == "custom" and source["current"]["value"] == "aws"
+    assert source["query"] == "AWS : aws, On-Premise : on-premise, AWS (이전 p4) : p4, 재생 : replay, 샘플 : sample"
     for item, q, _ in queries(d):
         if item != "variable source":
             # 단계 비교는 출처를 함수 인자로 넘긴다(count_raises(env: "${source}"))
@@ -250,6 +251,8 @@ def test_tables_sort_before_renaming_map():
     p = next(p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"] if p.get("title") == "경보")
     order = p["transformations"][0]["options"]["indexByName"]
     assert "단계" not in order and min(order, key=order.get) == "시작"
+    # 룰 ID 열도 없앴다 — 공격 이름 열이 같은 룰을 이름으로 보인다(사용자 요청 11/20)
+    assert "룰" not in order and "공격" in order and "룰: r.rule" not in p["targets"][0]["query"]
 
 
 def test_alert_list_rep_percent():
@@ -513,20 +516,30 @@ ALERTING = REPO_ROOT / "grafana" / "provisioning" / "alerting" / "portran.json"
 
 
 def test_alerting_provisioning():
-    """공격 경보·수집 멈춤 두 규칙, AWS(p4)만, Slack 연락처 둘(수집 멈춤은 해제 알림 없음)."""
+    """출처(AWS·On-Premise 실측, D213)마다 공격 경보·수집 멈춤 규칙, Slack 연락처 둘(수집 멈춤은 해제 알림 없음)."""
     a = load(ALERTING)
     [group] = a["groups"]
     assert group["folder"] == "PortRAN" and group["interval"] == "10s"
     rules = {r["uid"]: r for r in group["rules"]}
-    assert set(rules) == {"portran-attack", "portran-collect-stop"}
-    for r in rules.values():
+    # AWS 규칙 UID는 예전 그대로(알림 상태가 이어지게), On-Premise를 더함(11/20 사용자 결정)
+    sources = {"portran-attack": "aws", "portran-collect-stop": "aws",
+               "portran-attack-onprem": "on-premise", "portran-collect-stop-onprem": "on-premise"}
+    assert set(rules) == set(sources)
+    for uid, r in rules.items():
         q = r["data"][0]["model"]["query"]
         assert r["data"][0]["datasourceUid"] == DATASOURCE_UID
-        assert 'r.env == "p4"' in q and "${" not in q, r["uid"]  # AWS 실측만(On-Premise는 받기 시작하면)
-        assert r["noDataState"] == "OK" and r["execErrState"] == "KeepLast", r["uid"]
-    assert 'r.kind == "attack"' in rules["portran-attack"]["data"][0]["model"]["query"]  # 이상 유형·판정 보류는 알리지 않음
-    assert rules["portran-attack"]["labels"] == {"notify": "attack"}
-    assert rules["portran-collect-stop"]["labels"] == {"notify": "collect"}
+        # 그 출처 실측만 — 재생·샘플·이전 p4는 알리지 않는다
+        assert f'r.env == "{sources[uid]}"' in q and "${" not in q and 'r.env == "p4"' not in q, uid
+        assert r["labels"]["env"] == sources[uid] and r["labels"]["source"] in ("AWS", "On-Premise"), uid
+        assert r["noDataState"] == "OK" and r["execErrState"] == "KeepLast", uid
+    for uid in ("portran-attack", "portran-attack-onprem"):
+        assert 'r.kind == "attack"' in rules[uid]["data"][0]["model"]["query"]  # 이상 유형·판정 보류는 알리지 않음
+        assert rules[uid]["labels"]["notify"] == "attack"
+    assert rules["portran-collect-stop"]["labels"] == {"notify": "collect", "source": "AWS", "env": "aws"}
+    assert rules["portran-collect-stop-onprem"]["labels"] == {"notify": "collect", "source": "On-Premise", "env": "on-premise"}
+    # 메시지 제목에 출처, 경보 상세 링크는 그 출처로
+    template = a["templates"][0]["template"]
+    assert "{{ .CommonLabels.source }}" in template and "var-source={{ .CommonLabels.env }}" in template
     # 조회 결과가 없을 때도 템플릿이 깨지지 않게 .Values는 with 안에서만
     for r in rules.values():
         for text in r["annotations"].values():

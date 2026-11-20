@@ -275,6 +275,7 @@ collector가 아래처럼 변환한다. 보내는 쪽은 신경 쓰지 않아도
 | `alert_ue` | `ues[].t_hit` | env, alert_id, ue(`<cell>-<du_ue_id>-<uid>`) | cell, du_ue_id, uid, cu_ue_id, crnti, s_tmsi, cond, uncertain, conditions, peers(쉼표·`;`로 이은 문자열), seq_from, seq_to, evidence, values_json, event |
 | `overhead` | `t_start_ms` | env, session, node(`node_id`, 있을 때) | t_end_ms, seq, process_scope, cpu_count, node_busy_cores·process_cores(실수), mem_total_bytes·mem_used_bytes·process_rss_bytes |
 | `overhead_link` | `t_start_ms` | env, session, node, iface(`interface_name`), role | t_end_ms, seq, ingress_sctp_packets, ingress_wire_bytes, egress_sctp_packets, egress_wire_bytes |
+| `ingest_delay` | 받은 시각 + 요청 안 순번(ns) | env, type(`kpm2`·`overhead`·`alert`·`f1_evt`), event(`alert`만) | delay_ms(실수) |
 
 - **시각**: ms를 ns로 바꿔 쓴다. 같은 ms에 여러 줄이 올 수 있어(27_ §4.2) `evidence`·`f1_evt`는 ms 안의 ns 자리에 `seq`를 넣어 가른다(`t_ms × 10⁶ + seq mod 10⁶`). 표시 시각은 1 ms 안에서만 달라진다.
 - **`alert_id`를 tag로 둔다**(field로는 두지 않는다 — 같은 이름의 tag·field가 있으면 pivot 때 열이 겹친다). 같은 원본 줄이 두 경보의 근거로 함께 올 수 있어(예: `L3-24`·`L3-14` 판정 보류 경보) `alert_id`가 series를 가르지 않으면 서로 덮어쓴다. 경보는 공격마다 하나라 series 수는 경보 수에 비례한다(경보 하나에 `evidence` series 3개 정도).
@@ -282,6 +283,7 @@ collector가 아래처럼 변환한다. 보내는 쪽은 신경 쓰지 않아도
 - **숫자 타입**: `kpm2`·근거 `kpm2`의 지표는 모두 실수로 쓴다(정수·실수가 섞이면 InfluxDB가 쓰기를 거부함, 27_ §7.1). `values`·`params`·`ues`처럼 룰마다 다른 묶음은 JSON 문자열로 통째 저장하고 화면에서 펼친다.
 - **대표 값** `rep_value`: 화면에 값 하나만 보일 때 쓰는 룰별 값(27_ §5.3 '대표 값(제안)'). 판정 보류 경보는 `held_w`. `rep_key`가 어떤 값인지 알려 준다.
 - **`overhead_link`**: `overhead`의 `link[]` 한 칸(NIC 하나) = 점 하나(M11, `alert_ue`와 같은 이유). 값은 구간 증가분이라 초당 값은 화면에서 구간 길이(`t_end_ms` − 시각)로 나눈다.
+- **`ingest_delay`**: 메시지가 아니라 collector가 재는 값(D211) — `/ingest`로 받은 줄마다 받은 시각 − 데이터 시각(`kpm2`·`overhead`는 `t_end_ms`, `alert`는 `t`, `f1_evt`는 `t_ms`). 메시지 형식은 바뀌지 않는다.
 - **`alert_ue`**: `alert`의 `ues[]` 한 칸 = 점 하나(M10). 경보 상세의 '걸린 UE' 표를 행으로 그리려고 따로 둔다(`ues_json` 배열은 Flux·Grafana에서 행으로 펴기 어렵다). `update`에는 새로 걸린 UE만 오므로 모으면 그 경보의 전체 UE다.
 
 ## 6. `overhead` — 수집 오버헤드 (11/13 탐지 쪽 형식, M11)

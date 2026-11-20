@@ -170,6 +170,38 @@ def test_alert_hover_fills_alert_window(flux):
     assert sorted(ms(r["_time"]) for r in rows) == [T0 + 1_001, T0 + 6_000, T0 + 12_000, T0 + 13_000]
 
 
+def test_ingest_delay_percentiles_and_trend(flux, temp_bucket):
+    """수집 지연(D211): collector가 만드는 ingest_delay 점(influx_writer.ingest_delay_point)을 T0~STOP에 직접 쓰고
+    성능 대시보드 쿼리로 읽는다. 상시 KPM2 지연 10, 20, …, 1000 ms(100개) → p50 500·p95 950·p99 990, 경보 300·800·1200·5000 →
+    p50 800·p95 1200·p99 1200(순위 = int((n − 1) × q), 정렬한 값에서). 표 한 행 = 종류 하나.
+    추이 = 그래프 구간마다 그 안에 도착한 레코드 지연의 평균(백분위의 평균이 아님)."""
+    from collector.influx_writer import InfluxWriter, ingest_delay_point
+    _, settings = temp_bucket
+    points = []
+    for i in range(100):
+        received_ms = T0 + 100 + i * 100
+        msg = {"type": "kpm2", "t_end_ms": received_ms - (i + 1) * 10}
+        points.append(ingest_delay_point(msg, ENV, received_ms * 1_000_000, 0))
+    for i, delay in enumerate((300, 800, 1200, 5000)):
+        received_ms = T0 + 12_000 + i * 1000
+        points.append(ingest_delay_point({"type": "alert", "event": "raise", "t": received_ms - delay}, ENV,
+                                         received_ms * 1_000_000, 0))
+    writer = InfluxWriter(settings, timeout_ms=10_000)
+    writer.write(points)
+    writer.close()
+    table = {r["종류"]: r for r in flux(panel_query("performance", "수집 지연 백분위"))}
+    assert [table["KPM 지연"][k] for k in ("p50", "p95", "p99", "개수")] == [500.0, 950.0, 990.0, 100]
+    assert [table["경보 지연"][k] for k in ("p50", "p95", "p99", "개수")] == [800.0, 1200.0, 1200.0, 4]
+    assert "최대" not in table["경보 지연"]
+    rows = {ms(r["_time"]): r for r in flux(panel_query("performance", "수집 지연 추이"), window="2s")}
+    assert set(rows[T0]) == {"_time", "KPM 지연", "경보 지연"} | ({"result", "table"} & set(rows[T0]))
+    # 3초 구간 평균: [0, 3) 초는 i = 0~28 → 10~290 ms 평균 150, [3, 6) 초는 300~590 평균 445, [9, 12) 초는 900~1000 평균 950.
+    # 그 뒤 빈 구간은 null(선이 끊김). 경보는 [12, 15) 초에 300·800·1200 → 평균 766.67, [15, 18) 초에 5000
+    assert (rows[T0]["KPM 지연"], rows[T0 + 3_000]["KPM 지연"], rows[T0 + 9_000]["KPM 지연"]) == (150.0, 445.0, 950.0)
+    assert rows[T0 + 12_000]["KPM 지연"] is None and rows[T0 + 15_000]["KPM 지연"] is None
+    assert abs(rows[T0 + 12_000]["경보 지연"] - 2300 / 3) < 1e-6 and rows[T0 + 15_000]["경보 지연"] == 5000.0
+
+
 def test_ue_shown_as_cell_uid(flux):
     """걸린 UE·피해자 연결·UE_EVENT 두 패널의 UE는 셀-uid(du_ue_id 7을 넣었는데 화면엔 안 나옴, 사용자 요청 11/18)."""
     [ue] = flux(panel_query("monitoring", "걸린 UE"))

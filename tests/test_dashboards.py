@@ -260,16 +260,18 @@ def test_alert_list_rep_percent():
 
 
 def test_alert_detail_columns():
-    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고, 불확실은 '관측 오류'로(사용자 요청 11/16).
-    판정 요약의 모드 열도 없앤다(11/18)."""
+    """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고(사용자 요청 11/16), 판정 요약의 모드 열(11/18)과
+    걸린 UE의 관측 오류·근거 열(11/20)도 없앤다."""
     panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
     summary = panels["판정 요약"]["transformations"][0]["options"]["indexByName"]
     q = panels["판정 요약"]["targets"][0]["query"]
     assert "갈래" not in summary and "branch" not in q
     assert "모드" not in summary and "모드" not in q and '"mode"' not in q and "r.mode" not in q
     ues = panels["걸린 UE"]["transformations"][0]["options"]["indexByName"]
-    assert "관측 오류" in ues and not {"불확실", "전제"} & set(ues)
-    assert "r.conditions" not in panels["걸린 UE"]["targets"][0]["query"]
+    assert not {"관측 오류", "근거", "불확실", "전제"} & set(ues)
+    q = panels["걸린 UE"]["targets"][0]["query"]
+    assert "r.conditions" not in q and "r.uncertain" not in q and "r.evidence" not in q
+    assert list(ues) == ["걸린 시각", "UE (cell-uid)", "S-TMSI", "C-RNTI", "조건", "피해자 연결", "UE 관측값", "이벤트"]
 
 
 def test_ue_shown_as_cell_uid():

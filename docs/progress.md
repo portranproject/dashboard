@@ -52,6 +52,8 @@
 - 배포 뒤(11/18): 관제 KPM 그래프의 경보 구간이 새로고침(5초)마다 깜빡이던 것 — 경보 구간을 주석 대신 경보 계열(refId B)로 칠함(D209, 브랜치 `fix/alert-region-flicker`)
 
 
+**2026-11-20** — 관제 경보 상세 '걸린 UE' 표에서 관측 오류·근거 열 삭제(D210, 브랜치 `fix/alert-ue-columns`)
+
 **2026-11-20** — 성능 대시보드에 수집 지연(받은 시각 − 데이터 시각) p50·p95·p99 줄, collector가 `ingest_delay`로 잼(D211, 브랜치 `feat/ingest-delay`)
 
 ---
@@ -1440,6 +1442,30 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 
 ### 남은 일
 - [ ] 커밋·push·PR(사용자 확인), 배포 뒤 화면 확인
+
+
+## 걸린 UE 열 정리 (2026-11-20, 브랜치 `fix/alert-ue-columns`)
+
+사용자 요구(11/20): "걸린 UE 패널에서 근거랑 관측오류 없애자". 역할 분리 꺼짐(D208)이라 서브에이전트 없이 진행.
+
+### 한 일
+| 파일 | 내용 |
+|---|---|
+| `grafana/build.py` | '걸린 UE' 쿼리에서 `관측 오류`(`uncertain`)·`근거`(`evidence`) 열을 빼고 열 순서·패널 설명 고침 |
+| `grafana/dashboards/monitoring.json` | build.py로 다시 만듦 |
+| `tests/test_dashboards.py` | `test_alert_detail_columns`: 두 열 없음, 열 순서 고정 |
+| `docs/dashboard-design.md` 2.2 | 걸린 UE 열 목록 |
+
+### 결정 사항
+| # | 결정 | 이유 | 팀 확인 |
+|---|---|---|---|
+| D210 | 걸린 UE 표의 관측 오류·근거 열 삭제. 값은 InfluxDB `alert_ue`(`uncertain`·`evidence` 필드)와 원본 녹화에 그대로 남는다. 관측 오류뿐인 경보는 경보 목록의 종류 '판정 보류'로 보인다 | 사용자 요청(11/20) | 불필요 |
+
+### 확인 결과
+| 확인 | 결과 |
+|---|---|
+| `pytest` | 처음엔 Docker Desktop이 꺼져 있어(WSL에서 `docker` 없음) 39 passed, 10 skipped. Docker를 켠 뒤 전체 테스트 건너뜀 없이 통과(아래 커밋 전). `python grafana/build.py --check` 통과 |
+| AWS Grafana(읽기만) | 바뀐 '걸린 UE' 쿼리를 최근 경보 `20261119T070012Z-L3-06-6733831-629`로 실행: 오류 없음, 열 8개(걸린 시각·UE (cell-uid)·S-TMSI·C-RNTI·조건·피해자 연결·UE 관측값·이벤트) |
 
 
 ## 수집 지연 측정 (2026-11-20, 브랜치 `feat/ingest-delay`)

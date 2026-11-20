@@ -66,6 +66,11 @@ class FakeWriter:
     def points(self):
         return [l for b in self.batches for l in b]
 
+    @property
+    def data_points(self):
+        """수집 지연 점(ingest_delay, D211)을 뺀 레코드 점."""
+        return [l for l in self.points if not l.startswith("ingest_delay,")]
+
 
 def make_collector(tmp_path, writer, **kw):
     return Collector(writer, tmp_path / "rec", batch_size=kw.pop("batch_size", 500),
@@ -262,12 +267,12 @@ def test_request_stores_sample_and_resend_is_all_duplicates(tmp_path):
     c = make_collector(tmp_path, w)
     lines = sample_lines(T10)
     assert c.handle_request(body_of(*lines), "lab", "test") == (200, {"accepted": 667, "rejected": 0, "duplicates": 0})
-    assert len(w.points) == 667
+    assert len(w.data_points) == 667
     assert c.env_raw_path("lab").read_text(encoding="utf-8").splitlines() == lines  # 받은 그대로 녹화
     assert [f.name for f in c.recordings_dir.iterdir()] == [c.env_raw_path("lab").name]  # 거부 로그 없음
 
     assert c.handle_request(body_of(*lines), "lab", "test") == (200, {"accepted": 0, "rejected": 0, "duplicates": 667})
-    assert len(w.points) == 667
+    assert len(w.data_points) == 667
     assert len(c.env_raw_path("lab").read_text(encoding="utf-8").splitlines()) == 667
     assert (c.stats.received, c.stats.stored, c.stats.duplicates) == (1334, 667, 667)
     c.close()
@@ -297,7 +302,7 @@ def test_bad_lines_are_rejected_and_the_rest_stored(tmp_path):
     assert "JSON 파싱 실패" in records[0]["reasons"][0]
     assert any("agg_ms" in r for r in records[1]["reasons"])
     assert any("fmt" in r for r in records[2]["reasons"])
-    assert len(w.points) == 2
+    assert len(w.data_points) == 2
 
 
 def test_non_utf8_body_is_400_without_side_effects(tmp_path):
@@ -441,6 +446,46 @@ def test_overhead_sample_from_detection_side(tmp_path):
     assert sum("role=f1" in l for l in links) == 30 and sum("role=n2" in l for l in links) == 30
 
 
+def test_ingest_delay_points(tmp_path, monkeypatch):
+    """/ingest로 받은 줄마다 수집 지연(받은 시각 − 데이터 시각)을 ingest_delay 점으로 같이 쓴다(D211). 기준 시각:
+    kpm2·overhead = t_end_ms, alert = t, f1_evt = t_ms. evidence·gap·hello는 재지 않는다. 중복으로 거른 줄도 재지 않는다."""
+    import collector.collector as collector_module
+    received_ms = 1_793_840_404_250
+    monkeypatch.setattr(collector_module.time, "time_ns", lambda: received_ms * MS)
+    w = FakeWriter()
+    c = make_collector(tmp_path, w)
+    alert_raise = json.loads(sample_lines(T10)[0])
+    lines = [json.dumps(example("kpm2")),                                   # t_end_ms 1793840403000 → 1250 ms
+             json.dumps(example("f1_evt")), json.dumps(example("hello")),
+             json.dumps(dict(alert_raise, t=received_ms - 800)),            # 800 ms
+             sample_lines(T10)[1]]                                          # evidence — 재지 않음
+    assert c.handle_request(body_of(*lines), "p4", "t")[1]["accepted"] == 5
+    delays = [lp_line for lp_line in w.points if lp_line.startswith("ingest_delay,")]
+    parsed = {}
+    for line in delays:
+        series, fields, t = line.split(" ")
+        parsed[series] = (fields, int(t))
+    assert set(parsed) == {"ingest_delay,env=p4,type=kpm2", "ingest_delay,env=p4,type=f1_evt",
+                           "ingest_delay,env=p4,event=raise,type=alert"}
+    assert parsed["ingest_delay,env=p4,type=kpm2"][0] == "delay_ms=1250"
+    assert parsed["ingest_delay,env=p4,event=raise,type=alert"][0] == "delay_ms=800"
+    f1_ms = example("f1_evt")["t_ms"]
+    assert parsed["ingest_delay,env=p4,type=f1_evt"][0] == f"delay_ms={received_ms - f1_ms}"
+    times = [t for _, t in parsed.values()]
+    assert len(set(times)) == 3 and all(received_ms * MS <= t < received_ms * MS + len(lines) for t in times)  # 겹치지 않음
+    # 다시 보낸 줄(중복)은 저장하지 않으니 재지도 않는다
+    c.handle_request(body_of(*lines), "p4", "t")
+    assert len([l for l in w.points if l.startswith("ingest_delay,")]) == 3
+
+
+def test_ingest_delay_not_written_on_outage(tmp_path):
+    w = FakeWriter()
+    w.fail_with = WriteError("HTTP 503", retryable=True)
+    c = make_collector(tmp_path, w)
+    assert c.handle_request(body_of(json.dumps(example("kpm2"))), "p4", "t")[0] == 503
+    assert w.points == []
+
+
 def test_time_order_warnings_for_new_records(tmp_path, caplog):
     c = make_collector(tmp_path, FakeWriter())
     c.handle_request(body_of(json.dumps(example("gap", t_to=1792209011000)),
@@ -485,7 +530,7 @@ def test_http_ingest_end_to_end(server):
     status, payload = request(port, "POST", "/ingest", body_of(*lines), {**NDJSON, "X-Env": "p4"})
     assert (status, payload) == (200, {"accepted": len(lines), "rejected": 0, "duplicates": 0})
     assert request(port, "POST", "/ingest", body_of(*lines), {**NDJSON, "X-Env": "p4"})[1]["duplicates"] == len(lines)
-    assert len([l for l in w.points if not l.startswith("alert_ue,")]) == len(lines)  # 레코드마다 점 하나 (+ 걸린 UE 점)
+    assert len([l for l in w.data_points if not l.startswith("alert_ue,")]) == len(lines)  # 레코드마다 점 하나 (+ 걸린 UE 점)
     assert c.env_raw_path("p4").exists()
 
 

@@ -1144,12 +1144,88 @@ in_range
           new_line=True)
 
 
+# --------------------------------------------------------------------------- 성능 — 수집 지연 (D211)
+
+# 수집 지연 = collector가 /ingest로 받은 시각 − 레코드의 데이터 시각(collector/influx_writer.py DELAY_REFERENCE)
+DELAY_TYPES = (("kpm2", "KPM 지연"), ("alert", "경보 지연"))  # 표의 종류 이름 = 추이 그래프 계열 이름
+# 표의 열: 백분위(정렬한 값에서 순위 int((n − 1) × q))와 개수. 경보처럼 개수가 적으면 p99가 맨 위 값에 가까워 개수를 같이 보인다
+DELAY_PERCENTILES = (("p50", 0.5), ("p95", 0.95), ("p99", 0.99))
+
+
+def delay_source(kind: str) -> str:
+    return f'''from(bucket: v.defaultBucket)
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "ingest_delay" and {ENV} and r.type == "{kind}" and r._field == "delay_ms")'''
+
+
+def add_ingest_delay_rows(b: Board) -> None:
+    b.row("수집 지연")
+    # 백분위는 정렬한 값에서 순위로 고른다(정확값, 한 번 읽기) — quantile을 백분위마다 부르면 데이터를 그만큼 다시 읽는다.
+    # 표 한 행 = 종류 하나(사용자 요청 11/20 — 처음에는 stat 숫자 6개)
+    parts, rows = [], []
+    for kind, label in DELAY_TYPES:
+        parts.append(f'''{kind} = {delay_source(kind)}
+  |> group()
+  |> sort(columns: ["_value"])
+  |> findColumn(fn: (key) => true, column: "_value")
+{kind}_n = length(arr: {kind})''')
+        cells = [f'종류: "{label}"', f"개수: {kind}_n"]
+        cells += [f'{name}: if {kind}_n == 0 then -1.0 else {kind}[int(v: float(v: {kind}_n - 1) * {q})]'
+                  for name, q in DELAY_PERCENTILES]
+        rows.append("{" + ", ".join(cells) + "}")
+    table_query = '\nimport "array"\n' + "\n".join(parts) + "\narray.from(rows: [\n  " + ",\n  ".join(rows) + "])\n"
+    no_data = [{"type": "value", "options": {"-1": {"text": "없음", "index": 0}}}]
+    columns = ["종류", *(name for name, _ in DELAY_PERCENTILES), "개수"]
+    b.add("table", "수집 지연 백분위", 0, 10, 7, [target(table_query)],
+          "탐지 엔진 전송기가 보낸 레코드가 대시보드 서버에 도착해 저장되기까지 걸린 시간(받은 시각 − 데이터 시각)의 "
+          "고른 시간 범위 백분위와 개수(범위 안 레코드 전체를 정렬해 고른 값). 상시 KPM2는 3초 칸이 끝난 시각부터(전송기 1초 묶음 + 네트워크 + 저장), 경보는 탐지 엔진이 "
+          "판정한 시각부터(raise·update·clear·end 모두). 경보는 개수가 적어 p99가 맨 위 값과 거의 같다. 화면에는 여기에 관제 새로고침 "
+          "대기(최대 5초)와 쿼리 시간(0.5초 이하)이 더해진다. 분석 엔진 노드와 대시보드 서버의 시계가 어긋나면 그만큼 틀린다. "
+          "없음 = 고른 범위에 레코드가 없음(11/20 전에는 재지 않음)",
+          field_config={"defaults": {"unit": "ms", "decimals": 0, "mappings": no_data,
+                                     "custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
+                        "overrides": [override("종류", ("unit", "string"), ("custom.width", 110)),
+                                      override("개수", ("unit", "none"))]},
+          options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
+          transformations=column_order(columns))
+
+    def trend(kind: str, fn: str, name: str, fill: bool) -> str:
+        return f'''{delay_source(kind)}
+{window_by(fn, ["type"], fill=fill)}
+  |> map(fn: (r) => ({{_time: r._time, _value: r._value, _field: "{name}"}}))'''
+    # 갈래마다 from을 따로(저장소에서 묶음), 긴 꼴로 합친 뒤 pivot — 열 이름이 다른 표끼리는 union이 안 된다.
+    # 모든 갈래가 같은 win 구간(epoch 정렬)이라 시각이 맞아, 경보 점 때문에 상시 KPM2 선에 빈 행이 끼지 않는다
+    trend_query = f'''
+{WINDOW}
+kmean = {trend("kpm2", "mean", "KPM 지연", True)}
+amean = {trend("alert", "mean", "경보 지연", False)}
+union(tables: [kmean, amean])
+  |> group()
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"])
+'''
+    b.add("timeseries", "수집 지연 추이", 10, 14, 7, [target(trend_query)],
+          "수집 지연(받은 시각 − 데이터 시각)의 추세 — 그래프 구간(1시간 화면 3~6초, 7일 화면 약 5분)마다 그 안에 도착한 "
+          "레코드 지연의 평균(백분위의 평균이 아님). 전송기 재시도(1~60초)나 서버가 느려진 때 올라간다. KPM 지연 = 파랑, "
+          "경보 지연 = 주황(경보는 드물어 경보가 온 구간끼리 이어 그린다)",
+          field_config={"defaults": timeseries_defaults("ms", showPoints="auto"),
+                        "overrides": [# 경보는 드물어 구간 대부분이 비어 있다 — 점 사이를 이어 선으로(빈 구간을 건너뜀), 실제 값 자리는 점으로
+                                      override("경보 지연", ("color", {"mode": "fixed", "fixedColor": "orange"}),
+                                               ("custom.spanNulls", True), ("custom.showPoints", "always"),
+                                               ("custom.pointSize", 4), ("custom.fillOpacity", 0)),
+                                      override("KPM 지연", ("color", {"mode": "fixed", "fixedColor": "blue"}))]},
+          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
+                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
+
+
 def performance() -> dict:
     b = Board()
 
-    # 탐지 결과는 관제로 옮기고 경보·입력 품질 줄은 없앴다(11/16 사용자 결정) — 성능은 CU 자원만
+    # 탐지 결과는 관제로 옮기고 경보·입력 품질 줄은 없앴다(11/16 사용자 결정) — 성능은 CU 자원과 수집 지연
     # ---- CU 자원 (수집 오버헤드, M11)
     add_overhead_rows(b)
+    # ---- 수집 지연 (D211)
+    add_ingest_delay_rows(b)
 
     variables = [
         source_variable(),
@@ -1160,7 +1236,7 @@ schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
 ''', multi=True, include_all=True, description="CPU 사용률 · RRC 연결 시도 그래프의 RRC 연결 시도에 넣을 셀"),
     ]
     return dashboard("portran-performance", "PortRAN 성능",
-                     "CU 자원(수집 오버헤드 — 노드·분석 엔진 CPU·메모리, F1·N2 SCTP). docs/dashboard-design.md 3절",
+                     "CU 자원(수집 오버헤드 — 노드·분석 엔진 CPU·메모리, F1·N2 SCTP)과 수집 지연(레코드가 대시보드에 도착하기까지). docs/dashboard-design.md 3절",
                      b, variables, [], refresh="1m", time_from="now-24h")
 
 

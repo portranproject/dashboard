@@ -214,8 +214,10 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 |---|---|---|---|
 | `overhead` | `t_start_ms` | env, session, node(`node_id`) | t_end_ms, seq, process_scope, cpu_count, node_busy_cores·process_cores(늘 실수), mem_total_bytes·mem_used_bytes·process_rss_bytes |
 | `overhead_link` | `t_start_ms` | env, session, node, iface, role | t_end_ms, seq, ingress_sctp_packets, ingress_wire_bytes, egress_sctp_packets, egress_wire_bytes |
+| `ingest_delay` | 받은 시각 + 요청 안 순번(ns) | env, type(`kpm2`·`overhead`·`alert`·`f1_evt`), event(`alert`만) | delay_ms(실수) |
 
 - `overhead_link`: `link[]` 한 칸(NIC 하나) = 점 하나(`alert_ue`와 같은 이유). 값은 구간 증가분 그대로, 초당 값은 화면에서 구간 길이로 나눈다. `null`·빈 객체·키 없음은 필드를 뺀다.
+- `ingest_delay`(수집 지연, D211): `/ingest`로 받은 줄 하나 = 점 하나, 받은 시각 − 데이터 시각(ms). 기준 시각은 `kpm2`·`overhead` = `t_end_ms`(칸 끝), `alert` = `t`(판정 시각), `f1_evt` = `t_ms`. `evidence`·`gap`·`hello`는 재지 않는다. 레코드 점과 같은 쓰기에 넣어 503이면 함께 빠지고, 중복으로 거른 줄은 재지 않는다. 두 서버 시계가 어긋나면 그만큼 틀린다(음수도 가능). 재생·샘플은 재생 속도에 따라 값이 달라 성능 결과가 아니다(12-7). UDP·파일 입력은 재지 않는다.
 
 - 값마다 고유한 것은 원칙적으로 tag로 두지 않는다(cardinality 폭증 방지). `alert_id`·`alert_ue.ue`는 위의 이유로 예외다.
 
@@ -272,7 +274,7 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 - 관제는 5초마다 새로고침하고 새로고침은 진행 중인 쿼리를 취소한다 — 7일 범위도 패널마다 5초 안이어야 화면에 나온다(패널의 쿼리 A·B는 한 요청에서 차례로 돌아 시간이 더해진다). 경보 요약(`alert_summary`)은 경보 tag마다 series라 읽는 필드 수에 비례해 느려지니, 대표 값·UE 수가 필요 없는 곳은 `fields=("severity", "reason")`처럼 줄인다. 바꾼 쿼리는 배포 전에 `python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d --parallel`로 잰다(읽기만, 저장소의 JSON을 보냄).
 
 ### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
-`docs/dashboard-design.md` 3절. **CU 자원**만 남았다(줄 제목 'Overhead', 11/16)(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대, 오른쪽 범례 표에 평균·최대). 시간 그래프는 긴 시간 범위에서 3초 배수 구간의 평균(연결 시도는 합, 11/18). 변수: `source`, `cell`(CPU 사용률 · RRC 연결 시도의 RRC 연결 시도만). 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과 줄(공격별 경보 수, 경보 길이, 공격별 경보 결과)은 관제 맨 위로 옮기고(종류별 경보 수는 없앰) 경보·입력 품질 줄(경보가 어떻게 끝났나·근거 손실·gap·상시 KPM2 칸 채움·일부만 측정된 지표)은 없앴다(11/16). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
+`docs/dashboard-design.md` 3절. **CU 자원**만 남았다(줄 제목 'Overhead', 11/16)(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), 고른 범위 요약(평균·최대 CPU %, 최대 메모리 %, 분석 엔진 평균 코어·최대 RSS), CPU 사용률, CPU 내역(분석 엔진 + 그 밖, 쌓기), 메모리 사용량, 메모리 내역, F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 들어옴 (DU → CU)'), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대, 오른쪽 범례 표에 평균·최대). 시간 그래프는 긴 시간 범위에서 3초 배수 구간의 평균(연결 시도는 합, 11/18). 줄 '수집 지연'(11/20, D211): 레코드가 대시보드 서버에 저장되기까지(받은 시각 − 데이터 시각) 백분위 표('KPM 지연'·'경보 지연' 행, p50·p95·p99·개수)와 추이(그래프 구간마다 평균 — 상시 KPM2·경보 한 계열씩) — 화면에는 새로고침 대기(관제 최대 5초)·쿼리 시간이 더해진다. 변수: `source`, `cell`(CPU 사용률 · RRC 연결 시도의 RRC 연결 시도만). 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과 줄(공격별 경보 수, 경보 길이, 공격별 경보 결과)은 관제 맨 위로 옮기고(종류별 경보 수는 없앰) 경보·입력 품질 줄(경보가 어떻게 끝났나·근거 손실·gap·상시 KPM2 칸 채움·일부만 측정된 지표)은 없앴다(11/16). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
 
 ### 9.3 Slack 알림 (M12, Grafana Alerting)
 알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).

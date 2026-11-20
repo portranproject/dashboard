@@ -253,6 +253,7 @@ def test_dedup_key():
 
 @pytest.mark.parametrize("value, expected", [
     (None, DEFAULT_ENV), ("", DEFAULT_ENV), ("  ", DEFAULT_ENV), ("p4", "p4"), (" lab ", "lab"),
+    ("aws", "aws"), ("on-premise", "on-premise"),  # 11/20부터 탐지 쪽이 보내는 값(D213)
     ("replay-kpm-only", "replay-kpm-only"), ("a" * 64, "a" * 64),
     ("a" * 65, None), ("../etc", None), ("p4 lab", None), ("-p4", None), ("한글", None),
 ])

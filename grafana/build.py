@@ -20,9 +20,9 @@ OUT_DIR = ROOT / "dashboards"
 RULE_NAMES = json.loads((ROOT / "rule-names.json").read_text(encoding="utf-8"))
 DS = {"type": "influxdb", "uid": "portran-influxdb"}
 
-# 데이터 출처 선택 (docs/dashboard-design.md 1절). 지금은 AWS만 받는다. On-Premise를 받게 되면 ("On-Premise", "lab")을 더한다.
-# On-Premise(lab)는 아직 받지 않는다 — 선택지만 둔다(D158)
-SOURCES = [("AWS", "p4"), ("On-Premise", "lab"), ("재생", "replay"), ("샘플", "sample")]
+# 데이터 출처 선택 (docs/dashboard-design.md 1절) = X-Env 값. 탐지 쪽이 11/20부터 AWS는 aws, On-Premise(우리 실물 장비)는
+# on-premise로 보낸다(D213). 11/13~11/20 AWS 실측은 p4로 쌓여 있어 'AWS (이전 p4)'로 따로 고른다
+SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("AWS (이전 p4)", "p4"), ("재생", "replay"), ("샘플", "sample")]
 
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
@@ -304,8 +304,8 @@ def source_variable() -> dict:
     options = [{"text": name, "value": env, "selected": i == 0} for i, (name, env) in enumerate(SOURCES)]
     return {"name": "source", "label": "데이터 출처", "type": "custom", "query": ", ".join(f"{n} : {e}" for n, e in SOURCES),
             "current": {"text": SOURCES[0][0], "value": SOURCES[0][1]}, "options": options, "hide": 0,
-            "description": "AWS = AWS 테스트베드 p4 · On-Premise = 연구실 테스트베드 lab(아직 받지 않음) · "
-                           "재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
+            "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · "
+                           "AWS (이전 p4) = 11/20 전에 p4로 받은 AWS 실측 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,
@@ -431,7 +431,6 @@ summary
   |> map(fn: (r) => ({{
       시작: r.start,
       셀: r.cell,
-      룰: r.rule,
       공격: r.rule,
       종류: r.class,
       심각도: string(v: r.sev),
@@ -455,7 +454,6 @@ summary
                         "overrides": [
                             override("시작", ("unit", "dateTimeAsIso"), ("custom.width", 165)),
                             override("셀", ("custom.width", 50)),
-                            override("룰", ("custom.width", 80)),
                             override("공격", ("mappings", rule_mappings()), ("custom.width", 270)),
                             override("종류", ("mappings", KIND_MAPPINGS), ("custom.cellOptions", {"type": "color-text"}),
                                      ("custom.width", 90)),
@@ -471,7 +469,7 @@ summary
           transformations=[{"id": "organize", "options": {  # map의 열 순서는 정해져 있지 않다(이름순으로 섞여 나옴)
               "excludeByName": {}, "renameByName": {},
               "indexByName": {name: i for i, name in enumerate(
-                  ["시작", "셀", "룰", "공격", "종류", "심각도", "UE 수", "대표 값", "상태", "길이(초)", "alert_id"])}}}],
+                  ["시작", "셀", "공격", "종류", "심각도", "UE 수", "대표 값", "상태", "길이(초)", "alert_id"])}}}],
           new_line=True)
 
     # ---- 경보 상세
@@ -1241,7 +1239,9 @@ schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
 # --------------------------------------------------------------------------- 알림 — Slack (M12)
 
 # 알림은 AWS 실측에서만 보낸다(11/13 사용자 결정). On-Premise(lab)는 받기 시작하면 더한다.
-NOTIFY_SOURCE = "p4"
+# 알림을 보내는 실측 출처 (X-Env 값, 이름, 규칙 UID 꼬리). AWS 규칙 UID는 예전 그대로(알림 상태가 이어지게),
+# On-Premise는 받기 시작해 더함(11/20 사용자 결정, D213 — 11/13에는 'On-Premise는 받기 시작하면 더한다')
+NOTIFY_SOURCES = (("aws", "AWS", ""), ("on-premise", "On-Premise", "-onprem"))
 NOTIFY_INTERVAL = "10s"           # 규칙을 조회하는 주기
 ATTACK_LOOKBACK_S = 6 * 3600      # 공격 경보를 찾는 범위. 이보다 오래 열린 경보는 '끝 소식 없음'으로 끝난다
 COLLECT_STOP_S = 300              # 수집 멈춤: 마지막 레코드 뒤 이만큼 아무것도 없으면
@@ -1254,13 +1254,14 @@ SLACK_NO_RESOLVE = "PortRAN Slack (해제 알림 없음)"
 # provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿에 '$'를 쓰지 않는다.
 NOTIFY_TEMPLATE = (
     '{{ define "portran.title" }}{{ if eq .CommonLabels.notify "collect" }}⚠️ PortRAN 수집 멈춤'
-    '{{ else if eq .Status "firing" }}🚨 PortRAN 공격 경보{{ else }}✅ PortRAN 공격 경보 끝{{ end }}{{ end }}\n'
+    '{{ else if eq .Status "firing" }}🚨 PortRAN 공격 경보{{ else }}✅ PortRAN 공격 경보 끝{{ end }}'
+    ' · {{ .CommonLabels.source }}{{ end }}\n'
     '{{ define "portran.text" }}{{ if eq .CommonLabels.notify "collect" }}{{ .CommonAnnotations.summary }}'
     '{{ else }}*{{ .CommonLabels.attack }}* · 셀 {{ .CommonLabels.cell }} · '
     '{{ if eq .Status "firing" }}{{ .CommonAnnotations.severity }} · 시작 {{ .CommonLabels.start }}'
     '{{ else }}{{ .CommonAnnotations.status }}{{ end }}\n'
     # ExternalURL(= GF_SERVER_ROOT_URL)은 Grafana가 늘 '/'로 끝나게 맞춘다
-    '<{{ .ExternalURL }}d/portran-monitoring?var-source=' + NOTIFY_SOURCE + '&var-alert_id={{ .CommonLabels.alert_id }}|경보 상세 보기>'
+    '<{{ .ExternalURL }}d/portran-monitoring?var-source={{ .CommonLabels.env }}&var-alert_id={{ .CommonLabels.alert_id }}|경보 상세 보기>'
     '{{ end }}{{ end }}\n'
 )
 
@@ -1286,8 +1287,9 @@ def alert_rule(uid: str, title: str, query: str, lookback_s: int, threshold: flo
     }
 
 
-def alerting() -> dict:
-    env = f'r.env == "{NOTIFY_SOURCE}"'
+def source_rules(env_value: str, name: str, uid_tail: str) -> list[dict]:
+    """출처 하나의 알림 규칙 두 개(공격 경보, 수집 멈춤). 라벨 source(이름)·env(X-Env 값)는 메시지 제목과 경보 상세 링크에 쓴다."""
+    env = f'r.env == "{env_value}"'
     # 공격 경보(kind attack)마다 한 계열. 값: 열림(raise·update) = 1(medium)·2(high), 해제 = 0, 강제 종료 = -1.
     # 경보 상태는 alert_summary(관제 대시보드와 같은 계산)로 정한다
     attacks = f'''
@@ -1317,22 +1319,27 @@ from(bucket: v.defaultBucket)
   |> max(column: "_time")
   |> map(fn: (r) => ({{_time: now(), _value: float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}}))
 '''
-    rules = [
-        alert_rule("portran-attack", "공격 경보 (AWS)", attacks, ATTACK_LOOKBACK_S, 0,
-                   {"notify": "attack"},
+    labels = {"source": name, "env": env_value}
+    return [
+        alert_rule(f"portran-attack{uid_tail}", f"공격 경보 ({name})", attacks, ATTACK_LOOKBACK_S, 0,
+                   {"notify": "attack", **labels},
                    # 조회 결과가 없을 때(NoData)는 .Values가 비어 있어 B를 꺼내면 템플릿이 깨진다 — with로 감싼다
                    {"severity": '{{ with .Values }}{{ if eq .B.Value 2.0 }}high{{ else }}medium{{ end }}{{ end }}',
                     "status": '{{ with .Values }}{{ if gt .B.Value 0.0 }}끝 소식 없음(6시간 안에 해제·강제 종료가 오지 않음)'
                               '{{ else if lt .B.Value 0.0 }}강제 종료{{ else }}해제{{ end }}{{ end }}',
-                    "description": "AWS(p4) 공격 경보(kind attack)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
+                    "description": f"{name}(X-Env {env_value}) 공격 경보(kind attack)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
                                    "이상 유형·판정 보류 경보는 알리지 않는다(M12)"}),
-        alert_rule("portran-collect-stop", "수집 멈춤 (AWS)", collect, COLLECT_LOOKBACK_S, COLLECT_STOP_S,
-                   {"notify": "collect"},
-                   {"summary": f"AWS(p4)에서 {COLLECT_STOP_S // 60}분 넘게 데이터(상시 KPM2·오버헤드·경보·근거)가 오지 않아요. "
+        alert_rule(f"portran-collect-stop{uid_tail}", f"수집 멈춤 ({name})", collect, COLLECT_LOOKBACK_S, COLLECT_STOP_S,
+                   {"notify": "collect", **labels},
+                   {"summary": f"{name}에서 {COLLECT_STOP_S // 60}분 넘게 데이터(상시 KPM2·오버헤드·경보·근거)가 오지 않아요. "
                                "{{ with .Values }}마지막 수신 {{ printf \"%.0f\" .B.Value }}초 전. {{ end }}실험을 일부러 멈춘 거라면 무시하세요",
                     "description": f"마지막 레코드 뒤 {COLLECT_STOP_S}초. 최근 {COLLECT_LOOKBACK_S // 60}분에 아무것도 없으면 "
                                    "테스트베드를 끈 것으로 보고 울리지 않는다. 다시 들어와도 알리지 않는다"}),
     ]
+
+
+def alerting() -> dict:
+    rules = [rule for env_value, name, tail in NOTIFY_SOURCES for rule in source_rules(env_value, name, tail)]
     slack = lambda uid, no_resolve: {"uid": uid, "type": "slack", "disableResolveMessage": no_resolve, "settings": {
         "url": "${SLACK_WEBHOOK_URL}", "title": '{{ template "portran.title" . }}', "text": '{{ template "portran.text" . }}'}}
     return {

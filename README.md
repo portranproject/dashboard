@@ -13,7 +13,7 @@ flowchart LR
     EBPF -->|"KPM1 · KPM2"| DET --> SEND
     EBPF -->|"3초마다"| OSEND
   end
-  LAB["🏫 On-Premise · 연구실<br/>(나중에)"]
+  LAB["🔧 On-Premise · 우리 실물 장비"]
   subgraph EC2["☁️ 대시보드 서버 · AWS EC2"]
     direction LR
     NGINX["nginx<br/>HTTPS :443 /ingest"]
@@ -25,9 +25,9 @@ flowchart LR
     COL --> REC
     REC -.->|"replay<br/>시연 · 백업"| COL
   end
-  SEND -->|"POST /ingest<br/>X-Env: p4"| NGINX
+  SEND -->|"POST /ingest<br/>X-Env: aws"| NGINX
   OSEND -->|"POST /ingest"| NGINX
-  LAB -.->|"X-Env: lab"| NGINX
+  LAB -->|"X-Env: on-premise"| NGINX
   G -->|"공격 경보 · 수집 멈춤"| SLACK(["💬 Slack"])
   USER(["👥 팀원 브라우저"]) -->|":3000"| G
 
@@ -142,10 +142,10 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 |---|---|
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표 |
 | KPM (상시 KPM2) | 셀별 3초 RRC 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위(예: 7일)는 3초 배수 구간으로 묶는다 — 막대는 구간 합, UE 수는 구간 최대(평균 선은 평균). 주황 영역 = 경보 구간(영역 어디에 마우스를 대도 툴팁에 경보 — 종류·공격 이름·셀·상태·심각도), 회색 = 데이터 없음·칸 일부 없음, 파란 세로선 = 분석 엔진 세션 시작, 보라 세로선 = DU·CU 재시작 |
-| 경보 목록 | 경보 하나 = 한 행(시작·셀·룰·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 대표 값 `ratio`는 %(0.5714 → 57%). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
+| 경보 목록 | 경보 하나 = 한 행(시작·셀·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 대표 값 `ratio`는 %(0.5714 → 57%). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
 | 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
 
-- 위쪽 변수: **데이터 출처**(AWS = 실측 `p4` / On-Premise = 연구실 `lab`, 아직 받지 않음 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
+- 위쪽 변수: **데이터 출처**(AWS = 실측 `aws` / On-Premise = 우리 실물 장비 `on-premise` / AWS (이전 p4) = 11/20 전 AWS 실측 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
 - 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음). 경보 구간은 주석이 아니라 그래프 계열로 칠해 새로고침 때 깜빡이지 않는다.
 - 경보 목록의 상태 '상태 불명' = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(탐지 엔진이 죽었거나 다시 떴을 수 있음).
 - 맨 위 '요약 — 지금' 줄(열린 경보·최고 심각도·수집 상태·세션)은 없애고, 성능 대시보드에 있던 탐지 결과 줄을 옮겨 왔다(11/16). 수집이 멈추면 Slack '수집 멈춤' 알림이 온다.
@@ -162,7 +162,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 
 - 위쪽 변수: 데이터 출처, 셀. 공격 이름은 두 대시보드 모두 짧게('UE 컨텍스트 고갈', '하향 IMSI 추출'), 단계(1~4)는 화면에 표시하지 않는다(11/13).
 
-**Slack 알림** (M12) — AWS(p4) 실측만, Grafana Alerting이 10초마다 확인해 보낸다.
+**Slack 알림** (M12) — AWS·On-Premise 실측(`aws`·`on-premise`), Grafana Alerting이 10초마다 확인해 보낸다. 메시지 제목 끝에 출처가 붙는다.
 
 | 알림 | 예 |
 |---|---|
@@ -170,7 +170,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | ✅ 공격 경보 끝 | `UE 컨텍스트 고갈 · 셀 6733824 · 해제`(또는 강제 종료, 끝 소식 없음) |
 | ⚠️ 수집 멈춤 | 데이터가 5분 넘게 안 올 때 한 번(다시 들어와도 알리지 않음, 1시간 넘게 꺼져 있으면 알리지 않음) |
 
-- 이상 유형·판정 보류 경보와 재생·샘플 데이터는 알리지 않는다.
+- 이상 유형·판정 보류 경보와 재생·샘플·이전 p4 데이터는 알리지 않는다.
 - 켜는 법: Slack에서 채널에 **Incoming Webhooks** 앱을 추가해 받은 주소를 `.env`의 `SLACK_WEBHOOK_URL`에 넣고 `docker compose up -d grafana`. 링크 주소는 `GRAFANA_ROOT_URL`. Grafana → Alerting → Contact points → `PortRAN Slack` → **Test**로 시험 메시지를 보낼 수 있다.
 - 규칙은 `grafana/build.py`가 `grafana/provisioning/alerting/portran.json`으로 만든다(UI에서 고쳐도 저장되지 않음).
 
@@ -207,7 +207,7 @@ python -m replay.replay recordings/raw-20261204-130000-p4.jsonl --from 2026-12-0
 |---|---|---|
 | `files` | (필수) | 녹화(`recordings/raw-*-<환경>.jsonl`)나 샘플. 여러 개면 하나씩 이어서 재생 |
 | `--out` | `.env`의 `http://COLLECTOR_HTTP_HOST:COLLECTOR_HTTP_PORT/ingest` | `http(s)://…/ingest` 또는 `file://path` |
-| `--env` | `replay` | `X-Env`. 실측(`p4`)과 섞이지 않게 `replay`·`sample` 등을 쓴다 |
+| `--env` | `replay` | `X-Env`. 실측(`aws`·`on-premise`)과 섞이지 않게 `replay`·`sample` 등을 쓴다 |
 | `--ca` | | `https`일 때 서버 인증서(PEM). 예: `--out https://3.39.170.31/ingest --ca portran-ingest.pem` |
 | `--speed` | `1` | 배속. `0`이면 기다리지 않음 |
 | `--retime` | `now` | `now`: 첫 레코드를 지금으로 / `none`: 원본 시각·ID 그대로(이미 있는 줄은 중복으로 걸러짐) / `2026-12-04T14:00:00`: 그 시각으로 |

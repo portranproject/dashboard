@@ -191,14 +191,18 @@ def test_raw_series_are_windowed():
     화면 간격(v.windowPeriod)을 3초 배수로 올린 구간(win)으로 묶는다(D202)."""
     items = raw_series_queries()
     titles = {t for t, _ in items}
-    assert {"RRC 연결 시도 · 성공 · 무응답", "UE 컨텍스트 · 연결 UE 수", "칸 일부 없음", "CPU 사용률", "CPU 내역",
-            "메모리 사용량", "메모리 내역", "F1·N2 SCTP 트래픽", "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"} == titles
+    assert {"RRC 연결 시도 · 성공 · 무응답", "UE 컨텍스트 · 연결 UE 수", "칸 일부 없음", "CPU 사용률(전체)",
+            "CPU 사용률(분석 엔진)", "메모리 사용량(전체)", "메모리 사용량(분석 엔진)", "F1·N2 SCTP 트래픽", "F1·N2 SCTP 패킷",
+            "CPU 사용률 · RRC 연결 시도"} == titles
     for title, q in items:
         assert "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)" in q, title
         assert "aggregateWindow(every: win," in q and "aggregateWindow(every: 3s" not in q, title
-        # 원본을 읽는 from마다 range·filter 바로 뒤에 묶는다(저장소에서 계산) — 앞에 pivot·map이 오면 다 읽는다
+        # 원본을 읽는 from마다 range·filter 바로 뒤에 묶는다(저장소에서 계산) — 앞에 pivot·map이 오면 다 읽는다.
+        # 세션마다 한 줄인 hello(칸 일부 없음의 보고 주기)는 원본이 아니라 묶지 않는다
         for m in re.finditer(r"from\(bucket: v\.defaultBucket\)", q):
             rest = q[m.end():]
+            if '_measurement == "hello"' in rest.split("|>")[2]:
+                continue
             steps = [s.strip().split("(")[0] for s in rest.split("|>")[1:5]]
             assert steps[0] == "range" and "pivot" not in steps[:3] and "aggregateWindow" in steps, (title, steps)
 
@@ -380,8 +384,8 @@ def test_performance_overhead_row():
     start = next(i for i, p in enumerate(panels) if p["type"] == "row" and p["title"] == "Overhead")
     end = next((i for i, p in enumerate(panels) if i > start and p["type"] == "row"), len(panels))
     row = {p["title"]: p for p in panels[start + 1:end]}
-    assert list(row) == ["노드", "고른 시간 범위 요약", "CPU 사용률", "CPU 내역",
-                         "메모리 사용량", "메모리 내역",
+    assert list(row) == ["노드", "Cpu/Memory 평균 사용률", "CPU 사용률(전체)", "CPU 사용률(분석 엔진)",
+                         "메모리 사용량(전체)", "메모리 사용량(분석 엔진)",
                          "F1·N2 SCTP 트래픽",
                          "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"]
     for title, p in row.items():
@@ -401,19 +405,44 @@ def test_performance_overhead_row():
         q = row[title]["targets"][0]["query"]
         assert '"overhead_link"' in q and f"ingress_{field}" in q and f"egress_{field}" in q and "r._value / 3.0" in q, title
         assert row[title]["fieldConfig"]["defaults"]["unit"] == unit, title
-        # 범례 = 'F1 들어옴 (DU → CU)' — NIC 이름은 범례에서 뺀다
+        # 범례 = 'F1 Ingress (DU → CU)' — NIC 이름은 범례에서 뺀다. 방향은 필드 이름과 같은 영어(사용자 요청 11/20)
         assert row[title]["fieldConfig"]["defaults"]["displayName"] == "${__field.labels.link} ${__field.labels.dir}"
-        assert '"들어옴 (DU → CU)"' in q and '"나감 (CU → AMF)"' in q
-    # 노드 이름: cu로 끝나면 CU로 보인다(AWS는 p4-cu, 11/16)
+        assert '"Ingress (DU → CU)"' in q and '"Egress (CU → AMF)"' in q and "들어옴" not in q and "나감" not in q
+        # Egress는 아래(음수 쪽)로
+        [neg] = row[title]["fieldConfig"]["overrides"]
+        assert neg["matcher"]["options"] == ".*Egress.*" and neg["properties"][0]["value"] == "negative-Y"
+    # 노드는 늘 CU — overhead는 CU의 분석 엔진이 보내고 node_id는 실행 때 붙인 이름(p4-cu·p4-e2e)이라 쓰지 않는다(D215)
     node = row["노드"]
-    [mapping] = next(o for o in node["fieldConfig"]["overrides"] if o["matcher"]["options"] == "노드")["properties"]
-    pattern = mapping["value"][0]["options"]["pattern"]
-    assert [bool(re.match(pattern, v)) for v in ("p4-cu", "cu", "CU", "p4-du", "cuda")] == [True, True, True, False, False]
-    # 시간 그래프도 cu로 끝나는 node_id(cu·p4-cu)를 한 노드로 묶는다 — 두 이름이 섞인 범위에서 범례가 둘씩 나왔음(11/16)
-    for title in ("CPU 사용률", "CPU 내역", "메모리 사용량", "메모리 내역"):
-        q = row[title]["targets"][0]["query"]
-        assert 'strings.hasSuffix(v: strings.toLower(v: r.node), suffix: "cu")' in q and 'then "CU"' in q, title
-        assert "node: if exists r.node then r.node" not in q, title
+    assert '노드: "CU"' in node["targets"][0]["query"]
+    assert all(o["matcher"]["options"] != "노드" for o in node["fieldConfig"]["overrides"])
+    # 시간 그래프는 노드로 나누지 않는다 — 이름이 바뀔 때마다 범례가 둘씩 나왔다(11/16·11/20). 계열 하나라 범례는 숨김,
+    # 점선(코어 수·전체 메모리)과 '그 밖' 쌓기는 없앴다(사용자 요청 11/20)
+    series = {"CPU 사용률(전체)": ("CPU 사용률", "percent"), "CPU 사용률(분석 엔진)": ("분석 엔진", "percent"),
+              "메모리 사용량(전체)": ("사용 중", "bytes"), "메모리 사용량(분석 엔진)": ("분석 엔진 (RSS)", "bytes")}
+    for title, (name, unit) in series.items():
+        p = row[title]
+        q = p["targets"][0]["query"]
+        assert not re.search(r"r\.node\b", q) and '"node"' not in q, title
+        assert re.findall(r'"([^"]+)": if exists', q) == [name], title
+        assert p["fieldConfig"]["defaults"]["unit"] == unit and not p["fieldConfig"]["overrides"], title
+        assert "stacking" not in p["fieldConfig"]["defaults"]["custom"], title
+        assert p["options"]["legend"]["showLegend"] is False, title
+    # 요약 칸: 분석 엔진 평균도 %(사용자 요청 11/20). 노드·요약 칸 글자 크기는 같게 고정(자동이면 요약 칸이 훨씬 컸음)
+    summary = row["Cpu/Memory 평균 사용률"]
+    units = {o["matcher"]["options"]: dict((x["id"], x["value"]) for x in o["properties"])
+             for o in summary["fieldConfig"]["overrides"]}
+    # 평균 넷 — 전체 CPU·메모리, 분석 엔진 CPU·메모리(최대는 뺌, 사용자 요청 11/20)
+    fields = ["CPU 평균 사용률", "메모리 평균 사용률", "분석 엔진 평균 CPU", "분석 엔진 평균 메모리"]
+    assert list(units) == fields
+    assert [units[f]["unit"] for f in fields] == ["percent", "percent", "percent", "bytes"]
+    [organize] = summary["transformations"]
+    assert sorted(organize["options"]["indexByName"], key=organize["options"]["indexByName"].get) == fields
+    assert "max()" not in summary["targets"][0]["query"]
+    assert "float(v: r.process_cores) / float(v: r.cpu_count) * 100.0" in summary["targets"][0]["query"]
+    assert node["options"]["text"] == summary["options"]["text"] and summary["options"]["text"]["valueSize"]
+    # 분석 엔진 CPU = 분석 엔진 코어 / 노드 코어 수 — 전체와 같은 기준(%)
+    assert "r.process_cores / r.cpu_count * 100.0" in row["CPU 사용률(분석 엔진)"]["targets"][0]["query"]
+    assert "r.process_rss_bytes" in row["메모리 사용량(분석 엔진)"]["targets"][0]["query"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
@@ -454,9 +483,10 @@ def test_tables_have_fixed_column_order(path):
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_panel_titles_are_short(path):
-    """패널·줄 제목에 괄호 설명을 붙이지 않는다 — 설명은 패널 설명(ⓘ)에 둔다(사용자 요청 11/16)."""
+    """패널·줄 제목에 괄호 설명을 붙이지 않는다 — 설명은 패널 설명(ⓘ)에 둔다(사용자 요청 11/16).
+    예외: 성능 CU 자원의 '(전체)'·'(분석 엔진)' — 두 열을 가르는 이름(사용자 요청 11/20)."""
     for p in load(path)["panels"]:
-        assert "(" not in p["title"], p["title"]
+        assert "(" not in re.sub(r"\((전체|분석 엔진)\)$", "", p["title"]), p["title"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

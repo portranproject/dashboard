@@ -818,12 +818,12 @@ OVERHEAD = 'r._measurement == "overhead"'
 # 탐지 쪽 전송기는 hello의 node_id만 cu로 바꾸고 overhead 줄은 그대로 보낸다(detection dashboard_sender.py). 한 출처 안에서
 # 이름이 다른 노드가 같은 시각에 보낸 적은 없다(AWS 30일 확인, 11/20). 이름이 바뀔 때마다 범례가 둘씩 나왔다(11/16·11/20)
 OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
-# 노드·고른 시간 범위 요약 칸의 글자 크기(px) — 자동이면 칸 폭·값 수에 따라 달라져 요약 칸 숫자가 노드 칸보다 훨씬 컸다(사용자 요청 11/20)
+# 노드·Cpu/Memory 평균 사용률 칸의 글자 크기(px) — 자동이면 칸 폭·값 수에 따라 달라져 요약 칸 숫자가 노드 칸보다 훨씬 컸다(사용자 요청 11/20)
 OVERHEAD_STAT_TEXT = {"titleSize": 14, "valueSize": 24}
 
 
 def overhead_pivot(fields: list[str], measurement: str = "overhead") -> str:
-    """고른 시간 범위의 overhead 필드들을 시각(구간 시작)마다 한 행으로(원본 그대로 — '고른 시간 범위 요약' 전용).
+    """고른 시간 범위의 overhead 필드들을 시각(구간 시작)마다 한 행으로(원본 그대로 — 'Cpu/Memory 평균 사용률' 전용).
     세션(series)마다 표가 나뉘어 있다."""
     cond = " or ".join(f'r._field == "{f}"' for f in fields)
     return f'''from(bucket: v.defaultBucket)
@@ -924,7 +924,8 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
     no_data = [{"type": "value", "options": {"-1": {"text": "없음", "index": 0}}}]
     # 평균만 — 최대(3초 한 칸의 순간값)는 다른 프로그램 하나로도 튀어 대표 값이 못 되고 시간 그래프에 보인다(사용자 요청 11/20)
     SUMMARY_FIELDS = ["CPU 평균 사용률", "메모리 평균 사용률", "분석 엔진 평균 CPU", "분석 엔진 평균 메모리"]
-    b.add("stat", "고른 시간 범위 요약", 8, 16, 4, [target(summary)],
+    b.add("stat", "Cpu/Memory 평균 사용률", 8, 16, 4,  # 11/20 전 '고른 시간 범위 요약'(사용자 요청)
+          [target(summary)],
           "고른 시간 범위의 평균 — 왼쪽 둘은 노드 전체, 오른쪽 둘은 그 가운데 분석 엔진(계측기 프로세스, process_scope self) 몫. "
           "CPU 사용률 = 바쁜 코어 / 코어 수, 메모리 사용률 = (MemTotal − MemAvailable) / MemTotal, 분석 엔진 CPU = 분석 엔진 코어 / "
           "노드 코어 수(노드 CPU 전체의 %), 분석 엔진 메모리 = RSS. 탐지 엔진·전송기는 노드 값에만 섞여 있다. "
@@ -939,7 +940,7 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
               "excludeByName": {}, "renameByName": {},
               "indexByName": {name: i for i, name in enumerate(SUMMARY_FIELDS)}}}])
 
-    # 시간 그래프는 모두 구간 평균(사용자 결정 11/18) — 3초 값의 뜻(구간 평균)을 넓힌 것. 최대는 '고른 시간 범위 요약'이 원본으로
+    # 시간 그래프는 모두 구간 평균(사용자 결정 11/18) — 3초 값의 뜻(구간 평균)을 넓힌 것. 평균은 'Cpu/Memory 평균 사용률'이 원본으로
     # 왼쪽 = 노드 전체, 오른쪽 = 분석 엔진 몫. 계열이 하나라 범례는 숨긴다(사용자 요청 11/20 — '내역'(분석 엔진 + 그 밖 쌓기)과
     # 점선(코어 수·전체 메모리)을 없애고 제목을 '(전체)'·'(분석 엔진)'으로)
     imports = 'import "internal/debug"'

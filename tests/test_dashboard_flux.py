@@ -151,9 +151,9 @@ def test_lines_null_in_empty_windows(flux):
 
 
 def test_overhead_summary_in_percent(flux):
-    """고른 시간 범위 요약(평균 넷, 사용자 요청 11/20): CPU busy 1·2·3 / 4코어 → 평균 50%, 메모리 4,000 / 8,000 = 50%,
+    """Cpu/Memory 평균 사용률(평균 넷, 사용자 요청 11/20): CPU busy 1·2·3 / 4코어 → 평균 50%, 메모리 4,000 / 8,000 = 50%,
     분석 엔진 0.5 / 4코어 = 12.5%(코어가 아니라 %), RSS 평균 1,000."""
-    [row] = flux(panel_query("performance", "고른 시간 범위 요약"))
+    [row] = flux(panel_query("performance", "Cpu/Memory 평균 사용률"))
     assert {k: v for k, v in row.items() if k not in ("result", "table")} == {
         "CPU 평균 사용률": 50.0, "메모리 평균 사용률": 50.0, "분석 엔진 평균 CPU": 12.5, "분석 엔진 평균 메모리": 1_000.0}
 

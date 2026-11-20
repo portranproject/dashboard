@@ -384,7 +384,7 @@ def test_performance_overhead_row():
     start = next(i for i, p in enumerate(panels) if p["type"] == "row" and p["title"] == "Overhead")
     end = next((i for i, p in enumerate(panels) if i > start and p["type"] == "row"), len(panels))
     row = {p["title"]: p for p in panels[start + 1:end]}
-    assert list(row) == ["노드", "고른 시간 범위 요약", "CPU 사용률(전체)", "CPU 사용률(분석 엔진)",
+    assert list(row) == ["노드", "Cpu/Memory 평균 사용률", "CPU 사용률(전체)", "CPU 사용률(분석 엔진)",
                          "메모리 사용량(전체)", "메모리 사용량(분석 엔진)",
                          "F1·N2 SCTP 트래픽",
                          "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"]
@@ -428,7 +428,7 @@ def test_performance_overhead_row():
         assert "stacking" not in p["fieldConfig"]["defaults"]["custom"], title
         assert p["options"]["legend"]["showLegend"] is False, title
     # 요약 칸: 분석 엔진 평균도 %(사용자 요청 11/20). 노드·요약 칸 글자 크기는 같게 고정(자동이면 요약 칸이 훨씬 컸음)
-    summary = row["고른 시간 범위 요약"]
+    summary = row["Cpu/Memory 평균 사용률"]
     units = {o["matcher"]["options"]: dict((x["id"], x["value"]) for x in o["properties"])
              for o in summary["fieldConfig"]["overrides"]}
     # 평균 넷 — 전체 CPU·메모리, 분석 엔진 CPU·메모리(최대는 뺌, 사용자 요청 11/20)

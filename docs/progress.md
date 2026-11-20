@@ -59,6 +59,8 @@
 
 **2026-11-20** — 관제 경보 목록에서 룰 ID 열 삭제(D212), 데이터 출처를 탐지 쪽 새 `X-Env` `aws`·`on-premise`로 바꾸고 Slack에 On-Premise 추가(D213) — 브랜치 `fix/alert-list-rule-column`
 
+**2026-11-20** — 관제 '칸 일부 없음'을 세션 보고 주기로 판정(D214 — 11/13~11/15 1,000 ms 세션의 잘못된 줄무늬), 성능 노드를 늘 CU 하나로(D215 — `p4-e2e`로 보이던 것), CPU·메모리 패널을 '(전체)'·'(분석 엔진)'으로 — 브랜치 `fix/overhead-panels-partial-period`
+
 ---
 
 ## 열린 항목
@@ -75,6 +77,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 | Q17 | 조직 `portranproject`의 **Deploy keys 정책을 Enabled로 바꿈**(2026-10-26, EC2가 비공개 저장소를 clone하려고). 조직의 모든 저장소에서 배포 키를 만들 수 있게 된다. GitHub는 새 조직에서 기본으로 막고 GitHub App 같은 대안을 권한다. 대안: 서버가 GitHub에 접속하지 않고 S3로 코드를 받는 방식(CD에서 검토). 다시 Disabled로 돌리면 서버의 `git pull`이 멈춤 | 전 파트 (조직 소유자) | M7 D95 |
 | Q23 | AWS 상시 KPM2의 `ext.UeCtxMax`가 **125까지** 올라 셀 한도 96(27_ §5.3, 대시보드 `CELL_LIMIT`)을 넘었다(11/11 15:53 공격). 한도가 이 테스트베드 셀의 실제 값인지, `UeCtxMax`가 한도를 넘는 대기 UE까지 세는지. 1·2단계 경보가 high가 되는 기준(90% = 86)과 관련. `hello`의 `cells[].max_conn`에 실제 한도가 오면 그 값을 쓰도록 바꿀 수 있음. 11/12 탐지 쪽 변경으로 `L3-01-V`의 절대 수 문턱 `f_abs`도 셀 한도 × 0.1(올림)이 되어, 한도가 틀리면 `C2a` 판정도 달라진다(D162) | 탐지 엔진·테스트베드 | 관제 "UE 컨텍스트 · 연결 UE 수", `grafana/build.py` `CELL_LIMIT` |
 | Q24 | AWS p4 셀이 **1개(6733824) → 4개(6733824~6733827)** 로 늘었고, 최근 3시간에 DU·CU 재시작(`f1_evt`)이 26번 왔다(11/11 오후). 의도한 테스트베드 변경·시험인지 | 테스트베드·탐지 엔진 | 관제 화면 셀 변수(셀을 하나 고르면 그 셀만 보임) |
+| Q26 | AWS 상시 KPM2 신뢰도 점검(11/20)에서 나온 탐지 쪽·테스트베드 요청: ① 같은 시간대 CU 로그로 KPM2 카운터를 다시 세어 대조(탐지 쪽 `tools/ocu_log_to_kpm2.py`, 탐지 쪽 Q-08) — 지표끼리는 맞지만(RRC 시도 = 성공 + 실패, 세션 4개·3초 칸 6만 개에서 관계식이 한 번도 안 깨짐) 정답 대조는 없음 ② 시험 데이터(`hello` 노드 `stage4_yellow` 등)는 실측 `aws`가 아닌 별도 `X-Env`로 ③ 보고 주기를 100 ms로 고정할지(11/13~11/15 세션 7개는 1,000 ms — 대시보드는 D214로 세션마다 맞춤) ④ 전송기가 `hello`의 `node_id`만 `cu`로 바꾸고 `overhead`는 그대로 보냄(`p4-e2e`) — 대시보드는 D215로 쓰지 않으니 맞출지는 탐지 쪽 판단 ⑤ 정상 데이터가 적음(`aws` 10분에 연결 시도 4건, 연결 UE 최대 1대) — 1단계 룰의 평소 값 기준선이 되려면 UE 여러 대로 정상 접속을 꾸준히 | 탐지 엔진·테스트베드 | D214·D215 |
 | Q25 | Claude Code 작업 기록 hook·읽기 전용 가드를 프로젝트 설정(`.claude/settings.json`)으로 커밋하면, 이 저장소에서 Claude Code를 쓰는 팀원 모두에게 적용된다(기록은 각자 PC의 `logs/agent/`에만, 비밀 값은 가림). 역할 분리는 기본 꺼짐(D208, 켜려면 `"PORTRAN_ROLE_WORKFLOW": "on"` 또는 요청), 작업 기록은 기본 켬(끄려면 각자 `.claude/settings.local.json`의 `env`에 `"PORTRAN_AGENT_LOG": "off"`) — 읽기 전용 가드는 그대로(D207). `disableAllHooks`는 가드까지 꺼서 권하지 않음 | 이 저장소에서 Claude Code를 쓰는 팀원 (알림) | D198·D207, `docs/agent-workflow.md` 4절 |
 
 ### 미정 (확정 전까지 TODO로 둠)
@@ -1523,4 +1526,22 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | 한 일 | `grafana/build.py` `SOURCES`(AWS `aws`·On-Premise `on-premise`·AWS (이전 p4) `p4`·재생·샘플, 기본 AWS), 알림 `NOTIFY_SOURCES` — 출처마다 공격 경보·수집 멈춤 규칙(AWS UID 예전 그대로, On-Premise `-onprem`), 라벨 `source`·`env`, 메시지 제목 끝에 출처·경보 상세 링크 `var-source`를 그 출처로. `grafana/query_timing.py` 기본 `--source aws`. `collector/ingest.py` 설명. 테스트: 출처 변수, 알림 4규칙·라벨·템플릿, `X-Env` `aws`·`on-premise` 받음. 문서: CLAUDE.md 1.1·4·6·7·9·9.3·13절, README(그림·변수·Slack), `docs/dashboard-design.md` 1절·열린 질문, `schema/SCHEMA.md` 2절, `docs/deploy.md`. 열린 항목 Q21 → 해결됨 |
 | 결정 D213 | 데이터 출처 = 탐지 쪽 `X-Env` 그대로: AWS `aws`, On-Premise `on-premise`. 11/20 전 AWS 실측(`p4`)은 쿼리를 바꾸지 않고 선택지 'AWS (이전 p4)'로 따로. Slack은 출처마다 규칙 — 재생·샘플·이전 p4는 알리지 않음. 사용자 결정, 팀 확인 불필요(탐지 쪽이 정한 값) |
 | 확인 결과 | `pytest` 전체 599 passed(로컬 InfluxDB·Grafana — 알림 4규칙 쿼리 실행 포함), `python grafana/build.py --check` 통과. 실제 `aws`·`on-premise` 데이터는 아직 서버에 없어 화면·Slack은 탐지 쪽이 보내기 시작한 뒤 확인 |
+
+## 칸 일부 없음 보고 주기, 성능 노드 CU, CPU·메모리 패널 (2026-11-20, 브랜치 `fix/overhead-panels-partial-period`)
+
+사용자 요구(11/20): ① AWS 상시 KPM2 신뢰도 점검에서 찾은 '칸 일부 없음' 오판을 고침("1번 고쳐줘") ② 성능 노드가 왜 `p4-e2e`로 보이나 ③ "CPU 사용률 / 내역 → CPU 사용률(전체) / CPU 사용률(분석 엔진), 메모리 사용량 / 메모리 내역 → 메모리 사용량(전체) / 메모리 사용량(분석 엔진), 점선은 없애도 돼". 역할 분리 꺼짐(D208).
+
+| 구분 | 내용 |
+|---|---|
+| 원인 ① | 관제 '칸 일부 없음'은 보고 주기를 100 ms로 박아 두고 `n` < 30이면 칠했다. AWS p4 11/13~11/15 세션 7개는 `hello.period_ms` 1,000 ms라 가득 찬 칸이 `n` 3 — 그 기간 칸이 모두 '일부 없음'으로 칠해졌다(데이터는 빠짐없음) |
+| 원인 ② | 분석 엔진이 `--node p4-e2e`로 실행되고(`node_id`는 실행 옵션 또는 호스트 이름, telemetry `main.c`), 탐지 쪽 전송기는 `hello`의 `node_id`만 `cu`로 바꾸고 `overhead` 줄은 그대로 보낸다(detection `tools/dashboard_sender.py` `_hello_out`·`overhead` 분기). AWS 30일: `overhead` 노드 `cu`(11/13~15) → `p4-cu`(11/16~19) → `p4-e2e`(11/19~, `aws`도). 한 출처 안에서 이름이 다른 노드가 같은 시각에 보낸 적은 없음(겹침 0) |
+| 한 일 | `grafana/build.py`: 칸 일부 없음 쿼리 — 저장소에서 세션·셀마다 구간으로 묶은 뒤(`n` < 30 고정 거르기 그대로) 세션 → 주기 사전(`hello.period_ms`, 처음부터 찾음, 없으면 100 ms)으로 '가득 찬 n'(3000 ÷ 주기)과 비교. 주기가 100 ms가 아니면 칸 수 대신 주기를 적음(`n` < 30 칸 수가 일부 없는 칸 수가 아니라서). 노드 — `NODE_FLUX`·`NODE_MAPPINGS` 삭제, 노드 칸은 늘 'CU', `overhead_windowed`는 노드로 나누지 않음. 패널 — 'CPU 사용률(전체)'(그대로), 'CPU 사용률(분석 엔진)'(`process_cores` / `cpu_count` × 100, '그 밖' 쌓기·점선 코어 수 없앰), '메모리 사용량(전체)'(점선 전체 없앰), '메모리 사용량(분석 엔진)'(RSS만, '그 밖' 없앰) — 계열 하나라 범례 숨김. 테스트: `tests/test_dashboards.py`(제목 4개, 노드 CU, 노드로 안 나눔, 범례·단위, hello 읽기는 묶기 검사에서 뺌, 제목 괄호 규칙에 '(전체)'·'(분석 엔진)' 예외), `tests/test_dashboard_flux.py`(1,000 ms 세션 `n` 3은 가득·`n` 2는 일부 없음, hello 없는 세션은 100 ms, 분석 엔진 CPU 12.5%·RSS·사용 중 값과 빈 구간 null). 문서: CLAUDE.md 5.2·9.1·9.2, README, `docs/dashboard-design.md` 2·3절, `schema/SCHEMA.md` 6절 |
+| 결정 D214 | '칸 일부 없음' = `n` < 3000 ÷ 그 세션의 `hello.period_ms`(없거나 0이면 100 ms). 세션 → 주기는 Flux `dict`로 찾는다 — `join` 패키지는 한쪽이 비면 `cannot join on an empty table`로 깨지고(일부 없는 칸이 없으면 늘 빔), 빈 배열에 `array.map`을 쓰면 형식을 잃어(`fromList`가 `[string]`으로 받음) 기본 항목 하나를 늘 붙인다. 주기가 100 ms보다 짧은 세션은 `n` 30 미만만 본다(저장소 거르기 고정값). 팀 확인 불필요(대시보드 표시) |
+| 결정 D215 | 성능 노드는 늘 CU 하나 — overhead는 CU 박스의 분석 엔진만 보내고(27_ §9 R5), `node_id`는 실행 때 붙인 이름이라 바뀌어 왔다(범례가 이름이 바뀔 때마다 둘씩 나왔음, 11/16·11/20). D192('cu로 끝나면 CU')를 바꿈. 같은 출처에서 CU 말고 다른 노드가 overhead를 보내게 되면 다시 나눈다. 팀 확인 불필요, 탐지 쪽에는 Q26 ④로 알림 |
+| 결정 | 'CPU 사용률(분석 엔진)' 단위는 노드 CPU 전체의 %(분석 엔진 코어 / 노드 코어 수) — 왼쪽 전체와 같은 기준이라 바로 비교된다. '고른 시간 범위 요약'의 '분석 엔진 평균'은 그대로 코어 수 |
+| 확인 결과 | `pytest` 전체 600 passed(로컬 InfluxDB·Grafana — 바뀐 쿼리를 Grafana로 실행 포함), `python grafana/build.py --check` 통과, 알림 JSON 바뀌지 않음. AWS 서버(읽기만, 한 번씩): `query_timing.py --source p4 --range 7d` 관제 18요청·성능 11요청 모두 통과 — 칸 일부 없음 0.24초, CPU·메모리 4패널 0.08~0.09초. 칸 일부 없음(3초 구간, p4 10일) 154개 — 11/14·11/15는 0개(전에는 그 기간 전부), 11/13은 1,000 ms 세션의 시작·끝 칸(`n 1 / 3 (보고 주기 1000 ms)`)과 100 ms 칸만. `aws` 하루 4개(세션 시작·끝 칸) |
+| 추가 요청 | "%로 맞춰줘, 글자 크기를 왼쪽 노드 칸이랑 통일" — '고른 시간 범위 요약'의 '분석 엔진 평균'(코어, `0.000 코어`로 보였음)을 '분석 엔진 평균 CPU'(`process_cores` / `cpu_count` × 100 평균, 소수 자리 자동)로. 노드·요약 칸 글자 크기를 `OVERHEAD_STAT_TEXT`(제목 14 px, 값 24 px)로 고정 — 자동이면 칸 폭·값 수에 따라 요약 칸 숫자가 훨씬 컸다. 테스트: 단위·쿼리·두 칸 글자 크기 같음, 실제 InfluxDB 값(분석 엔진 0.5 / 4코어 = 12.5%, 평균·최대 CPU 50·75%, 메모리 50%). AWS(읽기만, 한 번): 요약 7일 4.39초(전 3.2초 — 분석 엔진 몫도 원본 줄마다 나눠서, 새로고침 1분이라 둠), 값 p4 7일 0.0155%·`aws` 1일 0.0204% |
+| 추가 요청 2 | "고른 시간 범위 요약도 CPU 평균 사용률 / 메모리 평균 사용률 / 분석 엔진 평균 메모리로, 더 좋은 대안 있으면 추천" → 평균 넷(전체 CPU·메모리, 분석 엔진 CPU·메모리)으로 추천·적용: 'CPU 평균 사용률', '메모리 평균 사용률'(전에는 최대), '분석 엔진 평균 CPU'(바로 전 요청으로 %), '분석 엔진 평균 메모리'(전에는 최대). '최대 CPU' 삭제 — 3초 한 칸의 순간값이라 CU의 다른 프로그램 하나로도 튀고(p4 7일 76.6%, 평균 2.8%) 시간 그래프에 보인다. 열 순서는 organize로 고정. AWS(읽기만, 한 번): 7일 3.27초, p4 7일 CPU 2.83%·메모리 71.0%·분석 엔진 0.0155%·306 MiB, `aws` 1일 2.57%·79.5%·0.0220%·309 MiB |
+| 추가 요청 3 | "F1·N2 그래프의 나감·들어옴을 Outgress·Ingress로" → Ingress·Egress로(Outgress는 표준 용어가 아니고, 필드 이름이 `ingress_*`·`egress_*`). 범례 'F1 Ingress (DU → CU)'·'N2 Egress (CU → AMF)', Egress는 그대로 아래(음수 쪽). 테스트: 범례 이름·Egress 아래 |
+| 남은 일 | Q26(탐지 쪽·테스트베드 요청) — 사용자가 전달 |
 

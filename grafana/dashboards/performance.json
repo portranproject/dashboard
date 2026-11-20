@@ -124,7 +124,7 @@
       "id": 2,
       "type": "stat",
       "title": "노드",
-      "description": "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). 노드는 node_id가 cu로 끝나면(AWS는 p4-cu) CU로 보인다. 마지막 수신 = 마지막 3초 구간이 시작한 뒤 지난 시간(데이터 시각 기준) — 30초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
+      "description": "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). overhead는 늘 CU의 분석 엔진이 보내 노드는 CU로 보인다 (node_id는 분석 엔진을 실행할 때 붙인 이름이라 p4-cu·p4-e2e 등으로 바뀌어 와서 쓰지 않는다). 마지막 수신 = 마지막 3초 구간이 시작한 뒤 지난 시간(데이터 시각 기준) — 30초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -142,7 +142,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -30d)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"cpu_count\" or r._field == \"mem_total_bytes\"))\n  |> group(columns: [\"node\", \"_field\"])\n  |> last()\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, 노드: if exists r.node then r.node else \"(node_id 없음)\",\n      코어: if exists r.cpu_count then r.cpu_count else 0,\n      메모리: if exists r.mem_total_bytes then r.mem_total_bytes else 0,\n      \"마지막 수신\": float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}))\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> drop(columns: [\"_time\"])"
+          "query": "from(bucket: v.defaultBucket)\n  |> range(start: -30d)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"cpu_count\" or r._field == \"mem_total_bytes\"))\n  |> group(columns: [\"node\", \"_field\"])\n  |> last()\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, 노드: \"CU\",\n      코어: if exists r.cpu_count then r.cpu_count else 0,\n      메모리: if exists r.mem_total_bytes then r.mem_total_bytes else 0,\n      \"마지막 수신\": float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}))\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 1)\n  |> drop(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -154,29 +154,6 @@
           "noValue": "overhead 없음"
         },
         "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "노드"
-            },
-            "properties": [
-              {
-                "id": "mappings",
-                "value": [
-                  {
-                    "type": "regex",
-                    "options": {
-                      "pattern": "^(.+-)?(cu|CU)$",
-                      "result": {
-                        "text": "CU",
-                        "index": 0
-                      }
-                    }
-                  }
-                ]
-              }
-            ]
-          },
           {
             "matcher": {
               "id": "byName",
@@ -241,7 +218,11 @@
           "fields": "/.*/",
           "values": false
         },
-        "orientation": "vertical"
+        "orientation": "vertical",
+        "text": {
+          "titleSize": 14,
+          "valueSize": 24
+        }
       },
       "transformations": [
         {
@@ -263,7 +244,7 @@
       "id": 3,
       "type": "stat",
       "title": "고른 시간 범위 요약",
-      "description": "실험 구간 동안 노드 CPU 사용률(바쁜 코어 / 코어 수)의 평균·최대, 메모리 사용률(MemTotal − MemAvailable) 최대, 분석 엔진(계측기 프로세스, process_scope self) 평균 코어 수와 최대 메모리(RSS). 탐지 엔진·전송기는 노드 값에만 섞여 있다",
+      "description": "고른 시간 범위의 평균 — 왼쪽 둘은 노드 전체, 오른쪽 둘은 그 가운데 분석 엔진(계측기 프로세스, process_scope self) 몫. CPU 사용률 = 바쁜 코어 / 코어 수, 메모리 사용률 = (MemTotal − MemAvailable) / MemTotal, 분석 엔진 CPU = 분석 엔진 코어 / 노드 코어 수(노드 CPU 전체의 %), 분석 엔진 메모리 = RSS. 탐지 엔진·전송기는 노드 값에만 섞여 있다. 순간 최고치는 아래 시간 그래프에서 본다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -281,7 +262,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"array\"\ncpu = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)\n  |> map(fn: (r) => ({_time: r._time, _value: r.node_busy_cores / float(v: r.cpu_count) * 100.0}))\n  |> group()\nmem = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"mem_total_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.mem_total_bytes and r.mem_total_bytes > 0)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r.mem_used_bytes) / float(v: r.mem_total_bytes) * 100.0}))\n  |> group()\nfield = (name) => from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and r._field == name)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value)}))\n  |> group()\npick = (tables) => {\n  found = tables |> findColumn(fn: (key) => true, column: \"_value\")\n  return if length(arr: found) > 0 then found[0] else -1.0\n}\narray.from(rows: [{\"평균 CPU\": pick(tables: cpu |> mean()), \"최대 CPU\": pick(tables: cpu |> max()),\n  \"최대 메모리\": pick(tables: mem |> max()), \"분석 엔진 평균\": pick(tables: field(name: \"process_cores\") |> mean()),\n  \"분석 엔진 최대 메모리\": pick(tables: field(name: \"process_rss_bytes\") |> max())}])"
+          "query": "import \"array\"\ncpu = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.node_busy_cores and exists r.cpu_count)\n  |> map(fn: (r) => ({_time: r._time, _value: r.node_busy_cores / float(v: r.cpu_count) * 100.0}))\n  |> group()\nmem = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"mem_total_bytes\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.mem_used_bytes and exists r.mem_total_bytes and r.mem_total_bytes > 0)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r.mem_used_bytes) / float(v: r.mem_total_bytes) * 100.0}))\n  |> group()\nengine = from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"process_cores\" or r._field == \"cpu_count\"))\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => exists r.process_cores and exists r.cpu_count and r.cpu_count > 0)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r.process_cores) / float(v: r.cpu_count) * 100.0}))\n  |> group()\nfield = (name) => from(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and r._field == name)\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r._value)}))\n  |> group()\npick = (tables) => {\n  found = tables |> findColumn(fn: (key) => true, column: \"_value\")\n  return if length(arr: found) > 0 then found[0] else -1.0\n}\narray.from(rows: [{\"CPU 평균 사용률\": pick(tables: cpu |> mean()), \"메모리 평균 사용률\": pick(tables: mem |> mean()),\n  \"분석 엔진 평균 CPU\": pick(tables: engine |> mean()),\n  \"분석 엔진 평균 메모리\": pick(tables: field(name: \"process_rss_bytes\") |> mean())}])"
         }
       ],
       "fieldConfig": {
@@ -306,7 +287,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "평균 CPU"
+              "options": "CPU 평균 사용률"
             },
             "properties": [
               {
@@ -322,7 +303,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "최대 CPU"
+              "options": "메모리 평균 사용률"
             },
             "properties": [
               {
@@ -338,39 +319,19 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "최대 메모리"
+              "options": "분석 엔진 평균 CPU"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "percent"
-              },
-              {
-                "id": "decimals",
-                "value": 1
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "분석 엔진 평균"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "suffix: 코어"
-              },
-              {
-                "id": "decimals",
-                "value": 3
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "분석 엔진 최대 메모리"
+              "options": "분석 엔진 평균 메모리"
             },
             "properties": [
               {
@@ -393,13 +354,32 @@
           "fields": "/.*/",
           "values": false
         },
-        "orientation": "vertical"
-      }
+        "orientation": "vertical",
+        "text": {
+          "titleSize": 14,
+          "valueSize": 24
+        }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "CPU 평균 사용률": 0,
+              "메모리 평균 사용률": 1,
+              "분석 엔진 평균 CPU": 2,
+              "분석 엔진 평균 메모리": 3
+            }
+          }
+        }
+      ]
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "CPU 사용률",
+      "title": "CPU 사용률(전체)",
       "description": "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다. 긴 시간 범위에서는 3초 배수 구간의 평균",
       "datasource": {
         "type": "influxdb",
@@ -418,7 +398,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"internal/debug\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => ({r with node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node}))\n  |> group(columns: [\"node\", \"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, node: r.node,\n      \"CPU 사용률\": if exists r.node_busy_cores and exists r.cpu_count then r.node_busy_cores / r.cpu_count * 100.0 else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"internal/debug\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"cpu_count\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, \"CPU 사용률\": if exists r.node_busy_cores and exists r.cpu_count then r.node_busy_cores / r.cpu_count * 100.0 else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -456,8 +436,8 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "CPU 내역",
-      "description": "노드가 쓴 코어 수를 분석 엔진(계측기 프로세스)과 그 밖으로 나눠 쌓았다. 점선 = 노드 코어 수(위쪽 한계). 커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽(그 밖)에 잡힌다. 긴 시간 범위에서는 3초 배수 구간의 평균",
+      "title": "CPU 사용률(분석 엔진)",
+      "description": "분석 엔진(계측기 프로세스, process_scope self)이 쓴 코어 / 노드 코어 수 — 왼쪽 전체와 같은 기준(노드 CPU 전체의 %). 탐지 엔진·전송기는 들어 있지 않다(전체에만). 커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽(전체)에 잡힌다. 긴 시간 범위에서는 3초 배수 구간의 평균",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -475,12 +455,12 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"internal/debug\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"node_busy_cores\" or r._field == \"process_cores\" or r._field == \"cpu_count\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => ({r with node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node}))\n  |> group(columns: [\"node\", \"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, node: r.node,\n      \"분석 엔진\": if exists r.process_cores then r.process_cores else debug.null(type: \"float\"),\n      \"그 밖 (탐지 엔진·전송기·CU 등)\": if exists r.node_busy_cores and exists r.process_cores then if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0 else debug.null(type: \"float\"),\n      \"코어 수\": if exists r.cpu_count then r.cpu_count else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"internal/debug\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"process_cores\" or r._field == \"cpu_count\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, \"분석 엔진\": if exists r.process_cores and exists r.cpu_count then r.process_cores / r.cpu_count * 100.0 else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "percent",
           "min": 0,
           "displayName": "${__field.name}",
           "custom": {
@@ -488,87 +468,20 @@
             "lineWidth": 1,
             "fillOpacity": 25,
             "spanNulls": false,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            }
+            "showPoints": "never"
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "분석 엔진"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "그 밖 (탐지 엔진·전송기·CU 등)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "코어 수"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "text"
-                }
-              },
-              {
-                "id": "custom.stacking",
-                "value": {
-                  "mode": "none",
-                  "group": "B"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    6,
-                    4
-                  ]
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
@@ -579,8 +492,8 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "메모리 사용량",
-      "description": "노드 전체. 사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 점선 = 전체 메모리. 긴 시간 범위에서는 3초 배수 구간의 평균",
+      "title": "메모리 사용량(전체)",
+      "description": "노드 전체. 사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 전체 메모리는 위 '노드' 칸. 긴 시간 범위에서는 3초 배수 구간의 평균",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -598,7 +511,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"internal/debug\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"mem_total_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => ({r with node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node}))\n  |> group(columns: [\"node\", \"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, node: r.node,\n      \"사용 중\": if exists r.mem_used_bytes then r.mem_used_bytes else debug.null(type: \"float\"),\n      \"전체\": if exists r.mem_total_bytes then r.mem_total_bytes else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"internal/debug\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, \"사용 중\": if exists r.mem_used_bytes then r.mem_used_bytes else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -618,43 +531,13 @@
             "fixedColor": "green"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "전체"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "text"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    6,
-                    4
-                  ]
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
@@ -665,8 +548,8 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "메모리 내역",
-      "description": "노드 사용 메모리를 분석 엔진(계측기 프로세스 resident)과 그 밖으로 나눠 쌓았다. 긴 시간 범위에서는 3초 배수 구간의 평균",
+      "title": "메모리 사용량(분석 엔진)",
+      "description": "분석 엔진(계측기 프로세스)이 실제로 차지한 메모리(resident, RSS). 긴 시간 범위에서는 3초 배수 구간의 평균",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -684,7 +567,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "import \"internal/debug\"\nimport \"strings\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"mem_used_bytes\" or r._field == \"process_rss_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => ({r with node: if not exists r.node then \"-\" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: \"cu\") then \"CU\" else r.node}))\n  |> group(columns: [\"node\", \"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [\"node\"])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, node: r.node,\n      \"분석 엔진 (RSS)\": if exists r.process_rss_bytes then r.process_rss_bytes else debug.null(type: \"float\"),\n      \"그 밖\": if exists r.mem_used_bytes and exists r.process_rss_bytes then if r.mem_used_bytes > r.process_rss_bytes then r.mem_used_bytes - r.process_rss_bytes else 0.0 else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
+          "query": "import \"internal/debug\"\nwin = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead\" and r.env == \"${source}\" and (r._field == \"process_rss_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> group(columns: [\"_field\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> group(columns: [])\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> map(fn: (r) => ({_time: r._time, \"분석 엔진 (RSS)\": if exists r.process_rss_bytes then r.process_rss_bytes else debug.null(type: \"float\")}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -697,51 +580,20 @@
             "lineWidth": 1,
             "fillOpacity": 25,
             "spanNulls": false,
-            "showPoints": "never",
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            }
+            "showPoints": "never"
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "분석 엔진 (RSS)"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "그 밖"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
@@ -753,7 +605,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "F1·N2 SCTP 트래픽",
-      "description": "선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균, 긴 시간 범위에서는 3초 배수 구간의 평균) — F1-U 사용자 데이터(GTP-U)는 들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = 들어옴, 아래 = 나감(CU 기준). 네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸. 단위 바이트/초. 바이트는 이더넷 헤더 포함, FCS 제외.",
+      "description": "선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균, 긴 시간 범위에서는 3초 배수 구간의 평균) — F1-U 사용자 데이터(GTP-U)는 들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = Ingress(CU로 들어옴), 아래 = Egress(CU에서 나감). 네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸. 단위 바이트/초. 바이트는 이더넷 헤더 포함, FCS 제외.",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -771,7 +623,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead_link\" and r.env == \"${source}\" and (r._field == \"ingress_wire_bytes\" or r._field == \"egress_wire_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => {\n      link = if not exists r.role then r.iface else if r.role == \"f1\" then \"F1\" else if r.role == \"n2\" then \"N2\" else if r.role == \"f1+n2\" then \"F1+N2\" else r.role\n      return {r with link: link,\n        dir: if r._field == \"ingress_wire_bytes\" then (if link == \"F1\" then \"들어옴 (DU → CU)\" else if link == \"N2\" then \"들어옴 (AMF → CU)\" else \"들어옴\")\n             else (if link == \"F1\" then \"나감 (CU → DU)\" else if link == \"N2\" then \"나감 (CU → AMF)\" else \"나감\")}\n    })\n  |> group(columns: [\"link\", \"dir\", \"iface\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> map(fn: (r) => ({_time: r._time, link: r.link, dir: r.dir, iface: r.iface,\n      _value: if exists r._value then r._value / 3.0 else r._value}))\n  |> sort(columns: [\"_time\"])"
+          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead_link\" and r.env == \"${source}\" and (r._field == \"ingress_wire_bytes\" or r._field == \"egress_wire_bytes\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => {\n      link = if not exists r.role then r.iface else if r.role == \"f1\" then \"F1\" else if r.role == \"n2\" then \"N2\" else if r.role == \"f1+n2\" then \"F1+N2\" else r.role\n      return {r with link: link,\n        dir: if r._field == \"ingress_wire_bytes\" then (if link == \"F1\" then \"Ingress (DU → CU)\" else if link == \"N2\" then \"Ingress (AMF → CU)\" else \"Ingress\")\n             else (if link == \"F1\" then \"Egress (CU → DU)\" else if link == \"N2\" then \"Egress (CU → AMF)\" else \"Egress\")}\n    })\n  |> group(columns: [\"link\", \"dir\", \"iface\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> map(fn: (r) => ({_time: r._time, link: r.link, dir: r.dir, iface: r.iface,\n      _value: if exists r._value then r._value / 3.0 else r._value}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -791,7 +643,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": ".*나감.*"
+              "options": ".*Egress.*"
             },
             "properties": [
               {
@@ -818,7 +670,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "F1·N2 SCTP 패킷",
-      "description": "선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균, 긴 시간 범위에서는 3초 배수 구간의 평균) — F1-U 사용자 데이터(GTP-U)는 들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = 들어옴, 아래 = 나감(CU 기준). 네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸. 단위 패킷/초. 공격으로 시그널링이 몰리는 모양은 바이트보다 패킷 수에서 더 잘 보인다. GSO로 묶인 패킷은 세그먼트 수만큼 센다.",
+      "description": "선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균, 긴 시간 범위에서는 3초 배수 구간의 평균) — F1-U 사용자 데이터(GTP-U)는 들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = Ingress(CU로 들어옴), 아래 = Egress(CU에서 나감). 네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸. 단위 패킷/초. 공격으로 시그널링이 몰리는 모양은 바이트보다 패킷 수에서 더 잘 보인다. GSO로 묶인 패킷은 세그먼트 수만큼 센다.",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -836,7 +688,7 @@
             "uid": "portran-influxdb"
           },
           "refId": "A",
-          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead_link\" and r.env == \"${source}\" and (r._field == \"ingress_sctp_packets\" or r._field == \"egress_sctp_packets\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => {\n      link = if not exists r.role then r.iface else if r.role == \"f1\" then \"F1\" else if r.role == \"n2\" then \"N2\" else if r.role == \"f1+n2\" then \"F1+N2\" else r.role\n      return {r with link: link,\n        dir: if r._field == \"ingress_sctp_packets\" then (if link == \"F1\" then \"들어옴 (DU → CU)\" else if link == \"N2\" then \"들어옴 (AMF → CU)\" else \"들어옴\")\n             else (if link == \"F1\" then \"나감 (CU → DU)\" else if link == \"N2\" then \"나감 (CU → AMF)\" else \"나감\")}\n    })\n  |> group(columns: [\"link\", \"dir\", \"iface\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> map(fn: (r) => ({_time: r._time, link: r.link, dir: r.dir, iface: r.iface,\n      _value: if exists r._value then r._value / 3.0 else r._value}))\n  |> sort(columns: [\"_time\"])"
+          "query": "win = duration(v: (int(v: v.windowPeriod) + 2999999999) / 3000000000 * 3000000000)\nfrom(bucket: v.defaultBucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"overhead_link\" and r.env == \"${source}\" and (r._field == \"ingress_sctp_packets\" or r._field == \"egress_sctp_packets\"))\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> map(fn: (r) => {\n      link = if not exists r.role then r.iface else if r.role == \"f1\" then \"F1\" else if r.role == \"n2\" then \"N2\" else if r.role == \"f1+n2\" then \"F1+N2\" else r.role\n      return {r with link: link,\n        dir: if r._field == \"ingress_sctp_packets\" then (if link == \"F1\" then \"Ingress (DU → CU)\" else if link == \"N2\" then \"Ingress (AMF → CU)\" else \"Ingress\")\n             else (if link == \"F1\" then \"Egress (CU → DU)\" else if link == \"N2\" then \"Egress (CU → AMF)\" else \"Egress\")}\n    })\n  |> group(columns: [\"link\", \"dir\", \"iface\"])\n  |> aggregateWindow(every: win, fn: mean, createEmpty: false, timeSrc: \"_start\")\n  |> aggregateWindow(every: win, fn: mean, createEmpty: true, timeSrc: \"_start\")\n  |> map(fn: (r) => ({_time: r._time, link: r.link, dir: r.dir, iface: r.iface,\n      _value: if exists r._value then r._value / 3.0 else r._value}))\n  |> sort(columns: [\"_time\"])"
         }
       ],
       "fieldConfig": {
@@ -856,7 +708,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": ".*나감.*"
+              "options": ".*Egress.*"
             },
             "properties": [
               {

@@ -33,7 +33,10 @@ TIMELINE_END_S = 1
 # 상시 KPM2·overhead 칸 길이. 칸은 epoch 기준 [k·3000, (k+1)·3000) ms다(27_ §4.1, overhead는 AWS 7일 실측 모두 3000 ms)
 SLOT_MS = 3000
 SLOT_NS = SLOT_MS * 1_000_000
-KPM2_FULL_N = SLOT_MS // 100  # 칸 하나에 100 ms 샘플 30개 — 이보다 적으면 '칸 일부 없음'
+# 분석 엔진 보고 주기(hello.period_ms) 기본값 — 3초 칸이 가득 차면 n = 3000 ÷ 주기(100 ms면 30). 주기는 세션마다 다르다
+# (AWS p4 11/13~11/15 세션 7개는 1,000 ms라 가득 차도 n 3 — 100 ms로 박아 두어 '칸 일부 없음'을 잘못 칠했음, D214)
+KPM2_PERIOD_MS = 100
+KPM2_FULL_N = SLOT_MS // KPM2_PERIOD_MS
 # 시간 그래프는 3초 원본을 그대로 가져오지 않고, Grafana가 화면 폭·범위로 정한 간격(v.windowPeriod)을 3초 배수로 올린
 # 구간(win)으로 묶는다(D202). 원본을 다 가져오면 7일에 셀·지표 하나가 20만 점이라 Grafana 점 수 상한(maxDataPoints × 10)·
 # 시간 제한(30초)에 걸렸다. 3초 배수라 구간마다 칸 수가 같고, 구간 경계가 칸 경계와 맞는다. 1시간 화면은 3초 그대로다
@@ -700,21 +703,48 @@ from(bucket: v.defaultBucket)
   |> group()
   |> map(fn: (r) => ({{_time: r._time, timeEnd: time(v: r._value * 1000000), text: "데이터 없음 (gap, 경보 " + r.alert_id + ")", tags: "gap"}}))
 '''
-    # 칸 일부 없음 = 100 ms 샘플이 30개보다 적은 3초 칸. 7일이면 수만 칸이라(AWS 6만) 구간(win)마다 하나로 합친다(D202).
-    # 거르기는 고정값(n < 30, agg_ms 3000)이어야 저장소에서 처리된다 — n * 100 < agg_ms처럼 열끼리 비교하면 7일에 1.4초
+    # 칸 일부 없음 = 보고 줄 수 n이 '가득 찬 n'(3000 ÷ 그 세션의 hello.period_ms)보다 적은 3초 칸(D214). 7일이면 수만 칸이라
+    # (AWS 6만) 저장소에서 series(세션·셀)마다 구간(win)으로 묶고(D202) 세션 주기는 그 뒤에 붙인다. 저장소 거르기는 고정값(n < 30,
+    # agg_ms 3000)이어야 한다 — n * 주기 < agg_ms처럼 열끼리 비교하면 7일에 1.4초. 주기가 100 ms보다 짧은 세션은 n 30 미만만 본다.
+    # 주기가 100 ms보다 길면 n < 30 칸 수가 일부 없는 칸 수가 아니라(가득 찬 칸도 든다) 칸 수는 빼고 가장 적은 n만 적는다.
+    # 세션 → 주기는 사전으로 찾는다 — join 패키지는 한쪽이 비면(일부 없는 칸이 없으면 늘) 'cannot join on an empty table'로 깨진다.
+    # hello는 세션 시작 때 한 번이라 화면 범위 앞에 있을 수 있어 처음부터 찾는다(세션 수만큼이라 가볍다). 없으면 100 ms로 본다
     partial = f'''
+import "array"
+import "dict"
+import "strings"
 {WINDOW}
+hello = from(bucket: v.defaultBucket)
+  |> range(start: 0)
+  |> filter(fn: (r) => r._measurement == "hello" and r._field == "period_ms" and {ENV})
+  |> map(fn: (r) => ({{_time: r._time, kv: string(v: int(v: r._value)) + " " + r.session}}))
+  |> group()
+  |> findColumn(fn: (key) => true, column: "kv")
+// 빈 배열이면 array.map이 형식을 잃어(fromList가 [string]으로 받음) 늘 기본 항목 하나를 붙인다(빈 세션 이름 = 쓰이지 않는 키)
+periods = dict.fromList(pairs: array.map(arr: array.concat(arr: hello, v: ["{KPM2_PERIOD_MS} "]), fn: (x) => {{
+    p = strings.splitN(v: x, t: " ", i: 2)
+    return {{key: p[1], value: int(v: p[0])}}
+}}))
 part = (fn) => {kpm2_source(["n"], extra=f' and r.agg_ms == "{SLOT_MS}" and r._value < {KPM2_FULL_N}')}
   |> aggregateWindow(every: win, fn: fn, createEmpty: false, timeSrc: "_start")
-  |> group(columns: ["cell"])
-slots = part(fn: count) |> aggregateWindow(every: win, fn: sum, createEmpty: false, timeSrc: "_start") |> set(key: "_field", value: "slots")
-low = part(fn: min) |> aggregateWindow(every: win, fn: min, createEmpty: false, timeSrc: "_start") |> set(key: "_field", value: "low")
+  |> group(columns: ["session", "cell"])
+slots = part(fn: count) |> set(key: "_field", value: "slots")
+low = part(fn: min) |> set(key: "_field", value: "low")
 union(tables: [slots, low])
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
   |> group()
-  |> map(fn: (r) => ({{_time: r._time, timeEnd: time(v: int(v: r._time) + int(v: win)),
-      text: "칸 일부 없음 — 3초 칸 " + string(v: r.slots) + "개, 가장 적은 칸 n " + string(v: r.low) + " / {KPM2_FULL_N} (셀 " + r.cell + ")",
-      tags: "partial"}}))
+  |> map(fn: (r) => {{
+      p = dict.get(dict: periods, key: r.session, default: {KPM2_PERIOD_MS})
+      period = if p > 0 then p else {KPM2_PERIOD_MS}
+      full = {SLOT_MS} / period
+      return {{_time: r._time, timeEnd: time(v: int(v: r._time) + int(v: win)), low: float(v: r.low), full: float(v: full),
+        text: "칸 일부 없음 — " + (if full >= {KPM2_FULL_N} then "3초 칸 " + string(v: r.slots) + "개, " else "")
+          + "가장 적은 칸 n " + string(v: r.low) + " / " + string(v: full)
+          + (if period != {KPM2_PERIOD_MS} then " (보고 주기 " + string(v: period) + " ms)" else "") + " (셀 " + r.cell + ")",
+        tags: "partial"}}
+    }})
+  |> filter(fn: (r) => r.low < r.full)
+  |> keep(columns: ["_time", "timeEnd", "text", "tags"])
 '''
     # 세션 시작(hello)과 DU·CU 재시작(f1_evt)은 뜻이 달라 색·토글을 나눈다(D157)
     sessions = f'''
@@ -783,12 +813,13 @@ def stat_options(fields: str = "", values: bool = False) -> dict:
 # --------------------------------------------------------------------------- 성능 — CU 자원 (수집 오버헤드, M11)
 
 OVERHEAD = 'r._measurement == "overhead"'
-# node_id 표시: cu로 끝나면 CU(AWS 탐지 쪽은 p4-cu로 보냄, 11/16 사용자 요청). 그 밖의 값은 그대로
-# 시간 그래프는 노드마다 계열 — cu로 끝나는 node_id(cu·p4-cu)는 한 노드 CU로 묶는다(두 이름이 섞이면 범례가 둘씩 나왔음, 11/16)
-NODE_FLUX = ('if not exists r.node then "-" else if strings.hasSuffix(v: strings.toLower(v: r.node), suffix: "cu") '
-             'then "CU" else r.node')
-NODE_MAPPINGS = [{"type": "regex", "options": {"pattern": "^(.+-)?(cu|CU)$", "result": {"text": "CU", "index": 0}}}]
+# overhead는 늘 CU 박스의 분석 엔진(계측기)이 보낸다(27_ §9 R5) — 노드는 CU 하나로 보이고, 시간 그래프도 노드로 나누지 않는다
+# (D215). node_id는 분석 엔진을 실행할 때 붙인 이름(--node 또는 호스트 이름)이라 cu → p4-cu → p4-e2e로 바뀌어 왔고,
+# 탐지 쪽 전송기는 hello의 node_id만 cu로 바꾸고 overhead 줄은 그대로 보낸다(detection dashboard_sender.py). 한 출처 안에서
+# 이름이 다른 노드가 같은 시각에 보낸 적은 없다(AWS 30일 확인, 11/20). 이름이 바뀔 때마다 범례가 둘씩 나왔다(11/16·11/20)
 OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
+# 노드·고른 시간 범위 요약 칸의 글자 크기(px) — 자동이면 칸 폭·값 수에 따라 달라져 요약 칸 숫자가 노드 칸보다 훨씬 컸다(사용자 요청 11/20)
+OVERHEAD_STAT_TEXT = {"titleSize": 14, "valueSize": 24}
 
 
 def overhead_pivot(fields: list[str], measurement: str = "overhead") -> str:
@@ -801,17 +832,16 @@ def overhead_pivot(fields: list[str], measurement: str = "overhead") -> str:
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")'''
 
 
-def overhead_windowed(fields: list[str], by_node: bool = True) -> str:
+def overhead_windowed(fields: list[str]) -> str:
     """시간 그래프용 overhead — 필드마다 구간(win) 평균으로 묶은 뒤(저장소에서 계산) 시각마다 한 행으로(D202).
-    계산(사용률·내역)은 묶은 값으로 한다. 빈 구간은 모든 필드가 null인 행이라, 계산식은 debug.null로 null을 낸다.
-    by_node면 노드마다 계열(cu·p4-cu는 CU 하나로 합침), 아니면 노드 구분 없이 한 계열."""
+    계산(사용률)은 묶은 값으로 한다. 빈 구간은 모든 필드가 null인 행이라, 계산식은 debug.null로 null을 낸다.
+    노드·세션 구분 없이 한 계열(CU, D215)."""
     cond = " or ".join(f'r._field == "{f}"' for f in fields)
-    node_map = f"  |> map(fn: (r) => ({{r with node: {NODE_FLUX}}}))" if by_node else ""
     return f'''from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
   |> filter(fn: (r) => {OVERHEAD} and {ENV} and ({cond}))
-{window_by("mean", ["node", "_field"] if by_node else ["_field"], between=node_map, fill=True)}
-  |> group(columns: [{'"node"' if by_node else ""}])
+{window_by("mean", ["_field"], fill=True)}
+  |> group(columns: [])
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")'''
 
 
@@ -838,7 +868,7 @@ from(bucket: v.defaultBucket)
   |> last()
   |> group(columns: ["node"])
   |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
-  |> map(fn: (r) => ({{_time: r._time, 노드: if exists r.node then r.node else "(node_id 없음)",
+  |> map(fn: (r) => ({{_time: r._time, 노드: "CU",
       코어: if exists r.cpu_count then r.cpu_count else 0,
       메모리: if exists r.mem_total_bytes then r.mem_total_bytes else 0,
       "마지막 수신": float(v: int(v: now()) - int(v: r._time)) / 1000000000.0}}))
@@ -848,18 +878,18 @@ from(bucket: v.defaultBucket)
   |> drop(columns: ["_time"])
 '''
     b.add("stat", "노드", 0, 8, 4, [target(node_info)],
-          "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). 노드는 node_id가 cu로 끝나면(AWS는 p4-cu) CU로 보인다. "
+          "overhead를 보내는 노드와 코어 수·전체 메모리(마지막 값). overhead는 늘 CU의 분석 엔진이 보내 노드는 CU로 보인다 "
+          "(node_id는 분석 엔진을 실행할 때 붙인 이름이라 p4-cu·p4-e2e 등으로 바뀌어 와서 쓰지 않는다). "
           "마지막 수신 = 마지막 3초 구간이 "
           f"시작한 뒤 지난 시간(데이터 시각 기준) — {OVERHEAD_STALE_S}초를 넘으면 빨강. 화면 시간 범위와 상관없이 최근 30일에서 찾는다",
           field_config={"defaults": {"color": TEXT_COLOR, "noValue": "overhead 없음"},
-                        "overrides": [override("노드", ("mappings", NODE_MAPPINGS)),
-                                      override("메모리", ("unit", "bytes")),
+                        "overrides": [override("메모리", ("unit", "bytes")),
                                       override("마지막 수신", ("unit", "s"), ("decimals", 0),
                                                ("color", {"mode": "thresholds"}),
                                                ("thresholds", {"mode": "absolute", "steps": [
                                                    {"color": "green", "value": None},
                                                    {"color": "red", "value": OVERHEAD_STALE_S}]}))]},
-          options=stat_options("/.*/"),
+          options={**stat_options("/.*/"), "text": OVERHEAD_STAT_TEXT},
           transformations=[{"id": "organize", "options": {  # map의 열 순서는 정해져 있지 않다
               "excludeByName": {}, "renameByName": {},
               "indexByName": {name: i for i, name in enumerate(["노드", "코어", "메모리", "마지막 수신"])}}}])
@@ -874,6 +904,10 @@ mem = {overhead_pivot(["mem_used_bytes", "mem_total_bytes"])}
   |> filter(fn: (r) => exists r.mem_used_bytes and exists r.mem_total_bytes and r.mem_total_bytes > 0)
   |> map(fn: (r) => ({{_time: r._time, _value: float(v: r.mem_used_bytes) / float(v: r.mem_total_bytes) * 100.0}}))
   |> group()
+engine = {overhead_pivot(["process_cores", "cpu_count"])}
+  |> filter(fn: (r) => exists r.process_cores and exists r.cpu_count and r.cpu_count > 0)
+  |> map(fn: (r) => ({{_time: r._time, _value: float(v: r.process_cores) / float(v: r.cpu_count) * 100.0}}))
+  |> group()
 field = (name) => from(bucket: v.defaultBucket)
   |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
   |> filter(fn: (r) => {OVERHEAD} and {ENV} and r._field == name)
@@ -883,112 +917,77 @@ pick = (tables) => {{
   found = tables |> findColumn(fn: (key) => true, column: "_value")
   return if length(arr: found) > 0 then found[0] else -1.0
 }}
-array.from(rows: [{{"평균 CPU": pick(tables: cpu |> mean()), "최대 CPU": pick(tables: cpu |> max()),
-  "최대 메모리": pick(tables: mem |> max()), "분석 엔진 평균": pick(tables: field(name: "process_cores") |> mean()),
-  "분석 엔진 최대 메모리": pick(tables: field(name: "process_rss_bytes") |> max())}}])
+array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모리 평균 사용률": pick(tables: mem |> mean()),
+  "분석 엔진 평균 CPU": pick(tables: engine |> mean()),
+  "분석 엔진 평균 메모리": pick(tables: field(name: "process_rss_bytes") |> mean())}}])
 '''
     no_data = [{"type": "value", "options": {"-1": {"text": "없음", "index": 0}}}]
+    # 평균만 — 최대(3초 한 칸의 순간값)는 다른 프로그램 하나로도 튀어 대표 값이 못 되고 시간 그래프에 보인다(사용자 요청 11/20)
+    SUMMARY_FIELDS = ["CPU 평균 사용률", "메모리 평균 사용률", "분석 엔진 평균 CPU", "분석 엔진 평균 메모리"]
     b.add("stat", "고른 시간 범위 요약", 8, 16, 4, [target(summary)],
-          "실험 구간 동안 노드 CPU 사용률(바쁜 코어 / 코어 수)의 평균·최대, 메모리 사용률(MemTotal − MemAvailable) 최대, "
-          "분석 엔진(계측기 프로세스, process_scope self) 평균 코어 수와 최대 메모리(RSS). 탐지 엔진·전송기는 노드 값에만 섞여 있다",
+          "고른 시간 범위의 평균 — 왼쪽 둘은 노드 전체, 오른쪽 둘은 그 가운데 분석 엔진(계측기 프로세스, process_scope self) 몫. "
+          "CPU 사용률 = 바쁜 코어 / 코어 수, 메모리 사용률 = (MemTotal − MemAvailable) / MemTotal, 분석 엔진 CPU = 분석 엔진 코어 / "
+          "노드 코어 수(노드 CPU 전체의 %), 분석 엔진 메모리 = RSS. 탐지 엔진·전송기는 노드 값에만 섞여 있다. "
+          "순간 최고치는 아래 시간 그래프에서 본다",
           field_config={"defaults": {"color": TEXT_COLOR, "mappings": no_data},
-                        "overrides": [override("평균 CPU", ("unit", "percent"), ("decimals", 1)),
-                                      override("최대 CPU", ("unit", "percent"), ("decimals", 1)),
-                                      override("최대 메모리", ("unit", "percent"), ("decimals", 1)),
-                                      override("분석 엔진 평균", ("unit", "suffix: 코어"), ("decimals", 3)),
-                                      override("분석 엔진 최대 메모리", ("unit", "bytes"))]},
-          options=stat_options("/.*/"), new_line=True)
+                        "overrides": [override("CPU 평균 사용률", ("unit", "percent"), ("decimals", 1)),
+                                      override("메모리 평균 사용률", ("unit", "percent"), ("decimals", 1)),
+                                      override("분석 엔진 평균 CPU", ("unit", "percent")),  # 0.01% 안팎이라 소수 자리는 자동
+                                      override("분석 엔진 평균 메모리", ("unit", "bytes"))]},
+          options={**stat_options("/.*/"), "text": OVERHEAD_STAT_TEXT}, new_line=True,
+          transformations=[{"id": "organize", "options": {  # 전체 둘, 분석 엔진 둘 순서로 고정
+              "excludeByName": {}, "renameByName": {},
+              "indexByName": {name: i for i, name in enumerate(SUMMARY_FIELDS)}}}])
 
     # 시간 그래프는 모두 구간 평균(사용자 결정 11/18) — 3초 값의 뜻(구간 평균)을 넓힌 것. 최대는 '고른 시간 범위 요약'이 원본으로
-    imports = 'import "internal/debug"\nimport "strings"'
-    cpu_pct = f'''
-{imports}
-{WINDOW}
-{overhead_windowed(["node_busy_cores", "cpu_count"])}
-  |> map(fn: (r) => ({{_time: r._time, node: r.node,
-      "CPU 사용률": {null_unless(["node_busy_cores", "cpu_count"], "r.node_busy_cores / r.cpu_count * 100.0")}}}))
-  |> sort(columns: ["_time"])
-'''
+    # 왼쪽 = 노드 전체, 오른쪽 = 분석 엔진 몫. 계열이 하나라 범례는 숨긴다(사용자 요청 11/20 — '내역'(분석 엔진 + 그 밖 쌓기)과
+    # 점선(코어 수·전체 메모리)을 없애고 제목을 '(전체)'·'(분석 엔진)'으로)
+    imports = 'import "internal/debug"'
     window_note = " 긴 시간 범위에서는 3초 배수 구간의 평균"
-    b.add("timeseries", "CPU 사용률", 0, 12, 8, [target(cpu_pct)],
-          "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다." + window_note,
-          field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
-                                     "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
-          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": False},
-                   "tooltip": {"mode": "multi", "sort": "none"}})
+    no_legend = {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": False},
+                 "tooltip": {"mode": "multi", "sort": "none"}}
 
-    cpu_split = f'''
+    def single(title: str, x: int, fields: list[str], name: str, expr_fields: list[str], expr: str, unit: str,
+               color: str, description: str, max_100: bool = False) -> None:
+        query = f'''
 {imports}
 {WINDOW}
-{overhead_windowed(["node_busy_cores", "process_cores", "cpu_count"])}
-  |> map(fn: (r) => ({{_time: r._time, node: r.node,
-      "분석 엔진": {null_unless(["process_cores"], "r.process_cores")},
-      "그 밖 (탐지 엔진·전송기·CU 등)": {null_unless(["node_busy_cores", "process_cores"],
-          "if r.node_busy_cores > r.process_cores then r.node_busy_cores - r.process_cores else 0.0")},
-      "코어 수": {null_unless(["cpu_count"], "r.cpu_count")}}}))
+{overhead_windowed(fields)}
+  |> map(fn: (r) => ({{_time: r._time, "{name}": {null_unless(expr_fields, expr)}}}))
   |> sort(columns: ["_time"])
 '''
-    b.add("timeseries", "CPU 내역", 12, 12, 8, [target(cpu_split)],
-          "노드가 쓴 코어 수를 분석 엔진(계측기 프로세스)과 그 밖으로 나눠 쌓았다. 점선 = 노드 코어 수(위쪽 한계). "
-          "커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽(그 밖)에 잡힌다." + window_note,
-          field_config={"defaults": timeseries_defaults("none", stacking={"mode": "normal", "group": "A"}),
-                        "overrides": [
-                            override("분석 엔진", ("color", {"mode": "fixed", "fixedColor": "orange"})),
-                            override("그 밖 (탐지 엔진·전송기·CU 등)", ("color", {"mode": "fixed", "fixedColor": "blue"})),
-                            override("코어 수", ("color", {"mode": "fixed", "fixedColor": "text"}),
-                                     ("custom.stacking", {"mode": "none", "group": "B"}), ("custom.fillOpacity", 0),
-                                     ("custom.lineStyle", {"fill": "dash", "dash": [6, 4]}))]},
-          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
-                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
+        b.add("timeseries", title, x, 12, 8, [target(query)], description + window_note,
+              field_config={"defaults": {**timeseries_defaults(unit), **({"max": 100} if max_100 else {}),
+                                         "color": {"mode": "fixed", "fixedColor": color}}, "overrides": []},
+              options=no_legend, new_line=x == 12)
 
-    mem_use = f'''
-{imports}
-{WINDOW}
-{overhead_windowed(["mem_used_bytes", "mem_total_bytes"])}
-  |> map(fn: (r) => ({{_time: r._time, node: r.node,
-      "사용 중": {null_unless(["mem_used_bytes"], "r.mem_used_bytes")},
-      "전체": {null_unless(["mem_total_bytes"], "r.mem_total_bytes")}}}))
-  |> sort(columns: ["_time"])
-'''
-    b.add("timeseries", "메모리 사용량", 0, 12, 8, [target(mem_use)],
-          "노드 전체. 사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 점선 = 전체 메모리." + window_note,
-          field_config={"defaults": {**timeseries_defaults("bytes"), "color": {"mode": "fixed", "fixedColor": "green"}},
-                        "overrides": [override("전체", ("color", {"mode": "fixed", "fixedColor": "text"}),
-                                               ("custom.fillOpacity", 0),
-                                               ("custom.lineStyle", {"fill": "dash", "dash": [6, 4]}))]},
-          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
-                   "tooltip": {"mode": "multi", "sort": "none"}})
-
-    mem_split = f'''
-{imports}
-{WINDOW}
-{overhead_windowed(["mem_used_bytes", "process_rss_bytes"])}
-  |> map(fn: (r) => ({{_time: r._time, node: r.node,
-      "분석 엔진 (RSS)": {null_unless(["process_rss_bytes"], "r.process_rss_bytes")},
-      "그 밖": {null_unless(["mem_used_bytes", "process_rss_bytes"],
-          "if r.mem_used_bytes > r.process_rss_bytes then r.mem_used_bytes - r.process_rss_bytes else 0.0")}}}))
-  |> sort(columns: ["_time"])
-'''
-    b.add("timeseries", "메모리 내역", 12, 12, 8, [target(mem_split)],
-          "노드 사용 메모리를 분석 엔진(계측기 프로세스 resident)과 그 밖으로 나눠 쌓았다." + window_note,
-          field_config={"defaults": timeseries_defaults("bytes", stacking={"mode": "normal", "group": "A"}),
-                        "overrides": [
-                            override("분석 엔진 (RSS)", ("color", {"mode": "fixed", "fixedColor": "orange"})),
-                            override("그 밖", ("color", {"mode": "fixed", "fixedColor": "green"}))]},
-          options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
-                   "tooltip": {"mode": "multi", "sort": "none"}}, new_line=True)
+    single("CPU 사용률(전체)", 0, ["node_busy_cores", "cpu_count"], "CPU 사용률", ["node_busy_cores", "cpu_count"],
+           "r.node_busy_cores / r.cpu_count * 100.0", "percent", "blue",
+           "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다.",
+           max_100=True)
+    single("CPU 사용률(분석 엔진)", 12, ["process_cores", "cpu_count"], "분석 엔진", ["process_cores", "cpu_count"],
+           "r.process_cores / r.cpu_count * 100.0", "percent", "orange",
+           "분석 엔진(계측기 프로세스, process_scope self)이 쓴 코어 / 노드 코어 수 — 왼쪽 전체와 같은 기준(노드 CPU 전체의 %). "
+           "탐지 엔진·전송기는 들어 있지 않다(전체에만). 커널 안에서 도는 eBPF 프로그램 시간은 그 이벤트를 일으킨 CU 스레드 쪽"
+           "(전체)에 잡힌다.")
+    single("메모리 사용량(전체)", 0, ["mem_used_bytes"], "사용 중", ["mem_used_bytes"], "r.mem_used_bytes", "bytes", "green",
+           "노드 전체. 사용 중 = MemTotal − MemAvailable(구간 끝 순간값). 전체 메모리는 위 '노드' 칸.")
+    single("메모리 사용량(분석 엔진)", 12, ["process_rss_bytes"], "분석 엔진 (RSS)", ["process_rss_bytes"],
+           "r.process_rss_bytes", "bytes", "orange",
+           "분석 엔진(계측기 프로세스)이 실제로 차지한 메모리(resident, RSS).")
 
     # 링크 값은 SCTP 패킷만 센다(F1AP·NGAP 시그널링 — F1-U 사용자 데이터는 빠짐, 탐지 쪽 11/13)
     def link_rate(kind: str) -> str:
-        """overhead_link의 <방향>_<kind> 구간 증가분 ÷ 구간 길이 = 초당 값. 들어옴·나감 × 링크마다 한 계열.
+        """overhead_link의 <방향>_<kind> 구간 증가분 ÷ 구간 길이 = 초당 값. Ingress·Egress × 링크마다 한 계열.
+        방향 이름은 필드 이름(ingress·egress)과 같은 영어(사용자 요청 11/20 — 전에는 들어옴·나감).
         증가분을 구간(win) 평균으로 묶어(저장소에서 계산) 3초로 나눈다 — overhead 구간은 3초다(AWS 7일 217,834줄 모두 3000 ms)."""
         link = ('if not exists r.role then r.iface else if r.role == "f1" then "F1" else if r.role == "n2" then "N2" '
                 'else if r.role == "f1+n2" then "F1+N2" else r.role')
         between = f'''  |> map(fn: (r) => {{
       link = {link}
       return {{r with link: link,
-        dir: if r._field == "ingress_{kind}" then (if link == "F1" then "들어옴 (DU → CU)" else if link == "N2" then "들어옴 (AMF → CU)" else "들어옴")
-             else (if link == "F1" then "나감 (CU → DU)" else if link == "N2" then "나감 (CU → AMF)" else "나감")}}
+        dir: if r._field == "ingress_{kind}" then (if link == "F1" then "Ingress (DU → CU)" else if link == "N2" then "Ingress (AMF → CU)" else "Ingress")
+             else (if link == "F1" then "Egress (CU → DU)" else if link == "N2" then "Egress (CU → AMF)" else "Egress")}}
     }})'''
         return f'''
 {WINDOW}
@@ -1003,7 +1002,7 @@ from(bucket: v.defaultBucket)
 
     link_note = ("선언한 NIC마다 SCTP 패킷(F1AP·NGAP 시그널링)만 센 구간 증가분 ÷ 구간 길이(3초 평균, 긴 시간 범위에서는 "
                  "3초 배수 구간의 평균) — F1-U 사용자 데이터(GTP-U)는 "
-                 "들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = 들어옴, 아래 = 나감(CU 기준). "
+                 "들어 있지 않다. 계열 = 링크(F1: CU ↔ DU, N2: CU ↔ 코어 AMF) × 방향 — 위 = Ingress(CU로 들어옴), 아래 = Egress(CU에서 나감). "
                  "네트워크 카드(NIC) 이름은 범례에서 빼고 툴팁의 iface에 둔다. 첫 구간이나 커널 맵을 못 읽은 구간은 빈칸")
     for x, title, kind, unit, extra in (
             (0, "F1·N2 SCTP 트래픽", "wire_bytes", "binBps",
@@ -1014,7 +1013,7 @@ from(bucket: v.defaultBucket)
               field_config={"defaults": {**timeseries_defaults(unit, min_zero=False),
                                          "displayName": "${__field.labels.link} ${__field.labels.dir}",
                                          "noValue": "링크 값 없음"},
-                            "overrides": [override(".*나감.*", ("custom.transform", "negative-Y"), regex=True)]},
+                            "overrides": [override(".*Egress.*", ("custom.transform", "negative-Y"), regex=True)]},
               options={"legend": {"displayMode": "list", "placement": "bottom", "showLegend": True},
                        "tooltip": {"mode": "multi", "sort": "none"}}, new_line=x == 12)
 
@@ -1022,7 +1021,7 @@ from(bucket: v.defaultBucket)
     load = f'''
 import "internal/debug"
 {WINDOW}
-{overhead_windowed(["node_busy_cores", "cpu_count"], by_node=False)}
+{overhead_windowed(["node_busy_cores", "cpu_count"])}
   |> map(fn: (r) => ({{_time: r._time, "CPU 사용률": {null_unless(["node_busy_cores", "cpu_count"],
                                                               "r.node_busy_cores / r.cpu_count * 100.0")}}}))
   |> sort(columns: ["_time"])

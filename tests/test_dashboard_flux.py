@@ -151,9 +151,9 @@ def test_lines_null_in_empty_windows(flux):
 
 
 def test_overhead_summary_in_percent(flux):
-    """Cpu/Memory 평균 사용률(평균 넷, 사용자 요청 11/20): CPU busy 1·2·3 / 4코어 → 평균 50%, 메모리 4,000 / 8,000 = 50%,
+    """CPU/메모리 평균 사용률(평균 넷, 사용자 요청 11/20): CPU busy 1·2·3 / 4코어 → 평균 50%, 메모리 4,000 / 8,000 = 50%,
     분석 엔진 0.5 / 4코어 = 12.5%(코어가 아니라 %), RSS 평균 1,000."""
-    [row] = flux(panel_query("performance", "Cpu/Memory 평균 사용률"))
+    [row] = flux(panel_query("performance", "CPU/메모리 평균 사용률"))
     assert {k: v for k, v in row.items() if k not in ("result", "table")} == {
         "CPU 평균 사용률": 50.0, "메모리 평균 사용률": 50.0, "분석 엔진 평균 CPU": 12.5, "분석 엔진 평균 메모리": 1_000.0}
 
@@ -175,13 +175,42 @@ def test_partial_annotation_uses_session_period(flux):
     assert set(rows[0]) == {"_time", "timeEnd", "text", "tags", "result", "table"}
 
 
+def test_alert_list_filtered_by_cell(flux):
+    """경보 목록도 위쪽 셀 변수로 거른다(11/25 — 탐지 결과·KPM만 거르고 목록은 모든 셀이었음). 테스트 경보는 모두 셀 1."""
+    def ids(cell):
+        return {r["alert_id"] for r in flux(panel_query("monitoring", "경보"), cell=cell)}
+
+    assert {L3_20, "S1-L3-01-V-1-1"} <= ids("1")
+    assert ids("(1|2)") == ids("1")       # 여러 셀(${cell:regex})
+    assert ids("2") == set()
+
+
 def test_rep_ratio_shown_as_percent(flux):
-    """대표 값 ratio는 %(정수) — 0.5714 → 57%. 다른 키(victims 등)는 그대로(사용자 요청 11/18)."""
+    """대표 값 ratio는 %(정수) — 0.5714 → 57%(사용자 요청 11/18). 키는 판정 근거 값과 같은 이름(victims → victim_count,
+    11/25), ratio는 35_ 엑셀에 이름이 없어 그대로."""
     rows = {r["alert_id"]: r["대표 값"] for r in flux(panel_query("monitoring", "경보"))}
     assert rows["S1-L3-01-V-1-1"] == "ratio = 57%"
     assert rows["S1-L3-01-V-1-2"] == "ratio = 92%"
     assert rows["S1-L3-01-V-1-3"] == "ratio = 100%"
-    assert rows[L3_20] == "victims = 1"
+    assert rows[L3_20] == "victim_count = 1"
+
+
+def test_evidence_values_renamed(flux):
+    """판정 근거 값: 키를 35_ 엑셀 이름으로(11/25). 같은 키 concurrent가 성립 조건과 관측값에서 다른 이름이 되고,
+    이름이 키와 같은 것(accept_wait_ms)·대응표에 없는 키(L3-01-V의 a_w 등)는 그대로. 값은 그대로 JSON이다."""
+    def table(alert_id):
+        return {r["항목"]: json.loads(r["값"]) for r in flux(panel_query("monitoring", "판정 근거 값"), alert_id=alert_id)}
+
+    blind = table(L3_20)
+    assert blind["성립 조건 (cond)"] == ["same_stmsi", "victim_connected", "network_not_accepted"]
+    assert blind["관측값 (values, 마지막 값)"] == {"victim_connected_count": 1, "victim_uncertain_count": 0,
+                                                "victim_count": 1, "judgment_held": 0, "table_evicted": 0}
+    assert blind["설정값 (params)"] == {"accept_wait_ms": 5000, "clear_quiet_ms": 60000}
+
+    exhaust = table("S1-L3-01-V-1-2")
+    assert exhaust["성립 조건 (cond)"] == ["min_connection"]
+    assert exhaust["관측값 (values, 마지막 값)"] == {"a_w": 13, "f_w": 12, "ratio": 0.9230769230769231, "base": 1.0}
+    assert exhaust["같은 모양의 다른 공격 후보 (candidates)"] == []
 
 
 def test_alert_hover_fills_alert_window(flux):

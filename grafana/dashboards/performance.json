@@ -243,7 +243,7 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Cpu/Memory 평균 사용률",
+      "title": "CPU/메모리 평균 사용률",
       "description": "고른 시간 범위의 평균 — 왼쪽 둘은 노드 전체, 오른쪽 둘은 그 가운데 분석 엔진(계측기 프로세스, process_scope self) 몫. CPU 사용률 = 바쁜 코어 / 코어 수, 메모리 사용률 = (MemTotal − MemAvailable) / MemTotal, 분석 엔진 CPU = 분석 엔진 코어 / 노드 코어 수(노드 CPU 전체의 %), 분석 엔진 메모리 = RSS. 탐지 엔진·전송기는 노드 값에만 섞여 있다. 순간 최고치는 아래 시간 그래프에서 본다",
       "datasource": {
         "type": "influxdb",
@@ -380,7 +380,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "CPU 사용률(전체)",
-      "description": "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다. 긴 시간 범위에서는 3초 배수 구간의 평균",
+      "description": "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다. 세로축은 0~10%로 시작하고 값이 넘으면 늘어난다. 긴 시간 범위에서는 3초 배수 구간의 평균",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -411,9 +411,9 @@
             "lineWidth": 1,
             "fillOpacity": 25,
             "spanNulls": false,
-            "showPoints": "never"
+            "showPoints": "never",
+            "axisSoftMax": 10
           },
-          "max": 100,
           "color": {
             "mode": "fixed",
             "fixedColor": "blue"
@@ -735,7 +735,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "CPU 사용률 · RRC 연결 시도",
-      "description": "공격으로 연결 시도가 몰릴 때 CU CPU가 얼마나 오르나. 왼쪽 축 = 노드 CPU 사용률, 오른쪽 축(막대) = 상시 KPM2 RRC 연결 시도(위쪽 셀 변수로 고른 셀의 합). 둘 다 같은 구간(3초, 긴 시간 범위에서는 3초 배수 구간 — CPU는 평균, 연결 시도는 합)이라 칸끼리 겹친다. 상시 KPM2가 없는 출처(샘플 등)에서는 RRC 연결 시도가 안 보인다",
+      "description": "공격으로 연결 시도가 몰릴 때 CU CPU가 얼마나 오르나. 왼쪽 축 = 노드 CPU 사용률, 오른쪽 축(막대) = 상시 KPM2 RRC 연결 시도(위쪽 셀 변수로 고른 셀의 합). 둘 다 같은 구간(3초, 긴 시간 범위에서는 3초 배수 구간 — CPU는 평균, 연결 시도는 합)이라 칸끼리 겹친다. 왼쪽 축은 0~10%로 시작하고 값이 넘으면 늘어난다. 상시 KPM2가 없는 출처(샘플 등)에서는 RRC 연결 시도가 안 보인다",
       "datasource": {
         "type": "influxdb",
         "uid": "portran-influxdb"
@@ -776,13 +776,24 @@
             "spanNulls": false,
             "showPoints": "never"
           },
-          "max": 100,
           "color": {
             "mode": "fixed",
             "fixedColor": "blue"
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 사용률"
+            },
+            "properties": [
+              {
+                "id": "custom.axisSoftMax",
+                "value": 10
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byRegexp",
@@ -792,10 +803,6 @@
               {
                 "id": "unit",
                 "value": "none"
-              },
-              {
-                "id": "max",
-                "value": null
               },
               {
                 "id": "custom.axisPlacement",

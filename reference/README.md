@@ -32,7 +32,7 @@
 
 **이 저장소와의 관계**:
 
-탐지 엔진 룰(탐지 쪽 명세 `detection/27_` §5.3, 이름표 `grafana/rule-names.json`)과의 대응:
+탐지 엔진 룰(탐지 쪽 명세 `detection/27_` §5.3, 이름표 `grafana/rule-names.json`. 판정 근거 키의 화면 이름은 `detection/35_` 엑셀 → `grafana/evidence-key-names.json`)과의 대응:
 
 | 5G-Spector 공격 | 탐지 엔진 룰 (27_) |
 |---|---|

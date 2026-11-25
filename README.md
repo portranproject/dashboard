@@ -143,7 +143,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표 |
 | KPM (상시 KPM2) | 셀별 3초 RRC 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위(예: 7일)는 3초 배수 구간으로 묶는다 — 막대는 구간 합, UE 수는 구간 최대(평균 선은 평균). 주황 영역 = 경보 구간(영역 어디에 마우스를 대도 툴팁에 경보 — 종류·공격 이름·셀·상태·심각도), 회색 = 데이터 없음·칸 일부 없음(3초 칸이 그 세션 보고 주기로 다 차지 않음 — 100 ms면 30줄, 1,000 ms면 3줄), 파란 세로선 = 분석 엔진 세션 시작, 보라 세로선 = DU·CU 재시작 |
 | 경보 목록 | 경보 하나 = 한 행(시작·셀·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 대표 값 `ratio`는 %(0.5714 → 57%). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
-| 경보 상세 | 판정 요약, 판정 근거 값, 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
+| 경보 상세 | 판정 요약, 판정 근거 값(키는 줄임말 없는 이름 — `grafana/evidence-key-names.json`), 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
 
 - 위쪽 변수: **데이터 출처**(AWS = 실측 `aws` / On-Premise = 우리 실물 장비 `on-premise` / AWS (이전 p4) = 11/20 전 AWS 실측 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
 - 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음). 경보 구간은 주석이 아니라 그래프 계열로 칠해 새로고침 때 깜빡이지 않는다.
@@ -155,12 +155,12 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 
 | 행 | 패널 |
 |---|---|
-| Overhead (CU 자원 — 수집 오버헤드) | 노드(코어·메모리·마지막 수신), Cpu/Memory 평균 사용률(고른 시간 범위의 CPU·메모리 평균 사용률, 분석 엔진 평균 CPU %·평균 메모리), CPU 사용률(전체)·CPU 사용률(분석 엔진)(노드 CPU 전체의 %), 메모리 사용량(전체)·메모리 사용량(분석 엔진)(RSS), F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대) |
+| Overhead (CU 자원 — 수집 오버헤드) | 노드(코어·메모리·마지막 수신), CPU/메모리 평균 사용률(고른 시간 범위의 CPU·메모리 평균 사용률, 분석 엔진 평균 CPU %·평균 메모리), CPU 사용률(전체)·CPU 사용률(분석 엔진)(노드 CPU 전체의 %), 메모리 사용량(전체)·메모리 사용량(분석 엔진)(RSS), F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대) |
 | 수집 지연 | 레코드가 대시보드 서버에 저장되기까지 걸린 시간(받은 시각 − 데이터 시각): 백분위 표('KPM 지연'·'경보 지연' 행, p50·p95·p99·개수), 추이(구간마다 평균). 화면에는 새로고침 대기(관제 최대 5초)가 더해진다. collector가 `/ingest`로 받은 줄마다 재서 `ingest_delay`에 쓴다(11/20부터) |
 
 - 탐지 결과(공격별 경보 수·경보 길이·공격별 경보 결과)는 관제 맨 위로 옮기고, 경보·입력 품질 줄은 없앴다(11/16).
 
-- 위쪽 변수: 데이터 출처, 셀. 공격 이름은 두 대시보드 모두 짧게('UE 컨텍스트 고갈', '하향 IMSI 추출'), 단계(1~4)는 화면에 표시하지 않는다(11/13).
+- 위쪽 변수: 데이터 출처, 셀. 공격 이름은 두 대시보드 모두 짧게('UE 컨텍스트 고갈', 'IMSI 노출'), 단계(1~4)는 화면에 표시하지 않는다(11/13).
 
 **Slack 알림** (M12) — AWS·On-Premise 실측(`aws`·`on-premise`), Grafana Alerting이 10초마다 확인해 보낸다. 메시지 제목 끝에 출처가 붙는다.
 
@@ -239,6 +239,11 @@ venv 생성이 중간에 깨진 경우다. `rm -rf .venv` 후 다시 만든다.
 **PC·WSL을 재시작한 뒤 Grafana에 대시보드가 없다 (`Dashboard not found`)**
 Docker Desktop이 컨테이너를 자동으로 다시 띄울 때 Windows 디스크(`/mnt/c/...`)의 설정 폴더 마운트가 비어 있는 채로 붙는 경우가 있다.
 `docker compose exec grafana ls /etc/grafana/dashboards`가 비어 있으면 `docker compose up -d --force-recreate grafana`로 다시 만든다(데이터는 볼륨에 있어 유지된다).
+WSL integration이 꺼져 WSL에서 `docker`가 없으면 저장소 폴더에서 Windows 쪽 실행 파일로 해도 된다: `"/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" compose up -d --force-recreate --no-deps grafana`(이때는 Windows 경로로 마운트되어 이 문제가 생기지 않는다).
+
+**`python grafana/build.py`로 다시 만들었는데 로컬 Grafana 화면이 그대로다**
+Windows 경로로 마운트하면 Grafana가 바뀐 파일을 알아채지 못한다(10초마다 다시 읽는 설정이 먹지 않음). 관리자 계정으로 다시 읽게 한다(`.env`를 불러온 셸에서):
+`curl -X POST -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" http://localhost:3000/api/admin/provisioning/dashboards/reload` — 알림 규칙은 끝을 `alerting/reload`로.
 
 **Grafana가 재시작만 반복한다 (`docker logs portran-grafana`에 `recipient must be specified`)**
 M12(11/13) 전에 만든 Grafana 컨테이너다. 옛 컨테이너에는 `SLACK_WEBHOOK_URL`이 없어 Slack 알림 설정을 읽다 멈춘다.
@@ -336,7 +341,7 @@ validation_errors({"type": "alert", ...})   # [] 이면 통과, 아니면 사유
 | `common/` | `.env` 로딩(`config.py`), 스키마 검증(`schema.py`), UDP·파일 송수신(`transport.py`) |
 | `collector/` | 수신 → 검증 → InfluxDB 저장 → raw 녹화 (`collector.py`), `POST /ingest` HTTP 수신·중복 키(`ingest.py`), 메시지 → InfluxDB 변환(`influx_writer.py`) |
 | `replay/` | 녹화·샘플을 지금 시각으로 옮겨 `/ingest`로 재생 (`replay.py`) |
-| `grafana/` | datasource·대시보드 provisioning, 대시보드 생성기(`build.py`)·룰 이름(`rule-names.json`), 대시보드 JSON, 쿼리 시간 재기(`query_timing.py`) |
+| `grafana/` | datasource·대시보드 provisioning, 대시보드 생성기(`build.py`)·룰 이름(`rule-names.json`)·판정 근거 키 이름(`evidence-key-names.json`), 대시보드 JSON, 쿼리 시간 재기(`query_timing.py`) |
 | `recordings/` | raw 녹화, 거부 로그 (git 제외) |
 | `tests/` | pytest (`conftest.py`: CI에서 건너뛴 테스트를 실패로 셈·임시 InfluxDB bucket), 탐지 쪽 샘플 `data/detection/` |
 | `.github/workflows/` | CI (`ci.yml`) |

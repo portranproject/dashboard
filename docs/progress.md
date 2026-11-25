@@ -84,6 +84,7 @@ CLAUDE.md에 없던 부분을 정했거나, 다른 파트의 동작을 가정한
 
 | # | 내용 | 현재 처리 |
 |---|---|---|
+| T9 | 판정 근거 키 이름(35_ 엑셀, D218)에 없는 키: L3-01-V cond `U`·values `a_w`·`f_w`·`ratio`·`base`·`sigma`·`u`, L3-20 cond `peer_uncertain`, L3-21 cond `reg_repeat`·`fail`, L3-14 cond `enquiry_before_as_sec`, 판정 보류 경보 `held_count`·`held_w`, 4단계 이상 유형(AN-*) 전부(11/25) | 원래 키로 보임. 이름이 정해지면 `grafana/evidence-key-names.json`에 더하고 `_이름_없음`에서 뺀다 |
 | T8 | CLAUDE.md 0절 — 세션 시작 때 논문 PDF 25쪽을 읽어 메인 컨텍스트가 65k → 117k(+52k)로 늘고 이후 모든 응답에 실린다(11/18 세션 약 8M 캐시 읽기 ≈ 메인의 15%, D206 확인 결과). 지표·공격 유형·탐지 규칙을 다룰 때만 읽게 바꿀지 | 사용자 결정 전까지 지금 규칙대로 읽음 |
 | T7 | 탐지 쪽 `overhead` 실제 출력에서 확인할 것: ① `link[]`의 `ingress`·`egress`가 빈 객체(`{}`)로 올 수 있는지(물었지만 답 없음) ② `t_start_ms`가 3초 경계에 맞는지 ③ 첫 구간 `null`의 모양. **11/13 샘플 30줄(`tests/data/overhead/`)로 ②는 확인**(구간 3,000 ms, 3초 경계, 빈틈 없이 이어짐). ①③은 샘플에 없었음(기동 직후가 아니고 링크 값이 모두 있음) | 빈 객체·키 없음·`null`을 모두 '값 없음'으로 받고 필드를 뺌 |
 | T6 | 분석 엔진 실측 녹화에서 확인할 것(27_ §8): `session` 실제 형식, `ue_evt` 필드(분석 엔진 팀 답 대기), Table II 나머지(재수립·재개 4종은 `null` 예상), 실제 양(셀·UE 수) | `evidence.raw`는 해석하지 않고 그대로 저장. `session`은 비어 있지 않은 문자열만 검사 |
@@ -1544,5 +1545,45 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 | 추가 요청 2 | "고른 시간 범위 요약도 CPU 평균 사용률 / 메모리 평균 사용률 / 분석 엔진 평균 메모리로, 더 좋은 대안 있으면 추천" → 평균 넷(전체 CPU·메모리, 분석 엔진 CPU·메모리)으로 추천·적용: 'CPU 평균 사용률', '메모리 평균 사용률'(전에는 최대), '분석 엔진 평균 CPU'(바로 전 요청으로 %), '분석 엔진 평균 메모리'(전에는 최대). '최대 CPU' 삭제 — 3초 한 칸의 순간값이라 CU의 다른 프로그램 하나로도 튀고(p4 7일 76.6%, 평균 2.8%) 시간 그래프에 보인다. 열 순서는 organize로 고정. AWS(읽기만, 한 번): 7일 3.27초, p4 7일 CPU 2.83%·메모리 71.0%·분석 엔진 0.0155%·306 MiB, `aws` 1일 2.57%·79.5%·0.0220%·309 MiB |
 | 추가 요청 3 | "F1·N2 그래프의 나감·들어옴을 Outgress·Ingress로" → Ingress·Egress로(Outgress는 표준 용어가 아니고, 필드 이름이 `ingress_*`·`egress_*`). 범례 'F1 Ingress (DU → CU)'·'N2 Egress (CU → AMF)', Egress는 그대로 아래(음수 쪽). 테스트: 범례 이름·Egress 아래 |
 | 추가 요청 4 | "고른 시간 범위 요약 → CPU/Memory 평균 사용률로", "Cpu/Memory" → 패널 제목을 'Cpu/Memory 평균 사용률'로(내용은 그대로) |
+| 추가 요청 5 (11/25) | "CPU 사용률이 너무 작게 보인다, 잘 보이게" — 'CPU 사용률(전체)'·'CPU 사용률 · RRC 연결 시도'는 세로축 최대를 100%로 고정(`max: 100`)해 평소 2~5%(AWS 5분 평균 2.47%·최대 5.6%)가 바닥에 붙었다. 분석 엔진 패널은 고정이 없어 0.2% 축으로 자동 확대돼 크게 보였다. 고정 최대 대신 Grafana 소프트 최대 `custom.axisSoftMax` = `CPU_AXIS_SOFT_MAX`(10) — 축이 적어도 0~10%이고 넘으면 늘어난다. 함께 찾은 문제: 같이 그리는 패널의 오른쪽 축(RRC 연결 시도)도 0~100으로 묶여 있었다 — 기본값 `max: 100`을 override `max: null`로 풀려 했지만 Grafana가 null을 '설정 없음'으로 보지 않음(스크린샷에서 0인 막대 축이 0~100). 축 범위를 기본값이 아니라 'CPU 사용률' override에만 건다. 패널 설명에 축 규칙을 적음 |
+| 결정 D216 | 노드 CPU % 그래프 축 = 소프트 최대 10%(100 고정 아님, 완전 자동도 아님). 완전 자동이면 2%→5% 흔들림이 꼭대기까지 튀어 과장돼 보인다. 분석 엔진 CPU(0.01~0.2%)는 자동 그대로 — 소프트 최대 10을 걸면 다시 바닥에 붙는다. 두 패널 축이 달라 높이로 비교하지 않는다(설명에 단위 기준이 같다고 적혀 있음). 사용자 요청, 팀 확인 불필요 |
+| 확인 결과 5 | `python grafana/build.py` 다시 씀(`performance.json`만 바뀜, 관제·알림 JSON 그대로), `--check` 통과, `pytest` 처음 587 passed·14 skipped(InfluxDB 접속 실패로 서비스 테스트 건너뜀 — 아래 환경 메모), Grafana를 다시 만든 뒤 전체 601 passed(건너뜀 없음, 실제 InfluxDB·Grafana 포함). 쿼리는 바뀌지 않았다. 로컬 Grafana(12.4.13): 목업(scratchpad 스크립트, `X-Env` 대신 collector `--env sample`, 15분 = 3초 칸 300개마다 `overhead`·`kpm2` 셀 1, 가운데 2분 CPU 20~35%·RRC 연결 시도 30~60, 그 밖 CPU 2~5%) 601줄 저장·거부 0. Grafana API로 읽은 대시보드에 `axisSoftMax` 10(전체 패널 기본값, 함께 그리는 패널은 'CPU 사용률' override), `max` 없음. `query_timing.py --source sample --dashboard performance --range 1h` CPU 패널 셋 통과. **화면(축 모양)은 사용자가 보고 확인** — Reviewer 검증 없음(작은 화면 설정 수정, 역할 분리 꺼짐 12절 10항) |
+| 환경 메모 5 | 로컬 Grafana 컨테이너에 대시보드가 하나도 없었다 — WSL을 거친 마운트(`docker-desktop-bind-mounts`)가 비어 있었고(`provisioning/dashboards: no such file or directory`), WSL에서 `docker` 명령도 없었다(WSL integration 꺼짐). Windows `docker.exe compose up -d --force-recreate --no-deps grafana`로 다시 만들어 Windows 경로로 마운트. README 문제 해결의 같은 항목에 한 줄 더함. 그 뒤 `build.py`로 다시 만든 JSON을 Grafana가 알아채지 못했다(Windows 경로 마운트라 10초 다시 읽기가 안 먹음) — 관리자 API `POST /api/admin/provisioning/dashboards/reload`(알림은 `alerting/reload`)로 반영, README 문제 해결에 새 항목 |
+| 추가 요청 6 (11/25) | "Cpu/Memory 평균 사용률 → CPU/메모리 평균 사용률로" — 패널 제목만 바꿈(내용 그대로). 생성기·테스트·CLAUDE.md·README·설계 문서 함께. `pytest` 전체 통과 |
+| 추가 요청 7 (11/25) | "관제에서 하향 IMSI 추출 → IMSI 노출, UE 능력 탈취 → 단말 성능 정보 탈취, NAS 카운터 비동기화 → NAS 카운터 불일치" — `grafana/rule-names.json`의 L3-24·L3-14·L3-06·L3-06-O1(후보) 이름을 바꿈(번호·괄호 영문은 27_ 대조용으로 남김, `_설명`에 27_와 다른 이름 적음). 짧은 이름은 한 곳에서 나오므로 관제·성능·Slack 알림이 함께 바뀐다. README 예시·`tests/test_dashboards.py` 기대값 고침. 생성된 JSON 셋에 옛 이름 0개 |
+| 결정 D217 | 화면의 공격 이름 셋은 27_ §5.3과 다르게 쓴다(사용자 요청). 후보 L3-06-O1도 같은 공격(#6)이라 함께 바꿈('다 이렇게'). #25 '상향 IMSI 추출'은 요청에 없어 그대로. 팀 확인: 불필요(화면 표시) — 발표 자료·탐지 쪽 문서와 이름을 맞출지는 사용자가 판단 |
 | 남은 일 | Q26(탐지 쪽·테스트베드 요청) — 사용자가 전달 |
+
+## 판정 근거 키 이름 (2026-11-25, 같은 브랜치)
+
+사용자 요구(11/25): "관제 판정 근거 값에 보이는 탐지 JSONL 필드값의 이름을 바꾼 엑셀(`35_탐지엔진_판정근거-대시보드값_분석표.xlsx`)을 반영해 줘. 탐지 쪽에서 바꿔 보내면 알아서 반영되는 거 아닌가?"
+
+| 구분 | 내용 |
+|---|---|
+| 엑셀 | 시트 7개(L3-01-V·L3-01-O·L3-20·L3-21·L3-24·L3-14·L3-06) — 판정 근거 값 표를 옮기고 키마다 뜻과 '바꿀 값'(대시보드가 키 대신 띄울 이름, 줄임말 없이). 후보 룰 ID는 안 바꿈. 같은 키라도 룰·항목마다 이름이 다르다: `unsolicited`(L3-24 → `unsolicited_identity_response`, L3-14 → `unsolicited_capability_information`, L3-06 → `unsolicited_security_mode_reject`), `branch1_ues`·`branch2_ues`(L3-21·L3-14), L3-20 `concurrent`(성립 조건 → `victim_connected`, 관측값 → `victim_connected_count`) |
+| 한 일 | `grafana/evidence-key-names.json`(새 파일): 룰 → 항목(cond·conditions·values·params·refs) → 키 → 이름, 72개. 엑셀에서 프로그램으로 뽑아 대조(같음). `reference/detection/35_…xlsx`: 근거 엑셀 복사. `grafana/build.py`: Flux 함수 `rename(rule, field, s)` 생성 — 판정 근거 값 JSON 문자열에서 룰·필드마다 `"키":`(객체)·`"키"`(배열 원소)를 `strings.replaceAll`로 바꿈(따옴표까지 맞춰 `C2`가 `C2a`를 안 건드림, 이름이 키와 같으면 건너뜀). 경보 목록 '대표 값' 키도 같은 이름(`'룰\|키'` 사전, L3-01-O `stalls_w`·L3-20 `victims`·L3-21 `fails_w` — % 판단은 원래 키). 테스트: 대응표 모양(룰·항목·snake_case·새 이름 중복·새 이름이 다른 원래 키와 겹치지 않음), 쿼리 조각, 실제 InfluxDB에서 L3-20 성립 조건·관측값·설정값과 L3-01-V(엑셀에 없는 `a_w` 등 그대로), 대표 값 `victim_count = 1`. 문서: CLAUDE.md 4·9·9.1절, README, `docs/dashboard-design.md` 6.1절, `reference/README.md` |
+| 결정 D218 | **화면에서만 바꾼다**(레코드 형식 27_·InfluxDB·녹화는 원래 키). 이유: 엑셀이 '대시보드가 키 대신 띄울 이름'이라고 적음, 탐지 엔진·collector·샘플·스키마를 안 고쳐도 되고 지난 데이터(p4·aws 녹화)도 같은 이름으로 보임. 탐지 쪽이 키를 바꿔 보내면 판정 근거 값 표는 따라가지만 대표 값(collector `REPRESENTATIVE_KEY`)이 비고 지난 데이터와 이름이 갈린다. 엑셀에 없는 키는 지어내지 않고 원래 키로 둔다(T9). 대표 값도 같은 이름으로(같은 경보의 같은 값이 두 이름으로 보이지 않게 — 요청 밖이라 사용자에게 알림). 걸린 UE 표의 `ues[].cond`·`values_json`은 엑셀에 없어 그대로. 팀 확인: 불필요(화면 표시, 탐지 쪽이 만든 이름표) |
+| 확인 결과 | `python grafana/build.py --check` 통과, `pytest` 전체 604 passed(로컬 InfluxDB·Grafana 포함, 건너뜀 없음). 탐지 쪽 샘플 32개를 40분 전으로 옮겨(`replay --out file://` → collector `--once --env sample`) 1,758줄 저장·거부 0. 룰 7개 경보마다 판정 근거 값 쿼리를 InfluxDB에서 돌려 이름이 바뀐 것 확인(예 L3-01-O `["authentication_stall_count"]`, `{"stalls_window":5,…,"uectxmax":96}`). 엑셀에 없어 원래 키로 남은 것: L3-14 `enquiry_before_as_sec`, L3-21 `reg_repeat`·`fail`(성립 조건), L3-24 판정 보류 `held_count`·`held_w`, L3-01-V `a_w`·`f_w`·`ratio`·`base`, 옛 형식 `k`. `query_timing.py --source sample --dashboard monitoring --range 1h` 18개 통과. 화면은 사용자가 확인. Reviewer 검증 없음(역할 분리 꺼짐, 12절 10항) |
+| 남은 일 | T9 — 엑셀에 없는 키의 이름(탐지 쪽·사용자) |
+
+## 경보 상세가 누른 경보에서 첫 경보로 되돌아감 (2026-11-25, 같은 브랜치)
+
+사용자 보고(11/25): 경보 목록에서 경보(L3-01-O-1-56)를 누르니 경보 상세가 그 경보로 떴다가 다른 경보(L3-01-V-1-55)로 바뀐다.
+
+| 구분 | 내용 |
+|---|---|
+| 조사 | ① 바뀐 경보 L3-01-V-1-55는 변수 `alert_id`의 **첫 선택지**(가장 최근 raise)다. ② 누른 경보는 그때 선택지 안에 있었다(raise 15:08:54, 클릭 약 15:53, 범위 최근 1시간) — 범위 밖이라 되돌아간 것이 아니다. ③ `alert_id`는 refresh 2라 **5초 자동 새로고침마다 다시 조회·검증**된다(헤드리스 Chrome CDP Network로 5초마다 변수 쿼리 확인). ④ Grafana 12.4 번들(scenes)에서: 쿼리 변수는 요청이 **취소되면 선택지를 `[]`로** 받고(`catchError: cancelled ? of([]) : throw`), 단일 값 변수는 선택지가 0개면 값을 `""`로, 다음 검증에서 `""`가 선택지에 없으면 **첫 선택지로** 바꾼다. ⑤ 화면 이동·클릭은 진행 중인 쿼리를 취소한다(서버 로그 `context canceled`가 클릭 시각에 남음). ⑥ 사용자 흐름(AWS로 열고 드롭다운으로 샘플 → 행 클릭, 변수 쿼리 순간 0~2,500 ms 뒤 클릭 등 20여 번)을 헤드리스로 재현했지만 **되돌아감은 재현하지 못함** — 취소와 주소 반영의 순서에 달린 간헐적 경합으로 본다. 함께 찾은 것: 행 링크의 `var-cell=${cell}`이 여러 셀을 `{1,2}` 한 값으로 넘겨 셀 변수가 기본값으로 돌아감 |
+| 한 일 | `grafana/build.py`: `query_variable`에 `refresh` 인자, `alert_id`는 refresh 1(열 때·출처를 바꿀 때만 조회 — 값은 행 링크 주소로 들어와 선택지 검증을 거치지 않음), 조회 범위를 경보 목록처럼 1시간 앞부터(범위 전에 시작해 아직 열린 경보도 선택지에). 행 링크 셀은 `${cell:queryparam}`. 테스트: refresh 규칙(alert_id만 1), 링크·범위. CLAUDE.md 9.1절 |
+| 결정 D219 | `alert_id`만 refresh 1(D103의 예외). 잃는 것: 경보가 하나도 없을 때 연 화면은 첫 경보가 들어와도 상세가 저절로 채워지지 않는다(전에는 다음 새로고침에 첫 경보로) — 목록 행을 누르거나 새로 연다. 얻는 것: 누른 경보가 유지, 5초마다 돌던 변수 쿼리(7일 범위면 7일치 raise 조회) 없어짐. 사용자 보고로 정함, 팀 확인 불필요 |
+| 확인 결과 | `pytest` 전체 605 passed, `--check` 통과, 로컬 Grafana provisioning 다시 읽음. 헤드리스 Chrome(CDP, scratchpad 스크립트)로 AWS로 열기 → 드롭다운 샘플: 경보 변수가 다시 조회되어 첫 경보로, 그 뒤 15초 동안 변수 쿼리 0건(전 5초마다), 행 링크 `var-cell=$__all`, 행 6번 눌러 6번 모두 10초 유지. 고치기 전 되돌아감을 재현하지 못해 **같은 현상이 다시 안 나는지는 사용자 화면에서 확인 필요**. Reviewer 검증 없음(역할 분리 꺼짐) |
+
+## 경보 목록도 셀로 거름 (2026-11-25, 같은 브랜치)
+
+사용자 요구(11/25): "셀을 고르면 탐지 결과·KPM은 걸러지는데 경보 목록은 모든 셀을 보여 주는 것 같다" → 맞음(경보 목록 쿼리에 셀 조건이 없었고, 셀 변수 설명도 '탐지 결과·상시 KPM2'만. 일부러 정한 기록은 없음) → "경보 목록에도 넣어줘".
+
+| 구분 | 내용 |
+|---|---|
+| 한 일 | `grafana/build.py`: 경보 목록 쿼리의 거르기에 `r.cell =~ /^${cell:regex}$/`(탐지 결과와 같은 조건) — 범위 전에 시작해 아직 열린 경보도 고른 셀 것만. 경보 요약을 만든 뒤 거르는 것이라 저장소 거르기(D202)와 상관없다. 셀 변수 설명·패널 설명 고침. 테스트(실제 InfluxDB): 셀 1·여러 셀 `(1\|2)`은 경보가 보이고 셀 2는 비어 있음. CLAUDE.md 9.1절, `docs/dashboard-design.md` |
+| 확인 결과 | `pytest` 전체 606 passed, `--check` 통과, 로컬 Grafana `query_timing.py --source sample --dashboard monitoring --range 1h` 통과 |
+| 남은 일 | **배포 전**: 이번 브랜치에서 바뀐 관제 쿼리(판정 근거 값 키 이름, 대표 값, 경보 변수 범위, 경보 목록 셀)를 AWS에서 `query_timing.py --source p4 --range 7d --parallel`로 잰다(9.1절) |
 

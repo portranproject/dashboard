@@ -1,0 +1,56 @@
+{
+  "_설명": "관제 '판정 근거 값' 표(경보의 cond·conditions·values·params·refs)와 경보 목록 '대표 값'에서 키 대신 보일 이름. 룰 → 항목 → 키 → 이름. 기준은 reference/detection/35_탐지엔진_판정근거-대시보드값_분석표.xlsx의 '바꿀 값'(2026-11-25). 화면에서만 바꾸고 탐지 엔진 출력(27_)·InfluxDB·녹화는 원래 키 그대로다. 같은 키라도 룰·항목마다 이름이 다르다(unsolicited, branch1_ues, L3-20의 cond·values concurrent). 후보 룰 ID(candidates)는 바꾸지 않는다. 여기 없는 키는 원래 키로 보인다 — _이름_없음 참고.",
+  "_이름_없음": "27_ §5.4에는 있지만 35_ 엑셀에 이름이 없어 원래 키로 보이는 것(TODO — 이름이 정해지면 rules에 더한다): L3-01-V cond U, values a_w·f_w·ratio·base·sigma·u / L3-20 cond peer_uncertain / L3-21 cond reg_repeat·fail / L3-14 cond enquiry_before_as_sec / 판정 보류 경보(27_ §5.5) cond held_count·values held_w / 4단계 이상 유형(AN-*) 전부. 11/12 전 형식(샘플 일부)의 L3-01-V params k도 그대로",
+  "rules": {
+    "L3-01-V": {
+      "cond": {"C1": "min_connection", "C2": "noreply_ratio", "C3": "connection_increase", "C2a": "absolute_value"},
+      "values": {"uectx": "uectxmax", "max_conn": "max_connection"},
+      "params": {"z": "sigma_multiplier", "theta": "noreply_ratio_threshold", "f_abs_frac": "absolute_value_ratio",
+                 "f_abs": "absolute_value_threshold"},
+      "refs": {"a": "connection_sequence_range", "f": "noreply_sequence_range"}
+    },
+    "L3-01-O": {
+      "cond": {"stall_count": "authentication_stall_count"},
+      "values": {"stalls_w": "stalls_window", "stalls_total": "stalls_total", "auth_req_w": "authentication_request_window",
+                 "held": "judgment_held", "evicted": "table_evicted", "uectx": "uectxmax"},
+      "params": {"auth_wait_ms": "authentication_wait_ms", "window_ms": "window_ms", "n_stall": "stall_count_minimum",
+                 "n_stall_frac": "stall_count_ratio", "n_stall_th": "stall_count_threshold",
+                 "clear_quiet_ms": "clear_quiet_ms", "max_conn": "max_connection"}
+    },
+    "L3-20": {
+      "cond": {"same_stmsi": "same_stmsi", "concurrent": "victim_connected", "not_accepted": "network_not_accepted"},
+      "values": {"concurrent": "victim_connected_count", "peer_uncertain": "victim_uncertain_count",
+                 "victims": "victim_count", "held": "judgment_held", "evicted": "table_evicted"},
+      "params": {"accept_wait_ms": "accept_wait_ms", "clear_quiet_ms": "clear_quiet_ms"}
+    },
+    "L3-21": {
+      "cond": {"fail_count": "fail_count"},
+      "values": {"fails_w": "fails_window", "branch1_ues": "cell_fail_increase_count",
+                 "branch2_ues": "registration_repeat_fail_count", "held": "judgment_held", "evicted": "table_evicted",
+                 "fail_msgs_w": "fail_messages_window"},
+      "params": {"window_ms": "window_ms", "n_fail": "fail_count_minimum", "n_fail_frac": "fail_count_ratio",
+                 "n_fail_th": "fail_count_threshold", "fail_accept_wait_ms": "fail_accept_wait_ms",
+                 "reg_repeat": "registration_repeat", "clear_quiet_ms": "clear_quiet_ms",
+                 "ignore_causes": "ignore_causes", "max_conn": "max_connection"}
+    },
+    "L3-24": {
+      "cond": {"unsolicited": "unsolicited_identity_response"},
+      "conditions": {"mitm_ul_relay": "mitm_uplink_relay"},
+      "values": {"extra": "same_connection_repeat", "held": "judgment_held", "evicted": "table_evicted"},
+      "params": {"clear_quiet_ms": "clear_quiet_ms"}
+    },
+    "L3-14": {
+      "cond": {"unsolicited": "unsolicited_capability_information"},
+      "conditions": {"mitm_ul_relay": "mitm_uplink_relay"},
+      "values": {"branch1_ues": "unsolicited_capability_count", "branch2_ues": "enquiry_before_security_count",
+                 "extra": "same_connection_repeat", "held": "judgment_held", "evicted": "table_evicted"},
+      "params": {"clear_quiet_ms": "clear_quiet_ms"}
+    },
+    "L3-06": {
+      "cond": {"unsolicited": "unsolicited_security_mode_reject"},
+      "conditions": {"mitm_ul_relay": "mitm_uplink_relay"},
+      "values": {"extra": "same_connection_repeat", "held": "judgment_held", "evicted": "table_evicted"},
+      "params": {"clear_quiet_ms": "clear_quiet_ms"}
+    }
+  }
+}

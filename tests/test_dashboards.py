@@ -266,6 +266,38 @@ def test_alert_list_rep_percent():
     assert 'string(v: math.round(x: float(v: r.rep) * 100.0)) + "%"' in q
 
 
+EVIDENCE_KEY_NAMES = json.loads((REPO_ROOT / "grafana" / "evidence-key-names.json").read_text(encoding="utf-8"))
+
+
+def test_evidence_key_names_file():
+    """판정 근거 값 이름 대응표(35_ 엑셀, 11/25): 룰은 rule-names.json의 룰, 항목은 판정 근거 값 표의 다섯 줄,
+    이름은 줄임말 없는 snake_case. 한 항목 안에서 새 이름끼리 겹치거나(JSON 키 중복) 새 이름이 다른 원래 키와 같으면
+    (차례로 바꾸다 다시 바뀜) 안 된다."""
+    rules = EVIDENCE_KEY_NAMES["rules"]
+    assert set(rules) <= set(RULE_NAMES["rules"]) and len(rules) == 7
+    for rule, sections in rules.items():
+        assert set(sections) <= {"cond", "conditions", "values", "params", "refs"}, rule
+        for section, names in sections.items():
+            assert all(re.fullmatch(r"[a-z][a-z0-9_]*", n) for n in names.values()), (rule, section)
+            renamed = {k: v for k, v in names.items() if k != v}
+            assert len(set(names.values())) == len(names), (rule, section)
+            assert not set(renamed.values()) & set(names), (rule, section)
+
+
+def test_evidence_names_used_in_queries():
+    """판정 근거 값은 룰·필드로 키를 바꾸고, 경보 목록 대표 값은 같은 이름을 '룰|키' 사전으로 찾는다."""
+    panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
+    detail = panels["판정 근거 값"]["targets"][0]["query"]
+    assert "rename(rule: r.rule, field: r._field, s: string(v: r._value))" in detail
+    assert 'if rule == "L3-20" and field == "cond_json"' in detail
+    assert 't: "\\"concurrent\\"", u: "\\"victim_connected\\""' in detail             # cond는 배열 원소
+    assert 't: "\\"concurrent\\":", u: "\\"victim_connected_count\\":"' in detail     # values는 객체 키
+    assert '"\\"window_ms\\":"' not in detail                                          # 이름이 같은 키는 건너뜀
+    alerts = panels["경보"]["targets"][0]["query"]
+    assert '{key: "L3-20|victims", value: "victim_count"}' in alerts
+    assert 'dict.get(dict: rep_names, key: r.rule + "|" + r.key, default: r.key)' in alerts
+
+
 def test_alert_detail_columns():
     """판정 요약의 갈래 열과 걸린 UE의 전제 열은 없애고(사용자 요청 11/16), 판정 요약의 모드 열(11/18)과
     걸린 UE의 관측 오류·근거 열(11/20)도 없앤다."""
@@ -321,7 +353,7 @@ def test_detection_rows_on_monitoring():
     assert panels["공격별 경보 수"]["options"]["orientation"] == "horizontal"  # 세로 막대는 해 보고 되돌림(11/13)
     q = panels["공격별 경보 수"]["targets"][0]["query"]
     assert all(f'"{rule}":' in q for rule in {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]})
-    assert '"L3-01-V": "UE 컨텍스트 고갈"' in q and '"L3-24": "하향 IMSI 추출"' in q
+    assert '"L3-01-V": "UE 컨텍스트 고갈"' in q and '"L3-24": "IMSI 노출"' in q
     assert '"AN-02": "식별 요청 증가"' in q and "#" not in q.split("names = ")[1].split("\n")[0]
     table = panels["공격별 경보 결과"]
     # 룰 ID·단계 열은 빼고(사용자 요청 11/13) 공격 이름부터
@@ -384,7 +416,7 @@ def test_performance_overhead_row():
     start = next(i for i, p in enumerate(panels) if p["type"] == "row" and p["title"] == "Overhead")
     end = next((i for i, p in enumerate(panels) if i > start and p["type"] == "row"), len(panels))
     row = {p["title"]: p for p in panels[start + 1:end]}
-    assert list(row) == ["노드", "Cpu/Memory 평균 사용률", "CPU 사용률(전체)", "CPU 사용률(분석 엔진)",
+    assert list(row) == ["노드", "CPU/메모리 평균 사용률", "CPU 사용률(전체)", "CPU 사용률(분석 엔진)",
                          "메모리 사용량(전체)", "메모리 사용량(분석 엔진)",
                          "F1·N2 SCTP 트래픽",
                          "F1·N2 SCTP 패킷", "CPU 사용률 · RRC 연결 시도"]
@@ -428,7 +460,7 @@ def test_performance_overhead_row():
         assert "stacking" not in p["fieldConfig"]["defaults"]["custom"], title
         assert p["options"]["legend"]["showLegend"] is False, title
     # 요약 칸: 분석 엔진 평균도 %(사용자 요청 11/20). 노드·요약 칸 글자 크기는 같게 고정(자동이면 요약 칸이 훨씬 컸음)
-    summary = row["Cpu/Memory 평균 사용률"]
+    summary = row["CPU/메모리 평균 사용률"]
     units = {o["matcher"]["options"]: dict((x["id"], x["value"]) for x in o["properties"])
              for o in summary["fieldConfig"]["overrides"]}
     # 평균 넷 — 전체 CPU·메모리, 분석 엔진 CPU·메모리(최대는 뺌, 사용자 요청 11/20)
@@ -525,10 +557,21 @@ def test_referenced_variables_are_defined(path):
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)
 def test_query_variables_refresh_on_time_range_change(path):
     """query 변수는 새로고침마다 다시 읽는다(refresh=2). 대시보드를 열 때만 읽으면(1) 데이터가 들어오기 전에 연
-    대시보드에서 목록이 비어, 그 변수로 거르는 패널이 계속 No data가 된다(새 서버 첫 배포에서 겪음, M7 D103)."""
+    대시보드에서 목록이 비어, 그 변수로 거르는 패널이 계속 No data가 된다(새 서버 첫 배포에서 겪음, M7 D103).
+    예외 alert_id(D219): 열 때만 읽는다 — 5초마다 다시 읽으면 취소된 조회가 값을 비우고 첫 경보로 바꿔, 행을 눌러 고른
+    경보가 되돌아갔다(11/25). 값은 경보 목록 행 링크(주소)로 들어와 선택지가 비어도 된다."""
     for v in load(path)["templating"]["list"]:
         if v["type"] == "query":
-            assert v["refresh"] == 2, v["name"]
+            assert v["refresh"] == (1 if v["name"] == "alert_id" else 2), v["name"]
+
+
+def test_alert_link_keeps_variables():
+    """경보 목록 행 링크: 셀은 :queryparam(여러 셀이 '{1,2}' 한 값이 되지 않게), 경보 변수 범위는 목록처럼 1시간 앞부터."""
+    d = load(DASHBOARD_DIR / "monitoring.json")
+    link = next(p for p in d["panels"] if p.get("title") == "경보")["fieldConfig"]["defaults"]["links"][0]["url"]
+    assert "${cell:queryparam}" in link and "var-cell=${cell}" not in link
+    alert_var = next(v for v in d["templating"]["list"] if v["name"] == "alert_id")
+    assert "range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)" in alert_var["query"]
 
 
 @pytest.mark.parametrize("path", DASHBOARDS, ids=lambda p: p.name)

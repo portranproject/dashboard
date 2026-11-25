@@ -1,13 +1,13 @@
 {
-  "_설명": "경보 rule·candidates ID → 화면에 보일 공격 이름. 기준은 reference/detection/27_ §5.3 '공격 이름 대응표'·'4단계 이상 유형 대응표'(탐지 쪽 L3 공격 분석표 이름). 대시보드는 grafana/build.py가 이 파일로 값 매핑을 만든다.",
+  "_설명": "경보 rule·candidates ID → 화면에 보일 공격 이름. 기준은 reference/detection/27_ §5.3 '공격 이름 대응표'·'4단계 이상 유형 대응표'(탐지 쪽 L3 공격 분석표 이름). 대시보드는 grafana/build.py가 이 파일로 값 매핑을 만든다. 화면 이름이 27_와 다른 것(사용자 요청 11/25): #24 하향 IMSI 추출 → IMSI 노출, #14 UE 능력 탈취 → 단말 성능 정보 탈취, #6 NAS 카운터 비동기화 → NAS 카운터 불일치.",
   "rules": {
     "L3-01-V": "#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)",
     "L3-01-O": "#1 인증 단계 고착 (Kim'19, 원형)",
     "L3-20": "#20 Blind DoS (S-TMSI 재사용, CONNECTED형)",
     "L3-21": "#21 상향 DoS — 위조 자격증명 (Uplink DoS)",
-    "L3-24": "#24 하향 IMSI 추출 (Downlink IMSI Extractor)",
-    "L3-14": "#14 UE 능력 탈취 (Capability Hijacking)",
-    "L3-06": "#6 NAS 카운터 비동기화 (desync 원형)",
+    "L3-24": "#24 IMSI 노출 (Downlink IMSI Extractor)",
+    "L3-14": "#14 단말 성능 정보 탈취 (Capability Hijacking)",
+    "L3-06": "#6 NAS 카운터 불일치 (desync 원형)",
     "AN-01": "이상 유형 — 인증 동기 실패 재인증",
     "AN-02": "이상 유형 — 식별 요청 증가",
     "AN-04": "이상 유형 — 같은 UE의 짧은 연결 반복",
@@ -28,7 +28,7 @@
     "L3-34-OV": "#34 TORPEDO (페이징 시점 탐침)",
     "L3-12-V": "#12 은밀 강제분리 (5G 변형)",
     "L3-33-V": "#33 TMSI·페이징·RNTI 노출 (주입 변형)",
-    "L3-06-O1": "#6 NAS 카운터 비동기화 (reset 원형)",
+    "L3-06-O1": "#6 NAS 카운터 불일치 (reset 원형)",
     "L3-17-OV": "#17 SIB TAC 조작 (원형·변형)",
     "L3-26-O": "#26 IMSI 캐처·가짜 기지국 (원형)"
   }

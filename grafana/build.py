@@ -18,7 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "dashboards"
 RULE_NAMES = json.loads((ROOT / "rule-names.json").read_text(encoding="utf-8"))
-DS = {"type": "influxdb", "uid": "portran-influxdb"}
+# 판정 근거 값·대표 값에서 키 대신 보일 이름: 룰 → 항목 → 키 → 이름 (reference/detection/35_ 엑셀, 11/25)
+EVIDENCE_KEY_NAMES = json.loads((ROOT / "evidence-key-names.json").read_text(encoding="utf-8"))["rules"]
+DS ={"type": "influxdb", "uid": "portran-influxdb"}
 
 # 데이터 출처 선택 (docs/dashboard-design.md 1절) = X-Env 값. 탐지 쪽이 11/20부터 AWS는 aws, On-Premise(우리 실물 장비)는
 # on-premise로 보낸다(D213). 11/13~11/20 AWS 실측은 p4로 쌓여 있어 'AWS (이전 p4)'로 따로 고른다
@@ -27,6 +29,9 @@ SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("AWS (이전 p4)", "p4
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
 CELL_LIMIT = 96  # 셀 UE 컨텍스트 한도 (27_ §5.3, ext.UeCtxMax ≥ 90%면 high)
+# 노드 CPU % 그래프 축의 소프트 최대(Grafana custom.axisSoftMax). 축이 적어도 0~이 값이고 값이 넘으면 늘어난다.
+# 100 고정이면 평소 2~5%가 바닥에 붙어 안 보이고, 완전 자동이면 작은 흔들림이 꼭대기까지 튀어 과장된다(11/25)
+CPU_AXIS_SOFT_MAX = 10
 # 근거 KPM1 타임라인에서 UE의 마지막 메시지를 이만큼만 그린다(그 뒤는 빈칸)
 TIMELINE_END_S = 1
 
@@ -45,6 +50,9 @@ WINDOW = f"win = duration(v: (int(v: v.windowPeriod) + {SLOT_NS - 1}) / {SLOT_NS
 CELL_REGEX = "r.cell =~ /^${cell:regex}$/"
 # 0~1 비율이라 %로 보이는 대표 값 키(27_ §5.3 — L3-01-V의 ratio뿐). 저장값은 반올림 없는 실수 그대로다
 PERCENT_REP_KEYS = ("ratio",)
+# 판정 근거 값 표의 행(alert 필드) → 이름 대응표의 항목. cond·conditions는 문자열 배열, 나머지는 객체다
+EVIDENCE_FIELDS = {"cond_json": "cond", "conditions_json": "conditions", "values_json": "values",
+                   "params_json": "params", "refs_json": "refs"}
 
 
 # --------------------------------------------------------------------------- 공통 조각
@@ -312,9 +320,10 @@ def source_variable() -> dict:
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,
-                   description: str = "") -> dict:
+                   description: str = "", refresh: int = 2) -> dict:
+    """refresh 2 = 시간 범위가 바뀔 때(자동 새로고침 포함)마다 다시 읽음, 1 = 대시보드를 열 때만(D103·D219)."""
     v = {"name": name, "label": label, "type": "query", "datasource": DS, "query": query.strip("\n"),
-         "definition": query.strip("\n"), "refresh": 2, "sort": 0, "multi": multi, "includeAll": include_all,
+         "definition": query.strip("\n"), "refresh": refresh, "sort": 0, "multi": multi, "includeAll": include_all,
          "hide": 0, "description": description, "current": {}, "options": []}
     if include_all:
         v["current"] = {"text": "All", "value": "$__all"}
@@ -421,14 +430,18 @@ union(tables: [peak, avg])
     b.row("경보 목록")
     # 0~1 비율 대표 값(ratio)은 %로(사용자 요청 11/18): 0.5714 → 57%. ×100 뒤 반올림해야 실수 오차(56.99999…)가 없다
     percent_keys = " or ".join(f'r.key == "{k}"' for k in PERCENT_REP_KEYS)
+    # 대표 값 키도 판정 근거 값과 같은 화면 이름으로(11/25, 35_ 엑셀) — % 판단은 원래 키로 한다
+    rep_name = 'dict.get(dict: rep_names, key: r.rule + "|" + r.key, default: r.key)'
     alert_list = f'''
 import "date"
+import "dict"
 import "math"
 import "strings"
+rep_names = {rep_name_dict()}
 {alert_summary("date.sub(d: 1h, from: v.timeRangeStart)", "date.sub(d: 1h, from: v.timeRangeStart)")}
 // 정렬은 map 앞에서 한다 — map으로 만든 열("시작")로 정렬하면 InfluxDB 2.7이 줄을 떨어뜨린다(해제된 경보가 목록에서 빠졌음, M11)
 summary
-  |> filter(fn: (r) => r.start >= v.timeRangeStart or r.status == "열림" or r.status == "상태 불명")
+  |> filter(fn: (r) => (r.start >= v.timeRangeStart or r.status == "열림" or r.status == "상태 불명") and {CELL_REGEX})
   |> sort(columns: ["start"], desc: true)
   |> limit(n: 300)
   |> map(fn: (r) => ({{
@@ -439,18 +452,20 @@ summary
       심각도: string(v: r.sev),
       "UE 수": r.ues,
       "대표 값": if r.key == "" then ""
-                else if ({percent_keys}) and r.rep != "" then r.key + " = " + string(v: math.round(x: float(v: r.rep) * 100.0)) + "%"
-                else r.key + " = " + r.rep,
+                else if ({percent_keys}) and r.rep != "" then {rep_name} + " = " + string(v: math.round(x: float(v: r.rep) * 100.0)) + "%"
+                else {rep_name} + " = " + r.rep,
       상태: r.status,
       "길이(초)": float(v: int(v: if r.event == "raise" or r.event == "update" then now() else r.last) - int(v: r.start)) / 1000000000.0,
       alert_id: r.alert_id}}))
 '''
+    # 셀은 :queryparam으로(var-cell=1&var-cell=2, 전체면 var-cell=$__all) — ${cell}이면 여러 셀이 '{1,2}' 한 값이 되어
+    # 셀 변수가 기본값으로 돌아갔다(11/25)
     link = {"title": "이 경보 상세 보기",
-            "url": "/d/portran-monitoring/?var-source=${source}&var-cell=${cell}&var-alert_id=${__data.fields.alert_id}&${__url_time_range}"}
+            "url": "/d/portran-monitoring/?var-source=${source}&${cell:queryparam}&var-alert_id=${__data.fields.alert_id}&${__url_time_range}"}
     # 룰별 경보 수 막대는 없애고 표를 한 줄 가득(11/16 — 맨 위 탐지 결과의 공격별 경보 수와 겹침)
     b.add("table", "경보", 0, 24, 11, [target(alert_list)],
-          "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함). 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, "
-          "UE 수·대표 값 = 마지막 값(ratio는 % — 소수 셋째 자리에서 반올림). 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, "
+          "고른 시간 범위의 경보(범위 전에 열려 아직 열린 것 포함), 위쪽 셀 변수로 고른 셀만. 한 행 = 경보 하나(alert_id). 심각도 = 그 경보에서 나온 최고 값, "
+          "UE 수·대표 값 = 마지막 값(ratio는 % — 소수 셋째 자리에서 반올림, 키는 판정 근거 값과 같은 이름). 상태: 열림 / 해제(clear) / 강제 종료(end, 사유) / 상태 불명(마지막 레코드 뒤 1단계 15초, "
           "2~4단계 90초 동안 아무것도 없음). 행을 누르면 아래 경보 상세가 바뀐다",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": True},
                                      "links": [link]},
@@ -509,6 +524,8 @@ from(bucket: v.defaultBucket)
     detail = f'''
 import "date"
 import "dict"
+import "strings"
+{evidence_rename_fn()}
 labels = dict.fromList(pairs: [{", ".join(f'{{key: "{k}", value: "{v}"}}' for k, v in labels)}])
 order = dict.fromList(pairs: [{", ".join(f'{{key: "{k}", value: {i}}}' for i, (k, _) in enumerate(labels))}])
 from(bucket: v.defaultBucket)
@@ -519,12 +536,15 @@ from(bucket: v.defaultBucket)
   |> max(column: "_time")
   |> group()
   |> map(fn: (r) => ({{n: dict.get(dict: order, key: r._field, default: 99),
-      항목: dict.get(dict: labels, key: r._field, default: r._field), 값: string(v: r._value)}}))
+      항목: dict.get(dict: labels, key: r._field, default: r._field),
+      값: rename(rule: r.rule, field: r._field, s: string(v: r._value))}}))
   |> sort(columns: ["n"])
   |> drop(columns: ["n"])
 '''
     b.add("table", "판정 근거 값", 0, 15, 9, [target(detail)],
-          "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값",
+          "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값. "
+          "키는 줄임말 없는 이름으로 보인다(grafana/evidence-key-names.json — 탐지 쪽 35_ 분석표, 원래 키는 InfluxDB·녹화에 그대로). "
+          "이름이 정해지지 않은 키는 원래 키",
           field_config={"defaults": {"custom": {"align": "left", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("항목", ("custom.width", 260)),
                                       override("값", ("custom.cellOptions", {"type": "json-view"}))]},
@@ -680,17 +700,21 @@ from(bucket: v.defaultBucket)
 import "influxdata/influxdb/schema"
 schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
   predicate: (r) => (r._measurement == "kpm2" or r._measurement == "alert") and {ENV})
-''', multi=True, include_all=True, description="탐지 결과·상시 KPM2 그래프에 넣을 셀"),
+''', multi=True, include_all=True, description="탐지 결과·상시 KPM2 그래프·경보 목록에 넣을 셀"),
+        # 경보는 대시보드를 열 때(와 출처를 바꿀 때)만 읽는다(D219). 5초 새로고침마다 다시 읽으면, 그 조회가 취소될 때
+        # Grafana가 선택지를 []로 받아 값을 비우고 다음 조회에서 첫 경보로 바꿔, 행을 눌러 고른 경보가 되돌아갔다(11/25).
+        # 행을 누르면 값은 주소로 들어오므로 선택지에 없어도 된다. 범위는 경보 목록과 같게 1시간 앞부터(열린 경보 포함)
         query_variable("alert_id", "경보", f'''
+import "date"
 from(bucket: v.defaultBucket)
-  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> range(start: date.sub(d: 1h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => r._measurement == "alert" and r._field == "severity" and r.event == "raise" and {ENV})
   |> group()
   |> sort(columns: ["_time"], desc: true)
   |> map(fn: (r) => ({{_value: r.alert_id}}))
   |> unique()
   |> limit(n: 500)
-''', description="경보 상세에 보일 경보. 경보 목록에서 행을 누르면 바뀐다"),
+''', description="경보 상세에 보일 경보. 경보 목록에서 행을 누르면 바뀐다", refresh=1),
     ]
     variables[2]["sort"] = 0
     variables[2]["hide"] = 2  # 위쪽 칸은 숨긴다(11/16) — 경보 목록에서 행을 눌러 고르고, 경보 상세 행 제목에 보인다
@@ -796,6 +820,34 @@ def rule_name_dict() -> str:
     return "[" + ", ".join(f"{flux_str(k)}: {flux_str(short_rule_name(v))}" for k, v in names.items()) + "]"
 
 
+def evidence_renames(rule: str, section: str) -> list[tuple[str, str]]:
+    """그 룰·항목에서 실제로 바뀌는 (키, 이름) — 이름이 키와 같은 것은 뺀다."""
+    return [(k, v) for k, v in EVIDENCE_KEY_NAMES.get(rule, {}).get(section, {}).items() if k != v]
+
+
+def evidence_rename_fn() -> str:
+    """Flux 함수 rename(rule, field, s): 판정 근거 값 JSON 문자열의 키를 화면 이름으로(11/25, 35_ 엑셀). 같은 키라도
+    룰·항목마다 이름이 달라 룰·필드로 가른다. collector가 쓴 압축 JSON(공백 없음)이라 객체 키는 '"키":', 배열 원소는
+    '"키"'로 찾는다 — 따옴표까지 맞추므로 C2가 C2a를, n_stall이 n_stall_frac을 건드리지 않는다. 대응표에 없는 키는 그대로."""
+    branches = []
+    for rule in EVIDENCE_KEY_NAMES:
+        for field, section in EVIDENCE_FIELDS.items():
+            suffix = "" if section in ("cond", "conditions") else ":"
+            expr = "s"
+            for key, name in evidence_renames(rule, section):
+                expr = (f"strings.replaceAll(v: {expr}, t: {flux_str(json.dumps(key) + suffix)}, "
+                        f"u: {flux_str(json.dumps(name) + suffix)})")
+            if expr != "s":
+                branches.append(f'if rule == {flux_str(rule)} and field == "{field}" then {expr}')
+    return "rename = (rule, field, s) =>\n    " + "\n    else ".join(branches) + "\n    else s"
+
+
+def rep_name_dict() -> str:
+    """대표 값 키(rep_key, values의 키) → 화면 이름. 사전 키는 '룰|키'(룰마다 이름이 달라서)."""
+    pairs = [(f"{rule}|{key}", name) for rule in EVIDENCE_KEY_NAMES for key, name in evidence_renames(rule, "values")]
+    return "dict.fromList(pairs: [" + ", ".join(f"{{key: {flux_str(a)}, value: {flux_str(b)}}}" for a, b in pairs) + "])"
+
+
 def alerts_in_range() -> str:
     """고른 시간 범위에서 시작한(raise) 경보 = 한 행(alert_summary). 끝난 실험을 보므로 근거는 읽지 않는다.
     탐지 결과 두 패널은 이벤트·심각도·시각만 써서 severity만 읽는다(읽는 시간이 필드 수에 비례)."""
@@ -818,12 +870,12 @@ OVERHEAD = 'r._measurement == "overhead"'
 # 탐지 쪽 전송기는 hello의 node_id만 cu로 바꾸고 overhead 줄은 그대로 보낸다(detection dashboard_sender.py). 한 출처 안에서
 # 이름이 다른 노드가 같은 시각에 보낸 적은 없다(AWS 30일 확인, 11/20). 이름이 바뀔 때마다 범례가 둘씩 나왔다(11/16·11/20)
 OVERHEAD_STALE_S = 30  # 마지막 overhead가 이보다 오래되면 '수신 멈춤'으로 칠한다(3초 구간 10개)
-# 노드·Cpu/Memory 평균 사용률 칸의 글자 크기(px) — 자동이면 칸 폭·값 수에 따라 달라져 요약 칸 숫자가 노드 칸보다 훨씬 컸다(사용자 요청 11/20)
+# 노드·CPU/메모리 평균 사용률 칸의 글자 크기(px) — 자동이면 칸 폭·값 수에 따라 달라져 요약 칸 숫자가 노드 칸보다 훨씬 컸다(사용자 요청 11/20)
 OVERHEAD_STAT_TEXT = {"titleSize": 14, "valueSize": 24}
 
 
 def overhead_pivot(fields: list[str], measurement: str = "overhead") -> str:
-    """고른 시간 범위의 overhead 필드들을 시각(구간 시작)마다 한 행으로(원본 그대로 — 'Cpu/Memory 평균 사용률' 전용).
+    """고른 시간 범위의 overhead 필드들을 시각(구간 시작)마다 한 행으로(원본 그대로 — 'CPU/메모리 평균 사용률' 전용).
     세션(series)마다 표가 나뉘어 있다."""
     cond = " or ".join(f'r._field == "{f}"' for f in fields)
     return f'''from(bucket: v.defaultBucket)
@@ -924,7 +976,7 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
     no_data = [{"type": "value", "options": {"-1": {"text": "없음", "index": 0}}}]
     # 평균만 — 최대(3초 한 칸의 순간값)는 다른 프로그램 하나로도 튀어 대표 값이 못 되고 시간 그래프에 보인다(사용자 요청 11/20)
     SUMMARY_FIELDS = ["CPU 평균 사용률", "메모리 평균 사용률", "분석 엔진 평균 CPU", "분석 엔진 평균 메모리"]
-    b.add("stat", "Cpu/Memory 평균 사용률", 8, 16, 4,  # 11/20 전 '고른 시간 범위 요약'(사용자 요청)
+    b.add("stat", "CPU/메모리 평균 사용률", 8, 16, 4,  # 11/20 전 '고른 시간 범위 요약'(사용자 요청)
           [target(summary)],
           "고른 시간 범위의 평균 — 왼쪽 둘은 노드 전체, 오른쪽 둘은 그 가운데 분석 엔진(계측기 프로세스, process_scope self) 몫. "
           "CPU 사용률 = 바쁜 코어 / 코어 수, 메모리 사용률 = (MemTotal − MemAvailable) / MemTotal, 분석 엔진 CPU = 분석 엔진 코어 / "
@@ -940,7 +992,7 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
               "excludeByName": {}, "renameByName": {},
               "indexByName": {name: i for i, name in enumerate(SUMMARY_FIELDS)}}}])
 
-    # 시간 그래프는 모두 구간 평균(사용자 결정 11/18) — 3초 값의 뜻(구간 평균)을 넓힌 것. 평균은 'Cpu/Memory 평균 사용률'이 원본으로
+    # 시간 그래프는 모두 구간 평균(사용자 결정 11/18) — 3초 값의 뜻(구간 평균)을 넓힌 것. 평균은 'CPU/메모리 평균 사용률'이 원본으로
     # 왼쪽 = 노드 전체, 오른쪽 = 분석 엔진 몫. 계열이 하나라 범례는 숨긴다(사용자 요청 11/20 — '내역'(분석 엔진 + 그 밖 쌓기)과
     # 점선(코어 수·전체 메모리)을 없애고 제목을 '(전체)'·'(분석 엔진)'으로)
     imports = 'import "internal/debug"'
@@ -949,7 +1001,7 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
                  "tooltip": {"mode": "multi", "sort": "none"}}
 
     def single(title: str, x: int, fields: list[str], name: str, expr_fields: list[str], expr: str, unit: str,
-               color: str, description: str, max_100: bool = False) -> None:
+               color: str, description: str, cpu_axis: bool = False) -> None:
         query = f'''
 {imports}
 {WINDOW}
@@ -958,14 +1010,16 @@ array.from(rows: [{{"CPU 평균 사용률": pick(tables: cpu |> mean()), "메모
   |> sort(columns: ["_time"])
 '''
         b.add("timeseries", title, x, 12, 8, [target(query)], description + window_note,
-              field_config={"defaults": {**timeseries_defaults(unit), **({"max": 100} if max_100 else {}),
+              field_config={"defaults": {**timeseries_defaults(unit, **({"axisSoftMax": CPU_AXIS_SOFT_MAX}
+                                                                         if cpu_axis else {})),
                                          "color": {"mode": "fixed", "fixedColor": color}}, "overrides": []},
               options=no_legend, new_line=x == 12)
 
     single("CPU 사용률(전체)", 0, ["node_busy_cores", "cpu_count"], "CPU 사용률", ["node_busy_cores", "cpu_count"],
            "r.node_busy_cores / r.cpu_count * 100.0", "percent", "blue",
-           "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다.",
-           max_100=True)
+           "노드 전체. 구간(3초) 동안 노드가 바쁘게 돈 코어 수 / 코어 수. 분석 엔진·탐지 엔진·전송기·CU가 모두 들어 있다. "
+           f"세로축은 0~{CPU_AXIS_SOFT_MAX}%로 시작하고 값이 넘으면 늘어난다.",
+           cpu_axis=True)
     single("CPU 사용률(분석 엔진)", 12, ["process_cores", "cpu_count"], "분석 엔진", ["process_cores", "cpu_count"],
            "r.process_cores / r.cpu_count * 100.0", "percent", "orange",
            "분석 엔진(계측기 프로세스, process_scope self)이 쓴 코어 / 노드 코어 수 — 왼쪽 전체와 같은 기준(노드 CPU 전체의 %). "
@@ -1037,10 +1091,14 @@ import "internal/debug"
           [target(load, "A"), target(attempts, "B")],
           "공격으로 연결 시도가 몰릴 때 CU CPU가 얼마나 오르나. 왼쪽 축 = 노드 CPU 사용률, 오른쪽 축(막대) = 상시 KPM2 RRC 연결 시도"
           "(위쪽 셀 변수로 고른 셀의 합). 둘 다 같은 구간(3초, 긴 시간 범위에서는 3초 배수 구간 — CPU는 평균, 연결 시도는 합)이라 "
-          "칸끼리 겹친다. 상시 KPM2가 없는 출처(샘플 등)에서는 RRC 연결 시도가 안 보인다",
-          field_config={"defaults": {**timeseries_defaults("percent"), "max": 100,
+          f"칸끼리 겹친다. 왼쪽 축은 0~{CPU_AXIS_SOFT_MAX}%로 시작하고 값이 넘으면 늘어난다. "
+          "상시 KPM2가 없는 출처(샘플 등)에서는 RRC 연결 시도가 안 보인다",
+          # 축 범위는 CPU 계열에만 건다 — 기본값에 두면 override의 null로 풀리지 않아 오른쪽 축까지 묶인다
+          # (예전 max 100 + override max null에서 오른쪽 축이 0~100으로 고정됐음, 11/25)
+          field_config={"defaults": {**timeseries_defaults("percent"),
                                      "color": {"mode": "fixed", "fixedColor": "blue"}},
-                        "overrides": [override("RRC 연결 시도.*", ("unit", "none"), ("max", None),
+                        "overrides": [override("CPU 사용률", ("custom.axisSoftMax", CPU_AXIS_SOFT_MAX)),
+                                      override("RRC 연결 시도.*", ("unit", "none"),
                                                ("custom.axisPlacement", "right"), ("custom.drawStyle", "bars"),
                                                ("custom.fillOpacity", 50), ("custom.barAlignment", 1),
                                                ("color", {"mode": "fixed", "fixedColor": "orange"}), regex=True)]},

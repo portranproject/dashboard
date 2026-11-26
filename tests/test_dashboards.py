@@ -354,6 +354,7 @@ def test_detection_rows_on_monitoring():
     q = panels["공격별 경보 수"]["targets"][0]["query"]
     assert all(f'"{rule}":' in q for rule in {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]})
     assert '"L3-01-V": "UE 컨텍스트 고갈"' in q and '"L3-24": "IMSI 노출"' in q
+    assert '"L3-21": "등록 폭주 공격"' in q  # 상향 DoS → 등록 폭주 공격(사용자 요청 11/26)
     assert '"AN-02": "식별 요청 증가"' in q and "#" not in q.split("names = ")[1].split("\n")[0]
     table = panels["공격별 경보 결과"]
     # 룰 ID·단계 열은 빼고(사용자 요청 11/13) 공격 이름부터

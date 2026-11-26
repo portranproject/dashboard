@@ -1585,5 +1585,14 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 |---|---|
 | 한 일 | `grafana/build.py`: 경보 목록 쿼리의 거르기에 `r.cell =~ /^${cell:regex}$/`(탐지 결과와 같은 조건) — 범위 전에 시작해 아직 열린 경보도 고른 셀 것만. 경보 요약을 만든 뒤 거르는 것이라 저장소 거르기(D202)와 상관없다. 셀 변수 설명·패널 설명 고침. 테스트(실제 InfluxDB): 셀 1·여러 셀 `(1\|2)`은 경보가 보이고 셀 2는 비어 있음. CLAUDE.md 9.1절, `docs/dashboard-design.md` |
 | 확인 결과 | `pytest` 전체 606 passed, `--check` 통과, 로컬 Grafana `query_timing.py --source sample --dashboard monitoring --range 1h` 통과 |
-| 남은 일 | **배포 전**: 이번 브랜치에서 바뀐 관제 쿼리(판정 근거 값 키 이름, 대표 값, 경보 변수 범위, 경보 목록 셀)를 AWS에서 `query_timing.py --source p4 --range 7d --parallel`로 잰다(9.1절) |
+| 배포 전 AWS 측정 (11/25) | 바뀐 관제 쿼리를 배포 없이 읽기만, 명령마다 한 번: `query_timing.py --url http://3.39.170.31:3000 --dashboard monitoring --range 7d --parallel`. `--source p4` 18개 통과 — 가장 느린 경보 목록 0.31초(경보 39행), 판정 근거 값 0.05초, 동시 18개 가장 늦은 응답 1.30초. `--source aws` 18개 통과 — 가장 느린 UE 컨텍스트 0.14초, 동시 0.61초. 모두 5초 상한 안. 경보 변수 쿼리는 이 도구가 재지 않지만 이제 열 때·출처를 바꿀 때만 돈다(D219) |
 
+
+## 공격 이름 상향 DoS → 등록 폭주 공격 (2026-11-26, 브랜치 `fix/rename-uplink-dos`)
+
+사용자 요구(11/26): "상향 dos -> 등록 폭주 공격으로 바꾸자". 역할 분리 꺼짐(D208)이라 서브에이전트 없이 진행.
+
+| 구분 | 내용 |
+|---|---|
+| 한 일 | `grafana/rule-names.json`: `L3-21` "#21 상향 DoS — 위조 자격증명 (Uplink DoS)" → "#21 등록 폭주 공격 — 위조 자격증명 (Uplink DoS)"(짧은 이름 '등록 폭주 공격'), `_설명`에 11/26 변경을 더함. `python grafana/build.py`로 관제 JSON(탐지 결과·경보 목록·경보 상세 후보 공격·경보 툴팁의 이름 7곳)과 알림 provisioning(AWS·On-Premise 공격 경보 규칙 2곳)을 다시 만듦 — Slack 알림 공격 이름도 바뀜. 성능 JSON은 그대로(공격 이름 없음). `tests/test_dashboards.py`에 `"L3-21": "등록 폭주 공격"` 확인을 더함. 쿼리 구조는 바뀌지 않음(이름 문자열만) |
+| 확인 결과 | `python grafana/build.py --check` 통과, `pytest` 590 passed·16 skipped — Docker Desktop이 꺼져 있어 InfluxDB·Grafana가 필요한 테스트를 건너뜀(PR CI에서 돈다). 화면은 확인하지 않음. Reviewer 검증 없음(역할 분리 꺼짐) |

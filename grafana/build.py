@@ -90,9 +90,12 @@ KIND_MAPPINGS = [{"type": "value", "options": {
     "이상 유형": {"color": "yellow", "index": 1},
     "판정 보류": {"color": "purple", "index": 2}}}]
 
-# 경보 종류: 공격 경보 / 4단계 이상 유형(AN-) / 판정 보류 경보(2·3단계 룰인데 kind anomaly) — 27_ §5.5
-CLASS_EXPR = ('if r.kind == "attack" then "공격" else if strings.hasPrefix(v: r.rule, prefix: "AN-") '
-              'then "이상 유형" else "판정 보류"')
+# 경보 종류: 공격 경보 / 4단계 이상 유형(AN-) / 판정 보류 경보(2·3단계 룰인데 kind anomaly) — 27_ §5.5.
+# rule-names.json의 shown_as_anomaly(L3-24·L3-14, 탐지 쪽 요청 11/27)는 kind attack이어도 이상 유형으로 보인다 — 화면만 바꾸고
+# 레코드는 그대로. 그 룰의 판정 보류 경보(kind anomaly)는 그대로 판정 보류다. Slack 공격 경보도 이 종류로 고른다
+SHOWN_AS_ANOMALY = " or ".join(f'r.rule == "{rule}"' for rule in RULE_NAMES["shown_as_anomaly"]) or "false"
+CLASS_EXPR = (f'if r.kind == "attack" and not ({SHOWN_AS_ANOMALY}) then "공격" '
+              'else if r.kind == "attack" or strings.hasPrefix(v: r.rule, prefix: "AN-") then "이상 유형" else "판정 보류"')
 
 ENV = 'r.env == "${source}"'
 
@@ -495,6 +498,7 @@ summary
     sel = f'r._measurement == "alert" and {ENV} and r.alert_id == "${{alert_id}}"'
     summary = f'''
 import "date"
+import "strings"
 from(bucket: v.defaultBucket)
   |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => {sel})
@@ -503,15 +507,17 @@ from(bucket: v.defaultBucket)
   |> group()
   |> sort(columns: ["_time"])
   |> last(column: "_time")
-  |> map(fn: (r) => ({{룰: r.rule, 공격: r.rule, 종류: r.kind, 셀: r.cell,
+  |> map(fn: (r) => ({{룰: r.rule, 공격: r.rule, 종류: {CLASS_EXPR}, 셀: r.cell,
       "마지막 이벤트": r.event, 심각도: r.severity,
       세션: if exists r.session then r.session else ""}}))
 '''
     b.add("table", "판정 요약", 0, 24, 4, [target(summary)],
-          "이 경보의 룰·공격·종류(attack / anomaly)·셀과 마지막 상태. "
+          "이 경보의 룰·공격·종류(공격 / 이상 유형 / 판정 보류 — 경보 목록과 같은 계산, L3-24·L3-14는 kind attack이어도 이상 유형)·셀과 마지막 상태. "
           "갈래(branch)·모드(mode) 열은 없앴다(11/16, 11/18) — 값은 InfluxDB·원본 녹화에 남아 있다",
           field_config={"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("공격", ("mappings", rule_mappings()), ("custom.width", 300)),
+                                      override("종류", ("mappings", KIND_MAPPINGS),
+                                               ("custom.cellOptions", {"type": "color-text"})),
                                       override("심각도", ("mappings", SEVERITY_MAPPINGS),
                                                ("custom.cellOptions", {"type": "color-background"}))]},
           options={"showHeader": True, "cellHeight": "sm", "footer": {"show": False}},
@@ -526,6 +532,7 @@ import "date"
 import "dict"
 import "strings"
 {evidence_rename_fn()}
+{candidate_hide_fn()}
 labels = dict.fromList(pairs: [{", ".join(f'{{key: "{k}", value: "{v}"}}' for k, v in labels)}])
 order = dict.fromList(pairs: [{", ".join(f'{{key: "{k}", value: {i}}}' for i, (k, _) in enumerate(labels))}])
 from(bucket: v.defaultBucket)
@@ -537,14 +544,15 @@ from(bucket: v.defaultBucket)
   |> group()
   |> map(fn: (r) => ({{n: dict.get(dict: order, key: r._field, default: 99),
       항목: dict.get(dict: labels, key: r._field, default: r._field),
-      값: rename(rule: r.rule, field: r._field, s: string(v: r._value))}}))
+      값: rename(rule: r.rule, field: r._field,
+          s: if r._field == "candidates_json" then hide_candidates(rule: r.rule, s: string(v: r._value)) else string(v: r._value))}}))
   |> sort(columns: ["n"])
   |> drop(columns: ["n"])
 '''
     b.add("table", "판정 근거 값", 0, 15, 9, [target(detail)],
           "왜 이 경보가 났나. raise에 실린 조건·후보·전제·설정값과, update로 덮어쓴 마지막 관측값. "
           "키는 줄임말 없는 이름으로 보인다(grafana/evidence-key-names.json — 탐지 쪽 35_ 분석표, 원래 키는 InfluxDB·녹화에 그대로). "
-          "이름이 정해지지 않은 키는 원래 키",
+          "이름이 정해지지 않은 키는 원래 키. 후보(candidates)에서 상향 IMSI 노출(AN-02)의 상향 IMSI 추출(L3-25-OV)은 뺀다(11/27)",
           field_config={"defaults": {"custom": {"align": "left", "cellOptions": {"type": "auto"}}},
                         "overrides": [override("항목", ("custom.width", 260)),
                                       override("값", ("custom.cellOptions", {"type": "json-view"}))]},
@@ -555,19 +563,23 @@ from(bucket: v.defaultBucket)
 import "array"
 import "date"
 import "strings"
-c = from(bucket: v.defaultBucket)
+{candidate_hide_fn()}
+latest = from(bucket: v.defaultBucket)
   |> range(start: date.sub(d: 6h, from: v.timeRangeStart), stop: v.timeRangeStop)
   |> filter(fn: (r) => {sel} and r._field == "candidates_json")
   |> group()
   |> max(column: "_time")
-  |> findColumn(fn: (key) => true, column: "_value")
-text = if length(arr: c) > 0 then strings.replaceAll(v: strings.trim(v: c[0], cutset: "[]"), t: "\\"", u: "") else ""
+c = latest |> findColumn(fn: (key) => true, column: "_value")
+rl = latest |> findColumn(fn: (key) => true, column: "rule")
+text = if length(arr: c) > 0
+  then strings.replaceAll(v: strings.trim(v: hide_candidates(rule: rl[0], s: c[0]), cutset: "[]"), t: "\\"", u: "") else ""
 ids = array.filter(arr: strings.split(v: text, t: ","), fn: (x) => x != "")
 array.from(rows: if length(arr: ids) > 0 then array.map(arr: ids, fn: (x) => ({{ID: x, 공격: x}})) else [{{ID: "-", 공격: "후보 없음"}}])
 '''
     b.add("table", "후보 공격", 15, 9, 9, [target(candidates)],
           "이 경보와 같은 모양을 만드는 다른 공격(candidates). 탐지 엔진은 경보끼리 묶지 않으므로, 같은 셀·같은 시간의 다른 경보와 "
-          "함께 본다. 4단계 이상 유형은 여기 후보 가운데 하나다",
+          "함께 본다. 4단계 이상 유형은 여기 후보 가운데 하나다. 상향 IMSI 노출(AN-02)의 후보 상향 IMSI 추출(L3-25-OV)은 이름이 겹쳐 "
+          "보이지 않는다(탐지 쪽 요청 11/27 — 레코드에는 그대로)",
           field_config={"defaults": {"custom": {"align": "left"}},
                         "overrides": [override("공격", ("mappings", rule_mappings())),
                                       override("ID", ("custom.width", 90))]},
@@ -840,6 +852,22 @@ def evidence_rename_fn() -> str:
             if expr != "s":
                 branches.append(f'if rule == {flux_str(rule)} and field == "{field}" then {expr}')
     return "rename = (rule, field, s) =>\n    " + "\n    else ".join(branches) + "\n    else s"
+
+
+def candidate_hide_fn() -> str:
+    """Flux 함수 hide_candidates(rule, s): candidates JSON 문자열에서 rule-names.json hidden_candidates의 ID를 뺀다
+    (AN-02의 L3-25-OV — AN-02가 '상향 IMSI 노출'이 되어 후보 '상향 IMSI 추출'과 겹침, 탐지 쪽 요청 11/27). collector가 쓴
+    압축 JSON이라 '"ID",' → ',"ID"' → '"ID"' 순으로 지우면 남은 배열이 그대로 JSON이다(따옴표까지 맞춰 다른 ID는 안 건드림)."""
+    branches = []
+    for rule, ids in RULE_NAMES["hidden_candidates"].items():
+        expr = "s"
+        for cid in ids:
+            for text in (json.dumps(cid) + ",", "," + json.dumps(cid), json.dumps(cid)):
+                expr = f'strings.replaceAll(v: {expr}, t: {flux_str(text)}, u: "")'
+        branches.append(f"if rule == {flux_str(rule)} then {expr}")
+    if not branches:
+        return "hide_candidates = (rule, s) => s"
+    return "hide_candidates = (rule, s) =>\n    " + "\n    else ".join(branches) + "\n    else s"
 
 
 def rep_name_dict() -> str:
@@ -1348,8 +1376,8 @@ def alert_rule(uid: str, title: str, query: str, lookback_s: int, threshold: flo
 def source_rules(env_value: str, name: str, uid_tail: str) -> list[dict]:
     """출처 하나의 알림 규칙 두 개(공격 경보, 수집 멈춤). 라벨 source(이름)·env(X-Env 값)는 메시지 제목과 경보 상세 링크에 쓴다."""
     env = f'r.env == "{env_value}"'
-    # 공격 경보(kind attack)마다 한 계열. 값: 열림(raise·update) = 1(medium)·2(high), 해제 = 0, 강제 종료 = -1.
-    # 경보 상태는 alert_summary(관제 대시보드와 같은 계산)로 정한다
+    # 공격 경보(화면 종류 '공격' — kind attack에서 shown_as_anomaly 룰을 뺀 것, 11/27)마다 한 계열.
+    # 값: 열림(raise·update) = 1(medium)·2(high), 해제 = 0, 강제 종료 = -1. 경보 상태·종류는 alert_summary(관제 대시보드와 같은 계산)로 정한다
     attacks = f'''
 import "date"
 import "dict"
@@ -1357,7 +1385,7 @@ import "strings"
 names = {rule_name_dict()}
 {alert_summary(f"-{ATTACK_LOOKBACK_S}s", "-5m", stop="now()").replace(ENV, env)}
 summary
-  |> filter(fn: (r) => r.kind == "attack")
+  |> filter(fn: (r) => r.class == "공격")
   |> map(fn: (r) => ({{alert_id: r.alert_id, rule: r.rule, cell: r.cell,
       attack: dict.get(dict: names, key: r.rule, default: r.rule),
       start: strings.replaceAll(v: strings.substring(v: string(v: date.add(d: 9h, to: r.start)), start: 0, end: 19), t: "T", u: " "),
@@ -1385,8 +1413,8 @@ from(bucket: v.defaultBucket)
                    {"severity": '{{ with .Values }}{{ if eq .B.Value 2.0 }}high{{ else }}medium{{ end }}{{ end }}',
                     "status": '{{ with .Values }}{{ if gt .B.Value 0.0 }}끝 소식 없음(6시간 안에 해제·강제 종료가 오지 않음)'
                               '{{ else if lt .B.Value 0.0 }}강제 종료{{ else }}해제{{ end }}{{ end }}',
-                    "description": f"{name}(X-Env {env_value}) 공격 경보(kind attack)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
-                                   "이상 유형·판정 보류 경보는 알리지 않는다(M12)"}),
+                    "description": f"{name}(X-Env {env_value}) 공격 경보(종류 공격 — kind attack, 이상 유형으로 보이는 L3-24·L3-14 제외)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
+                                   "이상 유형·판정 보류 경보는 알리지 않는다(M12, 11/27)"}),
         alert_rule(f"portran-collect-stop{uid_tail}", f"수집 멈춤 ({name})", collect, COLLECT_LOOKBACK_S, COLLECT_STOP_S,
                    {"notify": "collect", **labels},
                    {"summary": f"{name}에서 {COLLECT_STOP_S // 60}분 넘게 데이터(상시 KPM2·오버헤드·경보·근거)가 오지 않아요. "

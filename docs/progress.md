@@ -1596,3 +1596,14 @@ PR은 모두 `<브랜치>` → `dev` 다음 `dev` → `main`(Create a merge comm
 |---|---|
 | 한 일 | `grafana/rule-names.json`: `L3-21` "#21 상향 DoS — 위조 자격증명 (Uplink DoS)" → "#21 등록 폭주 공격 — 위조 자격증명 (Uplink DoS)"(짧은 이름 '등록 폭주 공격'), `_설명`에 11/26 변경을 더함. `python grafana/build.py`로 관제 JSON(탐지 결과·경보 목록·경보 상세 후보 공격·경보 툴팁의 이름 7곳)과 알림 provisioning(AWS·On-Premise 공격 경보 규칙 2곳)을 다시 만듦 — Slack 알림 공격 이름도 바뀜. 성능 JSON은 그대로(공격 이름 없음). `tests/test_dashboards.py`에 `"L3-21": "등록 폭주 공격"` 확인을 더함. 쿼리 구조는 바뀌지 않음(이름 문자열만) |
 | 확인 결과 | `python grafana/build.py --check` 통과, `pytest` 590 passed·16 skipped — Docker Desktop이 꺼져 있어 InfluxDB·Grafana가 필요한 테스트를 건너뜀(PR CI에서 돈다). 화면은 확인하지 않음. Reviewer 검증 없음(역할 분리 꺼짐) |
+
+## 하향·상향 IMSI 노출 이름, 이상 유형으로 보일 룰, AN-02 후보 (2026-11-27, 브랜치 `fix/imsi-anomaly-kind`)
+
+탐지 쪽 요청(사용자가 전달, 11/27): ① 이름 AN-02 식별 요청 증가 → 상향 IMSI 노출, IMSI 노출(L3-24) → 하향 IMSI 노출 ② 상향 IMSI 노출·하향 IMSI 노출·단말 성능 정보 탈취의 종류를 공격 → 이상 유형 ③ AN-02 후보 공격에서 상향 IMSI 추출(L3-25-OV) 제거. 역할 분리 꺼짐(D208)이라 서브에이전트 없이 진행.
+
+| 구분 | 내용 |
+|---|---|
+| 한 일 | `grafana/rule-names.json`: L3-24 '#24 하향 IMSI 노출 (Downlink IMSI Extractor)', AN-02 '이상 유형 — 상향 IMSI 노출', 새 키 `shown_as_anomaly` `["L3-24","L3-14"]`·`hidden_candidates` `{"AN-02":["L3-25-OV"]}`, `_설명`. `grafana/build.py`: `CLASS_EXPR` — `kind` `attack`이어도 `shown_as_anomaly` 룰이면 이상 유형(판정 보류 경보는 그대로). 판정 요약 '종류'를 원래 `kind`(attack·anomaly) 대신 같은 계산·색(경보 목록과 맞춤). `candidate_hide_fn()`(Flux `hide_candidates`) — 압축 JSON에서 `"ID",`·`,"ID"`·`"ID"`를 지움 — 후보 공격 표(경보의 rule을 함께 읽음)·판정 근거 값 candidates 행에 씀. Slack 공격 경보 규칙의 거르기 `r.kind == "attack"` → `r.class == "공격"`. 패널·규칙 설명. JSON 다시 생성(관제·알림, 성능 그대로). 테스트: `tests/test_dashboards.py`(이름 둘, 설정 키 검사, 판정 근거 값 쿼리, Slack 규칙), `tests/test_dashboard_flux.py`(탐지 쪽 샘플 raise 5개를 셀 3으로 — 종류: L3-24·L3-14 공격 → 이상 유형, 같은 룰 판정 보류 → 판정 보류, AN-02 → 이상 유형, 셀 1 공격 그대로, 판정 요약 같음 / 후보: AN-02 '후보 없음'·판정 근거 값 `[]`, L3-24 `L3-28-V` 그대로). 문서: CLAUDE.md 4·9·9.1·9.3, README, `docs/dashboard-design.md` 6절 |
+| 결정 사항 | **D220** 종류·후보는 화면에서만 바꾼다(레코드·InfluxDB·녹화의 `kind`·`candidates`는 그대로 — 지난 데이터도 같게 보이고, 탐지 엔진이 나중에 `kind`를 바꿔 보내도 `AN-` 아닌 anomaly가 '판정 보류'로 잘못 보이지 않게 룰 ID로 정함). 판정 보류 경보(`kind` anomaly, `cond` `held_count`)는 요청 범위(공격 → 이상 유형)가 아니라 그대로 판정 보류. **Slack 공격 경보도 화면 종류로 골라 L3-24·L3-14 공격은 더 알리지 않는다**(이상 유형은 알리지 않는다는 11/13 결정에 맞춤 — 사용자 확인 필요). 상향 IMSI 노출(AN-02)은 원래 이상 유형이라 종류는 그대로. L3-25-OV 이름은 대응표에 남김(다른 곳에서 오면 이름으로 보이게). 팀 확인: 탐지 쪽 — 탐지 엔진 `kind`를 바꿀지 |
+| 확인 결과 | `python grafana/build.py --check` 통과, `pytest` 전체 609 passed(Docker Desktop을 켜고 로컬 InfluxDB·Grafana 포함, 건너뜀 없음). 화면은 보지 않음. Reviewer 검증 없음(역할 분리 꺼짐) |
+| 배포 전 AWS 측정 (11/27) | 읽기만, 명령마다 한 번: `query_timing.py --url http://3.39.170.31:3000 --dashboard monitoring --range 7d --parallel`. `--source aws` 18개 통과 — 가장 느린 UE 컨텍스트 0.14초, 경보 목록 0.11초(12행), 판정 요약 0.03초, 판정 근거 값 0.08초, 후보 공격 0.04초, 동시 18개 가장 늦은 응답 0.87초. `--source p4` 18개 통과(최대 0.11초, 동시 0.72초) — p4는 11/20 전 데이터라 최근 7일에 경보가 0건이어서 경보 쿼리는 빈 결과로만 잼. 보고서 초안(Claude 문서) 2.4절 예시 이름을 '하향 IMSI 노출'로 고침 |

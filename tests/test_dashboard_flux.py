@@ -22,6 +22,12 @@ T0 = 1_792_209_000_000  # ms — 6초 경계(3초 칸 둘이 한 6초 구간에 
 STOP = T0 + 24_000
 GAP = (T0 + 6_000, T0 + 15_000)  # 이 사이(3초 칸 4개)는 상시 KPM2·overhead가 없다
 L3_20 = "20261105T100800Z-L3-20-1-77"
+# 셀 3: 탐지 쪽 샘플의 raise만(종류·후보 확인용, 11/27). 공격 경보 L3-24·L3-14, 같은 룰의 판정 보류 경보, AN-02
+L3_24 = "20261105T101400Z-L3-24-1-17"
+L3_14 = "20261105T101700Z-L3-14-1-17"
+L3_24_HELD = "20261105T101600Z-L3-24-1-21"
+L3_14_HELD = "20261105T101600Z-L3-14-1-21"
+AN_02 = "20261105T102400Z-AN-02-1-481"
 
 
 def kpm2(session, t, att, succ, n=30, ue_ctx=1.0, cell=1):
@@ -48,6 +54,20 @@ def ratio_alert(i, ratio):
             "unit": "cell", "kind": "attack", "cell": 1, "t": T0 + 1_000 + i, "severity": "medium", "mode": "normal",
             "cond": ["C1"], "candidates": [], "values": {"a_w": 13, "f_w": 12, "ratio": ratio, "base": 1.0},
             "params": {}, "refs": {}}
+
+
+def sample_raises(*names):
+    """탐지 쪽 샘플 파일들의 경보 raise만, 셀 3·T0 뒤 시각으로 옮겨서(다른 테스트의 셀 1 경보와 섞이지 않게)."""
+    out = []
+    for name in names:
+        for line in (REPO / "tests" / "data" / "detection" / name).read_text(encoding="utf-8").splitlines():
+            msg = json.loads(line)
+            if msg["type"] == "alert" and msg["event"] == "raise":
+                msg["cell"], msg["t"] = 3, T0 + 2_000 + len(out)
+                for ue in msg.get("ues", []):
+                    ue["t_hit"] = msg["t"]
+                out.append(msg)
+    return out
 
 
 def blind_dos_lines():
@@ -81,7 +101,9 @@ def flux(temp_bucket, tmp_path_factory):
                {"type": "alert", "fmt": 1, "alert_id": "S1-L3-01-V-1-1", "event": "clear", "rule": "L3-01-V", "stage": 1,
                 "unit": "cell", "kind": "attack", "cell": 1, "t": T0 + 13_000, "severity": "medium", "mode": "normal",
                 "duration_ms": 11_999, "evidence_sent": 0, "evidence_dropped": 0},
-               *blind_dos_lines()]
+               *blind_dos_lines(),
+               *sample_raises("S24_L3-24_두UE_UPDATE_evidence.jsonl", "S14_L3-14_요청없는능력응답_갈래1_RAISE_evidence.jsonl",
+                              "S24_L3-24_DL미관측_불확실RAISE_evidence.jsonl", "SAN02_AN-02_식별요청5UE_RAISE_evidence.jsonl")]
     writer = InfluxWriter(settings, timeout_ms=10_000)
     collector = Collector(writer, tmp_path_factory.mktemp("rec"), batch_size=500, max_pending=10_000)
     body = "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in records).encode("utf-8")
@@ -183,6 +205,31 @@ def test_alert_list_filtered_by_cell(flux):
     assert {L3_20, "S1-L3-01-V-1-1"} <= ids("1")
     assert ids("(1|2)") == ids("1")       # 여러 셀(${cell:regex})
     assert ids("2") == set()
+
+
+def test_kind_shown_as_anomaly(flux):
+    """종류(11/27 탐지 쪽 요청): L3-24·L3-14 공격 경보(kind attack)는 이상 유형으로 보이고, 같은 룰의 판정 보류 경보는
+    그대로 판정 보류, AN-02는 이상 유형. 다른 공격 경보(셀 1의 L3-01-V·L3-20)는 그대로 공격. 판정 요약도 같은 계산."""
+    rows = {r["alert_id"]: r["종류"] for r in flux(panel_query("monitoring", "경보"), cell="3")}
+    assert rows == {L3_24: "이상 유형", L3_14: "이상 유형", L3_24_HELD: "판정 보류", L3_14_HELD: "판정 보류",
+                    AN_02: "이상 유형"}
+    assert {r["종류"] for r in flux(panel_query("monitoring", "경보"))} == {"공격"}
+    for alert_id, kind in ((L3_24, "이상 유형"), (L3_24_HELD, "판정 보류"), (L3_20, "공격")):
+        assert [r["종류"] for r in flux(panel_query("monitoring", "판정 요약"), alert_id=alert_id)] == [kind], alert_id
+
+
+def test_hidden_candidates(flux):
+    """AN-02의 후보 L3-25-OV(상향 IMSI 추출)는 후보 공격 표·판정 근거 값에서 빠진다(11/27 — AN-02가 상향 IMSI 노출).
+    다른 경보의 후보는 그대로."""
+    def candidates(alert_id):
+        return [(r["ID"], r["공격"]) for r in flux(panel_query("monitoring", "후보 공격"), alert_id=alert_id)]
+
+    def evidence(alert_id):
+        rows = {r["항목"]: json.loads(r["값"]) for r in flux(panel_query("monitoring", "판정 근거 값"), alert_id=alert_id)}
+        return rows["같은 모양의 다른 공격 후보 (candidates)"]
+
+    assert candidates(AN_02) == [("-", "후보 없음")] and evidence(AN_02) == []
+    assert candidates(L3_24) == [("L3-28-V", "L3-28-V")] and evidence(L3_24) == ["L3-28-V"]
 
 
 def test_rep_ratio_shown_as_percent(flux):

@@ -142,7 +142,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │   ├── provisioning/alerting/portran.json   # Slack 알림 규칙·연락처·템플릿 (M12, build.py가 만든다)
 │   ├── build.py                  # 대시보드 JSON 생성기 (JSON은 이것으로만 고친다, M10)
 │   ├── query_timing.py           # 대시보드 쿼리를 실제 Grafana에 보내 시간·오류·점 수를 잰다 (읽기 전용, D202)
-│   ├── rule-names.json           # 룰 ID → 공격 이름 (27_ §5.3)
+│   ├── rule-names.json           # 룰 ID → 공격 이름 (27_ §5.3), 이상 유형으로 보일 룰·화면에서 뺄 후보 (11/27)
 │   ├── evidence-key-names.json   # 판정 근거 값·대표 값의 키 → 화면 이름 (룰·항목마다, 35_ 엑셀, 11/25)
 │   └── dashboards/{monitoring.json, performance.json}   # 관제·성능 (grafana/build.py가 만든다)
 ├── recordings/                   # raw 녹화 (.gitignore)
@@ -252,7 +252,7 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 
 datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose up` 한 번으로 대시보드까지 떠야 한다. 대시보드 JSON은 `grafana/dashboards/`에 커밋한다.
 
-- **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3). 판정 근거 값·대표 값의 키 → 화면 이름은 `grafana/evidence-key-names.json`(탐지 쪽 35_ 엑셀의 '바꿀 값', 룰·항목마다 다름 — 화면에서만 바꾸고 레코드·InfluxDB·녹화는 원래 키, 없는 키는 원래 키로 보임).
+- **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3). 같은 파일의 `shown_as_anomaly`(`L3-24`·`L3-14`)는 `kind` `attack`이어도 화면 종류가 이상 유형이고(판정 보류 경보는 그대로 판정 보류), `hidden_candidates`(`AN-02`의 `L3-25-OV`)는 후보 공격·판정 근거 값에서 뺀다(탐지 쪽 요청 11/27, D220 — 화면만, 레코드는 그대로). 판정 근거 값·대표 값의 키 → 화면 이름은 `grafana/evidence-key-names.json`(탐지 쪽 35_ 엑셀의 '바꿀 값', 룰·항목마다 다름 — 화면에서만 바꾸고 레코드·InfluxDB·녹화는 원래 키, 없는 키는 원래 키로 보임).
 - 설계(패널마다 답하는 질문과 쓰는 레코드, 데이터 없음 처리)는 `docs/dashboard-design.md`.
 - 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·AWS (이전 p4)(`p4`)·재생(`replay`)·샘플(`sample`).
 
@@ -261,8 +261,8 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 |---|---|
 | 탐지 결과 | 고른 시간 범위에 시작한 경보: 공격별 경보 수(막대), 경보 길이 분포, 공격별 경보 결과 표. 요약 줄 대신 성능에서 옮김(11/16) |
 | KPM (상시 KPM2) | 셀별 3초 연결 시도·성공·무응답 막대, UE 컨텍스트·연결 UE 수(셀 한도 96). 긴 시간 범위는 3초 배수 구간으로 묶는다(막대 합, UE 수 최대·평균 선은 평균, 11/18). gap·칸 일부 없음(n이 그 세션 `hello.period_ms`로 가득 찬 수 3000 ÷ 주기보다 적은 칸, D214)·세션 시작·DU·CU 재시작 주석. 경보 구간은 주석이 아니라 경보 계열(refId B)로 칠한다 — 영역 어디에 마우스를 대도 툴팁에 경보(11/18). 주석으로 칠하면 쿼리가 200 ms를 넘을 때 새로고침마다 깜빡인다(Grafana가 로딩 중 빈 결과를 먼저 넘김, D209) |
-| 경보 목록 | 위쪽 셀 변수로 거른다(11/25 전에는 모든 셀). 경보 하나 = 한 행(시작·셀·공격 이름·종류·심각도·UE 수·대표 값(키는 판정 근거 값과 같은 이름, 11/25)·상태·길이 — 룰 ID 열은 11/20에 없앰). 행을 누르면 경보 상세로. 표가 한 줄 가득(룰별 경보 수 막대는 11/16에 없앰) |
-| 경보 상세 | 변수 `alert_id`. 판정 요약, 판정 근거 값(cond·candidates·conditions·values·params·refs — 키는 35_ 이름으로, 11/25), 후보 공격, 걸린 UE(`alert_ue`), 근거 KPM(근거 KPM2 100 ms, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보). 줄·패널 제목은 짧게(11/16) |
+| 경보 목록 | 위쪽 셀 변수로 거른다(11/25 전에는 모든 셀). 경보 하나 = 한 행(시작·셀·공격 이름·종류(공격·이상 유형·판정 보류 — L3-24·L3-14는 이상 유형, 11/27)·심각도·UE 수·대표 값(키는 판정 근거 값과 같은 이름, 11/25)·상태·길이 — 룰 ID 열은 11/20에 없앰). 행을 누르면 경보 상세로. 표가 한 줄 가득(룰별 경보 수 막대는 11/16에 없앰) |
+| 경보 상세 | 변수 `alert_id`. 판정 요약(종류는 경보 목록과 같은 계산, 11/27), 판정 근거 값(cond·candidates·conditions·values·params·refs — 키는 35_ 이름으로, 11/25), 후보 공격(AN-02의 L3-25-OV는 뺌, 11/27), 걸린 UE(`alert_ue`), 근거 KPM(근거 KPM2 100 ms, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보). 줄·패널 제목은 짧게(11/16) |
 
 변수: `source`, `cell`, `alert_id`(위쪽 칸은 숨김 — 경보 목록 행을 눌러 고른다, 11/16). query 변수는 새로고침마다 다시 읽지만(refresh 2, D103) `alert_id`만 대시보드를 열 때·출처를 바꿀 때만 읽는다(refresh 1, D219 — 5초마다 다시 읽으면 취소된 조회가 값을 비우고 첫 경보로 바꿔, 누른 경보가 되돌아갔다). 경보 목록 행 링크의 셀은 `${cell:queryparam}`. 그래프 위 주석은 늘 켜 두고 토글을 숨긴다(11/16). 상태 불명 = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(27_ §7). 화면에는 단계(1~4)를 표시하지 않는다(11/13 — 열·제목에서 뺌, 판정 기준에만 씀). 공격 이름은 두 대시보드 모두 짧은 이름(`grafana/build.py` `short_rule_name` — '#1 UE 컨텍스트 고갈 (RRC 폭주, 변형)' → 'UE 컨텍스트 고갈').
 
@@ -281,12 +281,12 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).
 | 규칙 | 언제 | Slack |
 |---|---|---|
-| 공격 경보 (AWS)·(On-Premise) | 그 출처(`aws`·`on-premise`)의 공격 경보(`kind` `attack`)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
+| 공격 경보 (AWS)·(On-Premise) | 그 출처(`aws`·`on-premise`)의 공격 경보(화면 종류 공격 — `kind` `attack`에서 이상 유형으로 보이는 `L3-24`·`L3-14`를 뺀 것, 11/27)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
 | 수집 멈춤 (AWS)·(On-Premise) | 출처마다 마지막 레코드(상시 KPM2·오버헤드·경보·근거·hello) 뒤 5분 넘게 아무것도 없을 때. 최근 1시간에 아무것도 없으면(테스트베드를 끈 것) 울리지 않음 | 멈춤만 알리고 다시 들어올 때는 알리지 않음 |
 
 - 10초마다 조회한다. 알림 하나 = 경보 하나(`group_by alert_id`), 같은 알림 다시 보내기 24시간.
 - 출처마다 규칙이 따로다(AWS 규칙 UID는 예전 그대로 `portran-attack`·`portran-collect-stop`, On-Premise는 `-onprem`). 메시지 제목 끝에 출처(AWS·On-Premise), 경보 상세 링크는 그 출처로.
-- 이상 유형·판정 보류 경보, 재생·샘플·이전 p4 데이터는 알리지 않는다(11/13 사용자 결정). On-Premise는 받기 시작해 더했다(11/20, D213).
+- 이상 유형·판정 보류 경보, 재생·샘플·이전 p4 데이터는 알리지 않는다(11/13 사용자 결정). 11/27부터 하향 IMSI 노출(`L3-24`)·단말 성능 정보 탈취(`L3-14`)도 이상 유형이라 알리지 않는다(D220). On-Premise는 받기 시작해 더했다(11/20, D213).
 - Webhook 주소는 `.env`의 `SLACK_WEBHOOK_URL`(비밀 값, 서버 `.env`에만). 비어 있으면 아무 데도 안 가는 주소로 두어 전송 실패 로그만 남는다. 링크 앞부분은 `GRAFANA_ROOT_URL`(Grafana `root_url`).
 - provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.Values`만). 조회 결과가 없을 때 템플릿이 깨지지 않게 `.Values`는 `{{ with .Values }}` 안에서만 쓴다.
 

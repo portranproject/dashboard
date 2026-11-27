@@ -94,9 +94,9 @@ def test_new_dashboards_filter_by_source(name):
     """모든 쿼리가 데이터 출처(env)로 거른다 — 출처끼리 섞이지 않게 (docs/dashboard-design.md 1절)."""
     d = load(DASHBOARD_DIR / name)
     source = next(v for v in d["templating"]["list"] if v["name"] == "source")
-    # 탐지 쪽이 11/20부터 X-Env aws·on-premise로 보낸다(D213). 11/20 전 AWS 실측(p4)을 고르던 'AWS (이전 p4)'는 11/27에 없앰(D223)
+    # 탐지 쪽이 11/20부터 X-Env aws·on-premise로 보낸다(D213). 'AWS (이전 p4)'(p4)·'샘플'(sample)은 11/27에 없앰(D223·D224)
     assert source["type"] == "custom" and source["current"]["value"] == "aws"
-    assert source["query"] == "AWS : aws, On-Premise : on-premise, 재생 : replay, 샘플 : sample"
+    assert source["query"] == "AWS : aws, On-Premise : on-premise, 재생 : replay"
     for item, q, _ in queries(d):
         if item != "variable source":
             # 단계 비교는 출처를 함수 인자로 넘긴다(count_raises(env: "${source}"))

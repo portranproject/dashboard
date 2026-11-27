@@ -23,9 +23,9 @@ EVIDENCE_KEY_NAMES = json.loads((ROOT / "evidence-key-names.json").read_text(enc
 DS ={"type": "influxdb", "uid": "portran-influxdb"}
 
 # 데이터 출처 선택 (docs/dashboard-design.md 1절) = X-Env 값. 탐지 쪽이 11/20부터 AWS는 aws, On-Premise(우리 실물 장비)는
-# on-premise로 보낸다(D213). 11/13~11/20 AWS 실측(p4)을 고르던 'AWS (이전 p4)'는 11/27에 없앴다(사용자 요청, D223 — 데이터는
-# InfluxDB에 그대로 있다)
-SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("재생", "replay"), ("샘플", "sample")]
+# on-premise로 보낸다(D213). 11/13~11/20 AWS 실측(p4)을 고르던 'AWS (이전 p4)'와 탐지 쪽 시험 샘플(sample)을 고르던 '샘플'은
+# 11/27에 없앴다(사용자 요청, D223·D224 — 데이터는 InfluxDB에 그대로 있다). 샘플은 이제 X-Env replay로 넣어 '재생'에서 본다
+SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("재생", "replay")]
 
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
@@ -320,7 +320,7 @@ def source_variable() -> dict:
     return {"name": "source", "label": "데이터 출처", "type": "custom", "query": ", ".join(f"{n} : {e}" for n, e in SOURCES),
             "current": {"text": SOURCES[0][0], "value": SOURCES[0][1]}, "options": options, "hide": 0,
             "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · "
-                           "재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
+                           "재생 = replay로 다시 보낸 녹화·탐지 쪽 시험 샘플"}
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,

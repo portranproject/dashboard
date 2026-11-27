@@ -204,7 +204,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 
-- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`)·샘플(`sample`)이다(D213). 11/20 전 AWS 실측(`p4`)은 InfluxDB에 남아 있지만 선택지 'AWS (이전 p4)'는 11/27에 없앴다(D223). 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`)이다(D213). 11/20 전 AWS 실측(`p4`)과 탐지 쪽 시험 샘플(`sample`)은 InfluxDB에 남아 있지만 선택지 'AWS (이전 p4)'·'샘플'은 11/27에 없앴다(D223·D224). 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
 - **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
 - `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
 - `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
@@ -229,11 +229,11 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 
 | 데이터 | 어디에 | 쓰는 법 |
 |---|---|---|
-| 탐지 쪽 샘플 32개 (경보 경로, 탐지 엔진 실제 코드 출력·합성 입력) | `tests/data/detection/` | `python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --retime <시각>` |
+| 탐지 쪽 샘플 32개 (경보 경로, 탐지 엔진 실제 코드 출력·합성 입력) | `tests/data/detection/` | `python -m replay.replay tests/data/detection/*.jsonl --speed 0 --retime <시각>` (`X-Env` 기본 `replay`) |
 | collector 녹화 (실측·연동 시험) | `recordings/raw-<시각>-<환경>.jsonl` | `python -m replay.replay recordings/raw-…-p4.jsonl --env replay` |
 | 실측 | `X-Env: aws`·`on-premise` (11/20 전 AWS는 `p4`) | 탐지 쪽 전송기 |
 
-- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`aws`·`on-premise`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / 재생 / 샘플)이 이 값으로 거른다.
+- 샘플·재생 데이터는 `X-Env`를 `replay`로 보내 실측(`aws`·`on-premise`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / 재생)이 이 값으로 거른다. 출처 '샘플'(`sample`)은 11/27에 없앴다(D224) — 재생할 때마다 `session`·`alert_id` 끝에 재생 표시가 붙어 녹화 재생과 섞여도 겹치지 않는다.
 - 상시 KPM2(`kpm2` 3초 묶음) 샘플은 저장소에 없다(연동 시험 때 서버 녹화에만 있음, progress Q19).
 
 ## 8. collector 요구사항
@@ -255,7 +255,7 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 - **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3). 같은 파일의 `shown_as_anomaly`(`L3-24`·`L3-14`)는 `kind` `attack`이어도 화면 종류가 이상 유형이고(판정 보류 경보는 그대로 판정 보류), `hidden_candidates`(`AN-02`의 `L3-25-OV`)는 후보 공격·판정 근거 값에서 뺀다(탐지 쪽 요청 11/27, D220 — 화면만, 레코드는 그대로). 판정 근거 값·대표 값의 키 → 화면 이름은 `grafana/evidence-key-names.json`(탐지 쪽 35_ 엑셀의 '바꿀 값', 룰·항목마다 다름 — 화면에서만 바꾸고 레코드·InfluxDB·녹화는 원래 키, 없는 키는 원래 키로 보임).
 - 설계(패널마다 답하는 질문과 쓰는 레코드, 데이터 없음 처리)는 `docs/dashboard-design.md`.
-- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`)·샘플(`sample`) — 'AWS (이전 p4)'(`p4`)는 11/27에 없앰(D223).
+- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`) — 'AWS (이전 p4)'(`p4`)·'샘플'(`sample`)은 11/27에 없앰(D223·D224).
 
 ### 9.1 관제 (`monitoring.json`, uid `portran-monitoring`), 새로고침 5초
 | 행 | 패널 |
@@ -300,7 +300,7 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 
 ```bash
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --env replay            # 지금 시각으로 옮겨 로컬 collector로
-python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --gap-sec 30
+python -m replay.replay tests/data/detection/*.jsonl --speed 0 --gap-sec 30                   # 탐지 쪽 샘플도 재생으로
 python -m replay.replay a.jsonl --out https://3.39.170.31/ingest --ca certs/ingest.crt
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08 --to 2026-11-11T15:14   # 구간만
 ```
@@ -319,7 +319,7 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
 4. 핵심 로직(스키마 검증, InfluxDB 변환, `/ingest` 요청 처리·중복 제거, replay 시각 옮기기, 대시보드 생성)은 pytest로 테스트한다. 대시보드 쿼리는 실제 InfluxDB·Grafana에서 실행해 확인한다.
 5. 실행 방법이 바뀌면 README.md를 같이 고친다.
 6. 모르는 것(예: UE ID 형식, 상태 코드표)은 추측해서 확정하지 말고 TODO로 표시한다.
-7. **샘플·재생 데이터로 나온 숫자는 성능 결과가 아니다.** 화면·리포트에 데이터 출처(AWS 실측 / 재생 / 샘플)를 표시한다.
+7. **샘플·재생 데이터로 나온 숫자는 성능 결과가 아니다.** 화면·리포트에 데이터 출처(AWS·On-Premise 실측 / 재생)를 표시한다.
 8. **진행 기록은 `docs/progress.md`에 남긴다.** 대화로만 보고하면 세션이 끝날 때 사라지므로, 사용자가 나중에 문서로 확인할 수 있게 한다. 마일스톤마다 아래 항목을 쓴다.
    - **한 일**: 만들거나 바꾼 파일과 그 역할
    - **결정 사항**: 이 문서에 정해져 있지 않아 직접 정한 것. 결정, 이유, 팀원 확인 필요 여부(필요하면 대상 파트)를 함께 적는다

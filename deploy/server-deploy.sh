@@ -83,6 +83,21 @@ check "Grafana" "http://localhost:${GRAFANA_PORT:-3000}/api/health" '"database":
 # HTTP 401이면 .env의 GRAFANA_ADMIN_PASSWORD가 Grafana에 실제로 저장된 비밀번호와 다르다(docs/deploy.md 문제 해결)
 check "Grafana datasource" "http://localhost:${GRAFANA_PORT:-3000}/api/datasources/uid/portran-influxdb/health" '"status": *"OK"' \
   -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD"
+# Grafana는 알림 규칙 provisioning(grafana/provisioning/alerting)을 켤 때만 읽는다(대시보드는 파일을 주기적으로 다시 읽음).
+# 위에서 Grafana를 다시 만들지 않으면 — 파일이 그 자리에서 바뀌어 컨테이너도 새 내용을 보면 — 옛 규칙이 그대로 남는다
+# (11/13 규칙이 11/27까지 남아 On-Premise 알림이 없었고 AWS는 옛 출처 p4만 봤음, D221). 배포마다 다시 읽게 하고,
+# 서버 규칙의 UID·조회가 파일과 같은지 확인한다.
+grafana_api() {  # <메서드> <경로>: 관리자 계정으로 Grafana API 호출(비밀번호는 출력하지 않음)
+  curl -fsS -m 30 -X "$1" -u "$GRAFANA_ADMIN_USER:$GRAFANA_ADMIN_PASSWORD" "http://localhost:${GRAFANA_PORT:-3000}$2"
+}
+if grafana_api POST /api/admin/provisioning/alerting/reload >/dev/null \
+   && grafana_api GET /api/v1/provisioning/alert-rules \
+      | python3 deploy/alert-rules-match.py grafana/provisioning/alerting/portran.json; then
+  echo "  ok   Grafana 알림 규칙 (파일과 같음)"
+else
+  echo "  실패 Grafana 알림 규칙 (다시 읽기 실패 또는 서버 규칙이 파일과 다름)" >&2
+  failed+=("Grafana 알림 규칙")
+fi
 # 공인 IP 주소로 검증하되 연결은 이 서버 안으로 보낸다(보안 그룹은 p4 CU 박스만 열어 두므로)
 ingest_port=${INGEST_HTTPS_PORT:-443}
 check "/ingest (nginx TLS → collector)" "https://$ingest_ip:$ingest_port/healthz" '"status": *"ok"' \

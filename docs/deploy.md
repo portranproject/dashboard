@@ -409,7 +409,7 @@ sudo bash deploy/server-deploy.sh      # 새 인증서를 만들고 PEM을 출�
 
 ## 11. Slack 알림 (M12)
 
-AWS(p4)의 공격 경보 발생·끝과 수집 멈춤을 Slack으로 보낸다(규칙은 README "Slack 알림", CLAUDE.md 9.3절). 서버 `.env`에 두 값을 넣는다.
+AWS·On-Premise의 공격·이상 유형 경보 발생·끝과 수집 멈춤을 Slack으로 보낸다(규칙은 README "Slack 알림", CLAUDE.md 9.3절). 서버 `.env`에 두 값을 넣는다.
 
 1. Slack에서 알림 받을 채널 → 앱 추가 → **Incoming Webhooks** → "Add to Slack" → 채널 고르기 → Webhook URL 복사(`https://hooks.slack.com/services/…`). **비밀 값**이라 채팅·커밋에 붙이지 않는다.
 2. 서버에서(`sudo -i` 뒤 `/opt/portran/dashboard`):
@@ -424,6 +424,7 @@ AWS(p4)의 공격 경보 발생·끝과 수집 멈춤을 Slack으로 보낸다(�
 - `SLACK_WEBHOOK_URL`이 비어 있으면 알림이 아무 데도 가지 않는다(Grafana 로그에 전송 실패만 남음).
 - 메시지의 "경보 상세 보기" 링크는 `GRAFANA_ROOT_URL`을 쓴다. 3000번은 보안 그룹에서 허용한 IP에서만 열린다.
 - Webhook을 바꾸거나 끊으려면 Slack 앱 설정에서 지우고 `.env`를 고친 뒤 2번의 마지막 명령.
+- Grafana는 알림 규칙(`grafana/provisioning/alerting/portran.json`)을 **켤 때만** 읽는다. 배포 스크립트가 배포마다 다시 읽게 하고(`POST /api/admin/provisioning/alerting/reload`) 헬스 체크 'Grafana 알림 규칙'에서 서버 규칙이 파일과 같은지 본다(D221). 손으로 다시 읽으려면 서버에서 `curl -X POST -u "admin:<비밀번호>" http://localhost:3000/api/admin/provisioning/alerting/reload`(또는 Grafana 컨테이너 재시작). 헬스 체크가 이 항목만 실패하면 `docker compose logs grafana`에서 provisioning 오류를 본다.
 
 ## 문제 해결
 

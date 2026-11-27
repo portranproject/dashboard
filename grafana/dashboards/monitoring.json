@@ -253,7 +253,7 @@
         "name": "source",
         "label": "데이터 출처",
         "type": "custom",
-        "query": "AWS : aws, On-Premise : on-premise, AWS (이전 p4) : p4, 재생 : replay, 샘플 : sample",
+        "query": "AWS : aws, On-Premise : on-premise, 재생 : replay, 샘플 : sample",
         "current": {
           "text": "AWS",
           "value": "aws"
@@ -270,11 +270,6 @@
             "selected": false
           },
           {
-            "text": "AWS (이전 p4)",
-            "value": "p4",
-            "selected": false
-          },
-          {
             "text": "재생",
             "value": "replay",
             "selected": false
@@ -286,7 +281,7 @@
           }
         ],
         "hide": 0,
-        "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · AWS (이전 p4) = 11/20 전에 p4로 받은 AWS 실측 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
+        "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"
       },
       {
         "name": "cell",

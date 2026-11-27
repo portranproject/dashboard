@@ -63,6 +63,15 @@ def test_generated_dashboards_are_up_to_date():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_rule_names_display_settings():
+    """이상 유형으로 보이는 룰·화면에서 뺄 후보(11/27 탐지 쪽 요청)는 대응표에 있는 ID다."""
+    assert RULE_NAMES["shown_as_anomaly"] == ["L3-24", "L3-14"]
+    assert set(RULE_NAMES["shown_as_anomaly"]) <= set(RULE_NAMES["rules"])
+    assert RULE_NAMES["hidden_candidates"] == {"AN-02": ["L3-25-OV"]}
+    for rule, ids in RULE_NAMES["hidden_candidates"].items():
+        assert rule in RULE_NAMES["rules"] and set(ids) <= set(RULE_NAMES["candidates"])
+
+
 def test_rule_names_cover_samples_and_spec():
     """경보의 rule·candidates ID마다 공격 이름이 있다 (27_ §5.3 대응표, 탐지 쪽 샘플)."""
     known = set(RULE_NAMES["rules"]) | set(RULE_NAMES["candidates"])
@@ -288,7 +297,12 @@ def test_evidence_names_used_in_queries():
     """판정 근거 값은 룰·필드로 키를 바꾸고, 경보 목록 대표 값은 같은 이름을 '룰|키' 사전으로 찾는다."""
     panels = {p["title"]: p for p in load(DASHBOARD_DIR / "monitoring.json")["panels"]}
     detail = panels["판정 근거 값"]["targets"][0]["query"]
-    assert "rename(rule: r.rule, field: r._field, s: string(v: r._value))" in detail
+    assert "rename(rule: r.rule, field: r._field,\n" in detail
+    # 후보에서 뺄 ID(11/27, AN-02의 L3-25-OV)는 candidates 행에만 — 압축 JSON에서 '"ID",' → ',"ID"' → '"ID"' 순
+    assert ('if r._field == "candidates_json" then hide_candidates(rule: r.rule, s: string(v: r._value)) '
+            'else string(v: r._value)') in detail
+    assert 'if rule == "AN-02" then strings.replaceAll(v: strings.replaceAll(v: strings.replaceAll(v: s, ' \
+           't: "\\"L3-25-OV\\",", u: ""), t: ",\\"L3-25-OV\\"", u: ""), t: "\\"L3-25-OV\\"", u: "")' in detail
     assert 'if rule == "L3-20" and field == "cond_json"' in detail
     assert 't: "\\"concurrent\\"", u: "\\"victim_connected\\""' in detail             # cond는 배열 원소
     assert 't: "\\"concurrent\\":", u: "\\"victim_connected_count\\":"' in detail     # values는 객체 키
@@ -353,9 +367,9 @@ def test_detection_rows_on_monitoring():
     assert panels["공격별 경보 수"]["options"]["orientation"] == "horizontal"  # 세로 막대는 해 보고 되돌림(11/13)
     q = panels["공격별 경보 수"]["targets"][0]["query"]
     assert all(f'"{rule}":' in q for rule in {**RULE_NAMES["rules"], **RULE_NAMES["candidates"]})
-    assert '"L3-01-V": "UE 컨텍스트 고갈"' in q and '"L3-24": "IMSI 노출"' in q
+    assert '"L3-01-V": "UE 컨텍스트 고갈"' in q and '"L3-24": "하향 IMSI 노출"' in q  # 11/27 탐지 쪽 요청
     assert '"L3-21": "등록 폭주 공격"' in q  # 상향 DoS → 등록 폭주 공격(사용자 요청 11/26)
-    assert '"AN-02": "식별 요청 증가"' in q and "#" not in q.split("names = ")[1].split("\n")[0]
+    assert '"AN-02": "상향 IMSI 노출"' in q and "#" not in q.split("names = ")[1].split("\n")[0]
     table = panels["공격별 경보 결과"]
     # 룰 ID·단계 열은 빼고(사용자 요청 11/13) 공격 이름부터
     order = table["transformations"][0]["options"]["indexByName"]
@@ -607,7 +621,10 @@ def test_alerting_provisioning():
         assert r["labels"]["env"] == sources[uid] and r["labels"]["source"] in ("AWS", "On-Premise"), uid
         assert r["noDataState"] == "OK" and r["execErrState"] == "KeepLast", uid
     for uid in ("portran-attack", "portran-attack-onprem"):
-        assert 'r.kind == "attack"' in rules[uid]["data"][0]["model"]["query"]  # 이상 유형·판정 보류는 알리지 않음
+        # 화면 종류 '공격'만 — 이상 유형(L3-24·L3-14 포함, 11/27)·판정 보류는 알리지 않음
+        q = rules[uid]["data"][0]["model"]["query"]
+        assert 'r.class == "공격"' in q and 'r.kind == "attack"' not in q.split("summary\n  |>")[1], uid
+        assert 'r.rule == "L3-24" or r.rule == "L3-14"' in q, uid
         assert rules[uid]["labels"]["notify"] == "attack"
     assert rules["portran-collect-stop"]["labels"] == {"notify": "collect", "source": "AWS", "env": "aws"}
     assert rules["portran-collect-stop-onprem"]["labels"] == {"notify": "collect", "source": "On-Premise", "env": "on-premise"}

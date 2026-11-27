@@ -94,9 +94,9 @@ def test_new_dashboards_filter_by_source(name):
     """모든 쿼리가 데이터 출처(env)로 거른다 — 출처끼리 섞이지 않게 (docs/dashboard-design.md 1절)."""
     d = load(DASHBOARD_DIR / name)
     source = next(v for v in d["templating"]["list"] if v["name"] == "source")
-    # 탐지 쪽이 11/20부터 X-Env aws·on-premise로 보낸다. 11/20 전 AWS 실측(p4)은 'AWS (이전 p4)'로 따로(D213)
+    # 탐지 쪽이 11/20부터 X-Env aws·on-premise로 보낸다(D213). 'AWS (이전 p4)'(p4)·'샘플'(sample)은 11/27에 없앰(D223·D224)
     assert source["type"] == "custom" and source["current"]["value"] == "aws"
-    assert source["query"] == "AWS : aws, On-Premise : on-premise, AWS (이전 p4) : p4, 재생 : replay, 샘플 : sample"
+    assert source["query"] == "AWS : aws, On-Premise : on-premise, 재생 : replay"
     for item, q, _ in queries(d):
         if item != "variable source":
             # 단계 비교는 출처를 함수 인자로 넘긴다(count_raises(env: "${source}"))
@@ -621,16 +621,22 @@ def test_alerting_provisioning():
         assert r["labels"]["env"] == sources[uid] and r["labels"]["source"] in ("AWS", "On-Premise"), uid
         assert r["noDataState"] == "OK" and r["execErrState"] == "KeepLast", uid
     for uid in ("portran-attack", "portran-attack-onprem"):
-        # 화면 종류 '공격'만 — 이상 유형(L3-24·L3-14 포함, 11/27)·판정 보류는 알리지 않음
+        # 화면 종류 공격·이상 유형(L3-24·L3-14 포함 — 11/27 사용자 요청, D222). 판정 보류는 알리지 않음
         q = rules[uid]["data"][0]["model"]["query"]
-        assert 'r.class == "공격"' in q and 'r.kind == "attack"' not in q.split("summary\n  |>")[1], uid
+        notify = q.split("summary\n  |>")[1]
+        assert ' filter(fn: (r) => r.class == "공격" or r.class == "이상 유형")\n' in notify, uid
+        assert "판정 보류" not in notify and 'r.kind == "attack"' not in notify, uid
         assert 'r.rule == "L3-24" or r.rule == "L3-14"' in q, uid
-        assert rules[uid]["labels"]["notify"] == "attack"
+        # 종류를 라벨로 — 메시지 제목이 공격 경보·이상 유형으로 갈린다
+        assert '|> group(columns: ["alert_id", "rule", "cell", "class", "attack", "start"])' in notify, uid
+        assert rules[uid]["labels"]["notify"] == "attack" and rules[uid]["title"].startswith("공격·이상 유형 경보 ("), uid
     assert rules["portran-collect-stop"]["labels"] == {"notify": "collect", "source": "AWS", "env": "aws"}
     assert rules["portran-collect-stop-onprem"]["labels"] == {"notify": "collect", "source": "On-Premise", "env": "on-premise"}
     # 메시지 제목에 출처, 경보 상세 링크는 그 출처로
     template = a["templates"][0]["template"]
     assert "{{ .CommonLabels.source }}" in template and "var-source={{ .CommonLabels.env }}" in template
+    assert template.count('{{ if eq .CommonLabels.class "이상 유형" }}') == 2  # 발생·끝 제목
+    assert "🔶 PortRAN 이상 유형" in template and "🚨 PortRAN 공격 경보" in template
     # 조회 결과가 없을 때도 템플릿이 깨지지 않게 .Values는 with 안에서만
     for r in rules.values():
         for text in r["annotations"].values():

@@ -23,8 +23,9 @@ EVIDENCE_KEY_NAMES = json.loads((ROOT / "evidence-key-names.json").read_text(enc
 DS ={"type": "influxdb", "uid": "portran-influxdb"}
 
 # 데이터 출처 선택 (docs/dashboard-design.md 1절) = X-Env 값. 탐지 쪽이 11/20부터 AWS는 aws, On-Premise(우리 실물 장비)는
-# on-premise로 보낸다(D213). 11/13~11/20 AWS 실측은 p4로 쌓여 있어 'AWS (이전 p4)'로 따로 고른다
-SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("AWS (이전 p4)", "p4"), ("재생", "replay"), ("샘플", "sample")]
+# on-premise로 보낸다(D213). 11/13~11/20 AWS 실측(p4)을 고르던 'AWS (이전 p4)'와 탐지 쪽 시험 샘플(sample)을 고르던 '샘플'은
+# 11/27에 없앴다(사용자 요청, D223·D224 — 데이터는 InfluxDB에 그대로 있다). 샘플은 이제 X-Env replay로 넣어 '재생'에서 본다
+SOURCES = [("AWS", "aws"), ("On-Premise", "on-premise"), ("재생", "replay")]
 
 # 상태 불명: 열린 경보에 마지막 레코드 뒤 이 시간 동안 아무것도 없으면 (27_ §7)
 STALE_NS = {"1": 15_000_000_000, "other": 90_000_000_000}
@@ -92,7 +93,7 @@ KIND_MAPPINGS = [{"type": "value", "options": {
 
 # 경보 종류: 공격 경보 / 4단계 이상 유형(AN-) / 판정 보류 경보(2·3단계 룰인데 kind anomaly) — 27_ §5.5.
 # rule-names.json의 shown_as_anomaly(L3-24·L3-14, 탐지 쪽 요청 11/27)는 kind attack이어도 이상 유형으로 보인다 — 화면만 바꾸고
-# 레코드는 그대로. 그 룰의 판정 보류 경보(kind anomaly)는 그대로 판정 보류다. Slack 공격 경보도 이 종류로 고른다
+# 레코드는 그대로. 그 룰의 판정 보류 경보(kind anomaly)는 그대로 판정 보류다. Slack 알림도 이 종류로 고른다(NOTIFY_CLASSES)
 SHOWN_AS_ANOMALY = " or ".join(f'r.rule == "{rule}"' for rule in RULE_NAMES["shown_as_anomaly"]) or "false"
 CLASS_EXPR = (f'if r.kind == "attack" and not ({SHOWN_AS_ANOMALY}) then "공격" '
               'else if r.kind == "attack" or strings.hasPrefix(v: r.rule, prefix: "AN-") then "이상 유형" else "판정 보류"')
@@ -319,7 +320,7 @@ def source_variable() -> dict:
     return {"name": "source", "label": "데이터 출처", "type": "custom", "query": ", ".join(f"{n} : {e}" for n, e in SOURCES),
             "current": {"text": SOURCES[0][0], "value": SOURCES[0][1]}, "options": options, "hide": 0,
             "description": "AWS = AWS 테스트베드(X-Env aws, 11/20부터) · On-Premise = 우리 실물 장비 테스트베드(on-premise) · "
-                           "AWS (이전 p4) = 11/20 전에 p4로 받은 AWS 실측 · 재생 = replay로 다시 보낸 데이터 · 샘플 = 탐지 쪽 시험 샘플"}
+                           "재생 = replay로 다시 보낸 녹화·탐지 쪽 시험 샘플"}
 
 
 def query_variable(name: str, label: str, query: str, multi: bool = False, include_all: bool = False,
@@ -1324,14 +1325,17 @@ schema.tagValues(bucket: v.defaultBucket, tag: "cell", start: -30d,
 
 # --------------------------------------------------------------------------- 알림 — Slack (M12)
 
-# 알림은 AWS 실측에서만 보낸다(11/13 사용자 결정). On-Premise(lab)는 받기 시작하면 더한다.
+# 알림은 실측(aws·on-premise)에서만 보낸다(11/13 사용자 결정 — 재생·샘플·이전 p4는 알리지 않음).
 # 알림을 보내는 실측 출처 (X-Env 값, 이름, 규칙 UID 꼬리). AWS 규칙 UID는 예전 그대로(알림 상태가 이어지게),
 # On-Premise는 받기 시작해 더함(11/20 사용자 결정, D213 — 11/13에는 'On-Premise는 받기 시작하면 더한다')
 NOTIFY_SOURCES = (("aws", "AWS", ""), ("on-premise", "On-Premise", "-onprem"))
 NOTIFY_INTERVAL = "10s"           # 규칙을 조회하는 주기
-ATTACK_LOOKBACK_S = 6 * 3600      # 공격 경보를 찾는 범위. 이보다 오래 열린 경보는 '끝 소식 없음'으로 끝난다
+ATTACK_LOOKBACK_S = 6 * 3600      # 공격·이상 유형 경보를 찾는 범위. 이보다 오래 열린 경보는 '끝 소식 없음'으로 끝난다
 COLLECT_STOP_S = 300              # 수집 멈춤: 마지막 레코드 뒤 이만큼 아무것도 없으면
 COLLECT_LOOKBACK_S = 3600         # 이 범위에 아무것도 없으면 테스트베드를 끈 것으로 보고 알리지 않는다
+# 알리는 경보 종류(화면 종류 — CLASS_EXPR). 처음에는 공격만(11/13 사용자 결정), 11/27부터 이상 유형도(사용자 요청, D222).
+# 판정 보류는 알리지 않는다
+NOTIFY_CLASSES = ("공격", "이상 유형")
 ALERTING_OUT = ROOT / "provisioning" / "alerting" / "portran.json"
 SLACK_ALL = "PortRAN Slack"
 SLACK_NO_RESOLVE = "PortRAN Slack (해제 알림 없음)"
@@ -1340,7 +1344,9 @@ SLACK_NO_RESOLVE = "PortRAN Slack (해제 알림 없음)"
 # provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿에 '$'를 쓰지 않는다.
 NOTIFY_TEMPLATE = (
     '{{ define "portran.title" }}{{ if eq .CommonLabels.notify "collect" }}⚠️ PortRAN 수집 멈춤'
-    '{{ else if eq .Status "firing" }}🚨 PortRAN 공격 경보{{ else }}✅ PortRAN 공격 경보 끝{{ end }}'
+    '{{ else if eq .Status "firing" }}{{ if eq .CommonLabels.class "이상 유형" }}🔶 PortRAN 이상 유형'
+    '{{ else }}🚨 PortRAN 공격 경보{{ end }}'
+    '{{ else }}✅ PortRAN {{ if eq .CommonLabels.class "이상 유형" }}이상 유형{{ else }}공격 경보{{ end }} 끝{{ end }}'
     ' · {{ .CommonLabels.source }}{{ end }}\n'
     '{{ define "portran.text" }}{{ if eq .CommonLabels.notify "collect" }}{{ .CommonAnnotations.summary }}'
     '{{ else }}*{{ .CommonLabels.attack }}* · 셀 {{ .CommonLabels.cell }} · '
@@ -1374,10 +1380,13 @@ def alert_rule(uid: str, title: str, query: str, lookback_s: int, threshold: flo
 
 
 def source_rules(env_value: str, name: str, uid_tail: str) -> list[dict]:
-    """출처 하나의 알림 규칙 두 개(공격 경보, 수집 멈춤). 라벨 source(이름)·env(X-Env 값)는 메시지 제목과 경보 상세 링크에 쓴다."""
+    """출처 하나의 알림 규칙 두 개(공격·이상 유형 경보, 수집 멈춤). 라벨 source(이름)·env(X-Env 값)는 메시지 제목과 경보 상세 링크에,
+    경보 계열의 라벨 class(종류)는 메시지 제목에 쓴다."""
     env = f'r.env == "{env_value}"'
-    # 공격 경보(화면 종류 '공격' — kind attack에서 shown_as_anomaly 룰을 뺀 것, 11/27)마다 한 계열.
+    # 알리는 종류(NOTIFY_CLASSES — 공격·이상 유형, 11/27)의 경보마다 한 계열. 이상 유형은 4단계 AN-와 화면에서 이상 유형으로
+    # 보이는 L3-24·L3-14 공격 경보(shown_as_anomaly). 판정 보류는 알리지 않는다.
     # 값: 열림(raise·update) = 1(medium)·2(high), 해제 = 0, 강제 종료 = -1. 경보 상태·종류는 alert_summary(관제 대시보드와 같은 계산)로 정한다
+    classes = " or ".join(f'r.class == "{c}"' for c in NOTIFY_CLASSES)
     attacks = f'''
 import "date"
 import "dict"
@@ -1385,14 +1394,14 @@ import "strings"
 names = {rule_name_dict()}
 {alert_summary(f"-{ATTACK_LOOKBACK_S}s", "-5m", stop="now()").replace(ENV, env)}
 summary
-  |> filter(fn: (r) => r.class == "공격")
-  |> map(fn: (r) => ({{alert_id: r.alert_id, rule: r.rule, cell: r.cell,
+  |> filter(fn: (r) => {classes})
+  |> map(fn: (r) => ({{alert_id: r.alert_id, rule: r.rule, cell: r.cell, class: r.class,
       attack: dict.get(dict: names, key: r.rule, default: r.rule),
       start: strings.replaceAll(v: strings.substring(v: string(v: date.add(d: 9h, to: r.start)), start: 0, end: 19), t: "T", u: " "),
       _time: now(),
       _value: if r.event == "raise" or r.event == "update" then (if r.sev == 2 then 2.0 else 1.0)
               else if r.event == "end" then -1.0 else 0.0}}))
-  |> group(columns: ["alert_id", "rule", "cell", "attack", "start"])
+  |> group(columns: ["alert_id", "rule", "cell", "class", "attack", "start"])
 '''
     measurements = {"kpm2": "n", "overhead": "seq", "alert": "severity", "evidence": "seq", "hello": "seq"}
     seen = " or ".join(f'(r._measurement == "{m}" and r._field == "{f}")' for m, f in measurements.items())
@@ -1407,14 +1416,14 @@ from(bucket: v.defaultBucket)
 '''
     labels = {"source": name, "env": env_value}
     return [
-        alert_rule(f"portran-attack{uid_tail}", f"공격 경보 ({name})", attacks, ATTACK_LOOKBACK_S, 0,
+        alert_rule(f"portran-attack{uid_tail}", f"공격·이상 유형 경보 ({name})", attacks, ATTACK_LOOKBACK_S, 0,
                    {"notify": "attack", **labels},
                    # 조회 결과가 없을 때(NoData)는 .Values가 비어 있어 B를 꺼내면 템플릿이 깨진다 — with로 감싼다
                    {"severity": '{{ with .Values }}{{ if eq .B.Value 2.0 }}high{{ else }}medium{{ end }}{{ end }}',
                     "status": '{{ with .Values }}{{ if gt .B.Value 0.0 }}끝 소식 없음(6시간 안에 해제·강제 종료가 오지 않음)'
                               '{{ else if lt .B.Value 0.0 }}강제 종료{{ else }}해제{{ end }}{{ end }}',
-                    "description": f"{name}(X-Env {env_value}) 공격 경보(종류 공격 — kind attack, 이상 유형으로 보이는 L3-24·L3-14 제외)가 열리면 울리고, 해제·강제 종료되면 끝난다. "
-                                   "이상 유형·판정 보류 경보는 알리지 않는다(M12, 11/27)"}),
+                    "description": f"{name}(X-Env {env_value}) 공격·이상 유형 경보(관제 경보 목록의 종류 — 이상 유형은 AN-와 L3-24·L3-14)가 "
+                                   "열리면 울리고, 해제·강제 종료되면 끝난다. 판정 보류 경보는 알리지 않는다(M12, 이상 유형은 11/27부터)"}),
         alert_rule(f"portran-collect-stop{uid_tail}", f"수집 멈춤 ({name})", collect, COLLECT_LOOKBACK_S, COLLECT_STOP_S,
                    {"notify": "collect", **labels},
                    {"summary": f"{name}에서 {COLLECT_STOP_S // 60}분 넘게 데이터(상시 KPM2·오버헤드·경보·근거)가 오지 않아요. "

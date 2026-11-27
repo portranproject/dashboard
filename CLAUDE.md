@@ -49,7 +49,7 @@
 
 | 출처 | 무엇 | `X-Env` | 대시보드 선택지 | 지금 |
 |---|---|---|---|---|
-| **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `aws` (11/20부터 — 그 전 실측은 `p4`) | AWS · AWS (이전 p4) | **받는다** |
+| **AWS** | 위 CU·DU 세트. 탐지 쪽이 실험에 쓰는 세트가 `p4`이고, 그 CU 인스턴스는 탄력적 IP `43.202.191.147`로 공인 IP가 고정돼 있다(27_ §3) | `aws` (11/20부터 — 그 전 실측은 `p4`, 화면 선택지는 11/27에 없앰) | AWS | **받는다** |
 | **On-Premise** | 우리 실물 장비로 꾸린 테스트베드(노트북 + 무선 장비). 장비의 공인 IP는 보안 그룹에 열어 둠(사용자 11/20) | `on-premise` | On-Premise | **받는다** (11/20부터, D213) |
 
 - 분석 엔진(eBPF)·탐지 엔진·전송기는 CU 인스턴스에서 돈다(27_ §9 R5 "p4 CU 박스"). 전송기가 HTTPS `POST /ingest`로 **대시보드 EC2**(테스트베드 세트와 별개, t3.small, `docs/deploy.md`)에 보낸다.
@@ -117,7 +117,8 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 │       ├── ci.yml                # CI: PR마다 전체 테스트 (M7)
 │       └── deploy.yml            # CD: main push 시 EC2 배포 (M7)
 ├── deploy/                       # CD용 서버 스크립트(server-deploy.sh)와 AWS 설정 JSON(aws/) (M7),
-│                                 #   /ingest 앞단 nginx 설정(nginx/)과 인증서 스크립트(ingest-cert.sh) (M9)
+│                                 #   /ingest 앞단 nginx 설정(nginx/)과 인증서 스크립트(ingest-cert.sh) (M9),
+│                                 #   서버 알림 규칙이 파일과 같은지 보는 헬스 체크(alert-rules-match.py, D221)
 ├── docker-compose.yml
 ├── docker-compose.aws.yml        # AWS 배포용 override: collector 컨테이너화, 내부 포트 잠금 (M7)
 ├── Dockerfile                    # AWS 배포용 Python 이미지 (M7)
@@ -203,7 +204,7 @@ eBPF 에이전트(분석 엔진)는 대시보드로 직접 보내지 않는다. 
 | `hello` | 받은 시각 | env, session | seq, producer, node_id, clock, period_ms, noreply_timeout_ms, si_sample_ms, ue_evt, cells_json |
 | `f1_evt` | `t_ms` + `seq` | env, session | seq, msg, cells_json, du_ue_ids_json |
 
-- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`aws`)·On-Premise(`on-premise`)·AWS (이전 p4)(`p4` — 11/20 전 AWS 실측)·재생(`replay`)·샘플(`sample`)이다(D213). 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
+- `env` = `X-Env`(UDP·파일 입력은 collector `--env`). 환경마다 데이터가 갈린다. 대시보드의 데이터 출처 선택은 AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`)이다(D213). 11/20 전 AWS 실측(`p4`)과 탐지 쪽 시험 샘플(`sample`)은 InfluxDB에 남아 있지만 선택지 'AWS (이전 p4)'·'샘플'은 11/27에 없앴다(D223·D224). 단계 비교(`p4` vs `replay-kpm-only`)는 대시보드에서 없앴다(11/13).
 - **같은 series·같은 시각이면 InfluxDB가 덮어쓴다.** 그래서 다른 레코드끼리 겹치지 않게 정했다: 같은 ms의 여러 줄은 ns 자리의 `seq`로, 두 경보에 함께 실린 같은 원본 줄은 `alert_id` tag로 가른다. 같은 줄을 다시 쓰면 같은 점에 덮어써져 결과가 그대로다.
 - `alert_id`는 값마다 고유하지만 tag로 둔다(아래 원칙의 예외). 경보는 공격마다 하나라 series 수가 경보 수에 비례하는 정도이고, 위의 덮어쓰기를 막는 데 필요하다.
 - `kpm2` 지표는 모두 실수로 쓰고 `null`은 뺀다(그래프에서 '데이터 없음'). 룰마다 다른 묶음(`values`·`params`·`ues`)은 JSON 문자열로 통째 저장한다(27_ §7.1).
@@ -228,11 +229,11 @@ mock 생성기는 M10에서 지웠다. 화면 개발·시연에는 아래 데이
 
 | 데이터 | 어디에 | 쓰는 법 |
 |---|---|---|
-| 탐지 쪽 샘플 32개 (경보 경로, 탐지 엔진 실제 코드 출력·합성 입력) | `tests/data/detection/` | `python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --retime <시각>` |
+| 탐지 쪽 샘플 32개 (경보 경로, 탐지 엔진 실제 코드 출력·합성 입력) | `tests/data/detection/` | `python -m replay.replay tests/data/detection/*.jsonl --speed 0 --retime <시각>` (`X-Env` 기본 `replay`) |
 | collector 녹화 (실측·연동 시험) | `recordings/raw-<시각>-<환경>.jsonl` | `python -m replay.replay recordings/raw-…-p4.jsonl --env replay` |
 | 실측 | `X-Env: aws`·`on-premise` (11/20 전 AWS는 `p4`) | 탐지 쪽 전송기 |
 
-- 샘플·재생 데이터는 `X-Env`를 `sample`·`replay`로 보내 실측(`aws`·`on-premise`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / AWS (이전 p4) / 재생 / 샘플)이 이 값으로 거른다.
+- 샘플·재생 데이터는 `X-Env`를 `replay`로 보내 실측(`aws`·`on-premise`)과 섞지 않는다. 대시보드의 데이터 출처 선택(AWS / On-Premise / 재생)이 이 값으로 거른다. 출처 '샘플'(`sample`)은 11/27에 없앴다(D224) — 재생할 때마다 `session`·`alert_id` 끝에 재생 표시가 붙어 녹화 재생과 섞여도 겹치지 않는다.
 - 상시 KPM2(`kpm2` 3초 묶음) 샘플은 저장소에 없다(연동 시험 때 서버 녹화에만 있음, progress Q19).
 
 ## 8. collector 요구사항
@@ -254,7 +255,7 @@ datasource와 대시보드 모두 provisioning으로 띄운다. `docker compose 
 
 - **대시보드 JSON은 `grafana/build.py`로 만든다.** 손으로 고치지 않는다(`python grafana/build.py`로 다시 쓰고, 테스트가 `--check`로 커밋된 JSON과 같은지 본다). 룰 ID → 공격 이름은 `grafana/rule-names.json`(27_ §5.3). 같은 파일의 `shown_as_anomaly`(`L3-24`·`L3-14`)는 `kind` `attack`이어도 화면 종류가 이상 유형이고(판정 보류 경보는 그대로 판정 보류), `hidden_candidates`(`AN-02`의 `L3-25-OV`)는 후보 공격·판정 근거 값에서 뺀다(탐지 쪽 요청 11/27, D220 — 화면만, 레코드는 그대로). 판정 근거 값·대표 값의 키 → 화면 이름은 `grafana/evidence-key-names.json`(탐지 쪽 35_ 엑셀의 '바꿀 값', 룰·항목마다 다름 — 화면에서만 바꾸고 레코드·InfluxDB·녹화는 원래 키, 없는 키는 원래 키로 보임).
 - 설계(패널마다 답하는 질문과 쓰는 레코드, 데이터 없음 처리)는 `docs/dashboard-design.md`.
-- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·AWS (이전 p4)(`p4`)·재생(`replay`)·샘플(`sample`).
+- 모든 쿼리는 데이터 출처 변수 `source`(= `env` 태그)로 거른다. 선택지: AWS(`aws`)·On-Premise(`on-premise`)·재생(`replay`) — 'AWS (이전 p4)'(`p4`)·'샘플'(`sample`)은 11/27에 없앰(D223·D224).
 
 ### 9.1 관제 (`monitoring.json`, uid `portran-monitoring`), 새로고침 5초
 | 행 | 패널 |
@@ -272,7 +273,7 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 - `range` 바로 뒤 `filter`에는 `contains()`를 쓰지 않는다 — InfluxDB가 저장소에서 거르지 못해 데이터를 다 읽는다(7일 30초 초과). 셀은 정규식 `r.cell =~ /^${cell:regex}$/`. 열끼리 비교(`r._value * 100 < int(v: r.agg_ms)`)도 저장소에서 안 되니 고정값으로 거른다. 한 `from`을 변수로 받아 두 갈래로 나눠 쓰지 말고 갈래마다 `from`을 둔다(같은 이유, 7일 15초). `test_storage_filters_have_no_contains`가 검사.
 - 상시 KPM2·overhead 원본(3초 칸)을 그리는 시간 그래프·주석은 `aggregateWindow(every: win, …)`로 묶는다. `win`은 `v.windowPeriod`를 3초 배수로 올린 값(`grafana/build.py` `WINDOW`), 묶기는 `range`·`filter` 바로 뒤(저장소에서 계산)에 두고, 세션 series는 `group` 뒤 한 번 더 묶는다(`window_by`). 원본을 다 가져오면 Grafana가 프레임당 maxDataPoints × 10행에서 자른다(`too many datapoints`). `test_raw_series_are_windowed`가 검사.
 - 선은 빈 구간을 null 행으로 남겨 끊는다 — 마지막에 `aggregateWindow(fn: mean, createEmpty: true)`(값은 그대로). `max` 같은 선택 함수에 `createEmpty: true`를 주면 느리다(7일 1~2초). 계산식에서 null을 내려면 `import "internal/debug"`의 `debug.null(type: "float")`(Flux에는 null 값 문법이 없다). `insertNulls`는 고정 ms라 묶은 구간 길이를 몰라 쓰지 않는다.
-- 관제는 5초마다 새로고침하고 새로고침은 진행 중인 쿼리를 취소한다 — 7일 범위도 패널마다 5초 안이어야 화면에 나온다(패널의 쿼리 A·B는 한 요청에서 차례로 돌아 시간이 더해진다). 경보 요약(`alert_summary`)은 경보 tag마다 series라 읽는 필드 수에 비례해 느려지니, 대표 값·UE 수가 필요 없는 곳은 `fields=("severity", "reason")`처럼 줄인다. 바꾼 쿼리는 배포 전에 `python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source p4 --range 7d --parallel`로 잰다(읽기만, 저장소의 JSON을 보냄).
+- 관제는 5초마다 새로고침하고 새로고침은 진행 중인 쿼리를 취소한다 — 7일 범위도 패널마다 5초 안이어야 화면에 나온다(패널의 쿼리 A·B는 한 요청에서 차례로 돌아 시간이 더해진다). 경보 요약(`alert_summary`)은 경보 tag마다 series라 읽는 필드 수에 비례해 느려지니, 대표 값·UE 수가 필요 없는 곳은 `fields=("severity", "reason")`처럼 줄인다. 바꾼 쿼리는 배포 전에 `python grafana/query_timing.py --url http://<탄력적 IP>:3000 --source aws --range 7d --parallel`로 잰다(읽기만, 저장소의 JSON을 보냄).
 
 ### 9.2 성능 (`performance.json`, uid `portran-performance`), 새로고침 1분, 기본 최근 24시간
 `docs/dashboard-design.md` 3절. **CU 자원**만 남았다(줄 제목 'Overhead', 11/16)(수집 오버헤드, M11 — Beszel식 2열): 노드(코어·메모리·마지막 수신), CPU/메모리 평균 사용률(고른 시간 범위의 평균 넷 — CPU 평균 사용률·메모리 평균 사용률·분석 엔진 평균 CPU %·분석 엔진 평균 메모리 RSS, 노드 칸과 글자 크기 같게 고정, 11/20), CPU 사용률(전체)·CPU 사용률(분석 엔진)(둘 다 노드 CPU 전체의 %), 메모리 사용량(전체)·메모리 사용량(분석 엔진)(RSS) — 계열 하나씩, 노드로 나누지 않음(11/20, D215), F1·N2 SCTP 트래픽(바이트/초)·패킷(패킷/초 — 링크 값은 SCTP 시그널링만, 범례 'F1 Ingress (DU → CU)'·'F1 Egress (CU → DU)', 11/20 전 들어옴·나감), CPU 사용률 · RRC 연결 시도(CPU % + RRC 연결 시도 막대, 오른쪽 범례 표에 평균·최대). 시간 그래프는 긴 시간 범위에서 3초 배수 구간의 평균(연결 시도는 합, 11/18). 줄 '수집 지연'(11/20, D211): 레코드가 대시보드 서버에 저장되기까지(받은 시각 − 데이터 시각) 백분위 표('KPM 지연'·'경보 지연' 행, p50·p95·p99·개수)와 추이(그래프 구간마다 평균 — 상시 KPM2·경보 한 계열씩) — 화면에는 새로고침 대기(관제 최대 5초)·쿼리 시간이 더해진다. 변수: `source`, `cell`(CPU 사용률 · RRC 연결 시도의 RRC 연결 시도만). 단계 비교(1~4단계 vs 1단계만)와 '파이프라인 완성 뒤' 자리는 없앴고(11/13), 탐지 결과 줄(공격별 경보 수, 경보 길이, 공격별 경보 결과)은 관제 맨 위로 옮기고(종류별 경보 수는 없앰) 경보·입력 품질 줄(경보가 어떻게 끝났나·근거 손실·gap·상시 KPM2 칸 채움·일부만 측정된 지표)은 없앴다(11/16). 탐지율·오탐·탐지 지연은 파이프라인 완성 뒤 탐지 쪽과 정한다(27_ §9).
@@ -281,12 +282,13 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 알림 규칙·연락처·메시지 템플릿을 provisioning(`grafana/provisioning/alerting/portran.json`)으로 띄운다. 이 파일도 `grafana/build.py`가 만든다(경보 상태 계산·짧은 공격 이름을 대시보드와 같게).
 | 규칙 | 언제 | Slack |
 |---|---|---|
-| 공격 경보 (AWS)·(On-Premise) | 그 출처(`aws`·`on-premise`)의 공격 경보(화면 종류 공격 — `kind` `attack`에서 이상 유형으로 보이는 `L3-24`·`L3-14`를 뺀 것, 11/27)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
+| 공격·이상 유형 경보 (AWS)·(On-Premise) | 그 출처(`aws`·`on-premise`)의 공격·이상 유형 경보(관제 경보 목록의 종류 — 이상 유형은 `AN-`와 `L3-24`·`L3-14`, 11/27)가 열리면(`raise`·`update`) 울리고, `clear`·`end`가 오면 끝 | 제목: 🚨 공격 경보 / 🔶 이상 유형(끝은 ✅). 발생: 공격 이름·셀·심각도·시작 시각(KST)·경보 상세 링크 / 끝: 해제·강제 종료·끝 소식 없음(6시간 안에 끝이 안 옴) |
 | 수집 멈춤 (AWS)·(On-Premise) | 출처마다 마지막 레코드(상시 KPM2·오버헤드·경보·근거·hello) 뒤 5분 넘게 아무것도 없을 때. 최근 1시간에 아무것도 없으면(테스트베드를 끈 것) 울리지 않음 | 멈춤만 알리고 다시 들어올 때는 알리지 않음 |
 
 - 10초마다 조회한다. 알림 하나 = 경보 하나(`group_by alert_id`), 같은 알림 다시 보내기 24시간.
 - 출처마다 규칙이 따로다(AWS 규칙 UID는 예전 그대로 `portran-attack`·`portran-collect-stop`, On-Premise는 `-onprem`). 메시지 제목 끝에 출처(AWS·On-Premise), 경보 상세 링크는 그 출처로.
-- 이상 유형·판정 보류 경보, 재생·샘플·이전 p4 데이터는 알리지 않는다(11/13 사용자 결정). 11/27부터 하향 IMSI 노출(`L3-24`)·단말 성능 정보 탈취(`L3-14`)도 이상 유형이라 알리지 않는다(D220). On-Premise는 받기 시작해 더했다(11/20, D213).
+- 판정 보류 경보, 재생·샘플·이전 p4 데이터는 알리지 않는다(11/13 사용자 결정). 이상 유형은 11/13에 알리지 않기로 했다가 11/27부터 알린다(사용자 요청, D222 — 하향 IMSI 노출 `L3-24`·단말 성능 정보 탈취 `L3-14`·`AN-` 모두, `grafana/build.py` `NOTIFY_CLASSES`). On-Premise는 받기 시작해 더했다(11/20, D213).
+- **Grafana는 알림 provisioning을 켤 때만 읽는다**(대시보드와 달리 파일을 다시 보지 않음). 그래서 배포 스크립트가 배포마다 `POST /api/admin/provisioning/alerting/reload`로 다시 읽게 하고, 헬스 체크에서 서버 규칙의 UID·제목·조회가 파일과 같은지 본다(`deploy/alert-rules-match.py`, D221 — 11/13 규칙이 11/27까지 남아 On-Premise 알림이 없었고 AWS 규칙은 옛 출처 `p4`만 봤다).
 - Webhook 주소는 `.env`의 `SLACK_WEBHOOK_URL`(비밀 값, 서버 `.env`에만). 비어 있으면 아무 데도 안 가는 주소로 두어 전송 실패 로그만 남는다. 링크 앞부분은 `GRAFANA_ROOT_URL`(Grafana `root_url`).
 - provisioning 파일은 환경변수를 바꿔 넣으므로 템플릿·주석에 `$`를 쓰지 않는다(`.CommonLabels`·`.Values`만). 조회 결과가 없을 때 템플릿이 깨지지 않게 `.Values`는 `{{ with .Values }}` 안에서만 쓴다.
 
@@ -298,7 +300,7 @@ Flux 주의(InfluxDB 2.7): `pivot`은 경보마다 필드 구성이 달라 표 �
 
 ```bash
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --env replay            # 지금 시각으로 옮겨 로컬 collector로
-python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --gap-sec 30
+python -m replay.replay tests/data/detection/*.jsonl --speed 0 --gap-sec 30                   # 탐지 쪽 샘플도 재생으로
 python -m replay.replay a.jsonl --out https://3.39.170.31/ingest --ca certs/ingest.crt
 python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08 --to 2026-11-11T15:14   # 구간만
 ```
@@ -317,7 +319,7 @@ python -m replay.replay recordings/raw-<시각>-p4.jsonl --from 2026-11-11T15:08
 4. 핵심 로직(스키마 검증, InfluxDB 변환, `/ingest` 요청 처리·중복 제거, replay 시각 옮기기, 대시보드 생성)은 pytest로 테스트한다. 대시보드 쿼리는 실제 InfluxDB·Grafana에서 실행해 확인한다.
 5. 실행 방법이 바뀌면 README.md를 같이 고친다.
 6. 모르는 것(예: UE ID 형식, 상태 코드표)은 추측해서 확정하지 말고 TODO로 표시한다.
-7. **샘플·재생 데이터로 나온 숫자는 성능 결과가 아니다.** 화면·리포트에 데이터 출처(AWS 실측 / 재생 / 샘플)를 표시한다.
+7. **샘플·재생 데이터로 나온 숫자는 성능 결과가 아니다.** 화면·리포트에 데이터 출처(AWS·On-Premise 실측 / 재생)를 표시한다.
 8. **진행 기록은 `docs/progress.md`에 남긴다.** 대화로만 보고하면 세션이 끝날 때 사라지므로, 사용자가 나중에 문서로 확인할 수 있게 한다. 마일스톤마다 아래 항목을 쓴다.
    - **한 일**: 만들거나 바꾼 파일과 그 역할
    - **결정 사항**: 이 문서에 정해져 있지 않아 직접 정한 것. 결정, 이유, 팀원 확인 필요 여부(필요하면 대상 파트)를 함께 적는다

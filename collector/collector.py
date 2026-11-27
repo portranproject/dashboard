@@ -2,7 +2,7 @@
 
     python -m collector.collector --in http://127.0.0.1:8088               # 탐지 엔진 전송기 수집 (POST /ingest)
     python -m collector.collector                                          # UDP (.env의 COLLECTOR_UDP_HOST:PORT)
-    python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env sample
+    python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env replay
     python -m collector.collector --in udp://127.0.0.1:9999 --in http://127.0.0.1:8088   # 여러 입력 동시에
     python -m collector.collector --dry-run                                # InfluxDB 없이 검증·녹화만
 

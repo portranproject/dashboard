@@ -3,11 +3,14 @@
 nginx·compose를 실제로 띄워 보는 확인은 CI의 aws-compose 작업이 한다(.github/workflows/ci.yml).
 여기서는 Docker 없이 확인할 수 있는 것만 본다.
 """
+import importlib.util
+import json
 import re
 import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -155,6 +158,34 @@ def test_deploy_recreates_grafana_when_mounted_files_differ():
         assert f'"{mount}"' in script                 # 배포 스크립트가 확인하는 마운트가
         assert f"./{mount}:ro" in compose              # compose의 실제 마운트와 같다
     assert "docker compose up -d --force-recreate --wait grafana" in script
+
+
+def test_deploy_reloads_alerting_rules():
+    """Grafana는 알림 규칙 provisioning을 켤 때만 읽는다 — 배포마다 다시 읽고, 서버 규칙이 파일과 같은지 본다(D221)."""
+    script = (REPO_ROOT / "deploy" / "server-deploy.sh").read_text(encoding="utf-8")
+    assert "grafana_api POST /api/admin/provisioning/alerting/reload" in script
+    assert "python3 deploy/alert-rules-match.py grafana/provisioning/alerting/portran.json" in script
+    assert 'failed+=("Grafana 알림 규칙")' in script
+
+
+def test_alert_rules_match():
+    """서버 규칙 목록(GET /api/v1/provisioning/alert-rules)과 파일 규칙 비교: UID·제목·조회."""
+    spec = importlib.util.spec_from_file_location("alert_rules_match", REPO_ROOT / "deploy" / "alert-rules-match.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    path = REPO_ROOT / "grafana" / "provisioning" / "alerting" / "portran.json"
+    rules = [r for g in json.loads(path.read_text(encoding="utf-8"))["groups"] for r in g["rules"]]
+    server = json.loads(json.dumps(rules))
+    assert mod.mismatches(rules, server) == []
+    server[0]["data"][0]["model"]["query"] = "옛 조회"
+    assert mod.mismatches(rules, server[:-1]) == [f"{rules[0]['uid']}: 제목 또는 조회가 다름",
+                                                   f"{rules[-1]['uid']}: 서버에 없음"]
+    # 명령 그대로: 표준 입력으로 받아 끝 코드
+    ok = subprocess.run([sys.executable, str(REPO_ROOT / "deploy" / "alert-rules-match.py"), str(path)],
+                        input=json.dumps(rules), capture_output=True, text=True)
+    bad = subprocess.run([sys.executable, str(REPO_ROOT / "deploy" / "alert-rules-match.py"), str(path)],
+                         input="[]", capture_output=True, text=True)
+    assert ok.returncode == 0 and bad.returncode == 1 and "서버에 없음" in bad.stderr
 
 
 def test_deploy_scripts_parse():

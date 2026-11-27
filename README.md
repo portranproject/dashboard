@@ -104,7 +104,7 @@ docker compose down -v             # 중지 + 데이터 전부 삭제
 python -m collector.collector --in http://127.0.0.1:8088
 
 # 탐지 쪽 샘플 파일을 환경 이름을 붙여 한 번에 넣기
-python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env sample
+python -m collector.collector --in file://tests/data/detection/T10_긴공격_evidence.jsonl --once --env replay
 
 # 여러 입력을 동시에 (UDP는 시험용)
 python -m collector.collector --in udp://127.0.0.1:9999 --in http://127.0.0.1:8088
@@ -145,7 +145,7 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 경보 목록 | 경보 하나 = 한 행(시작·셀·공격 이름·종류·심각도·UE 수·대표 값·상태·길이). 종류는 공격·이상 유형·판정 보류 — 하향 IMSI 노출·단말 성능 정보 탈취는 탐지 쪽 요청으로 이상 유형(11/27, `grafana/rule-names.json`의 `shown_as_anomaly`). 대표 값 `ratio`는 %(0.5714 → 57%). **행을 누르면 경보 상세가 그 경보로 바뀐다** |
 | 경보 상세 | 판정 요약, 판정 근거 값(키는 줄임말 없는 이름 — `grafana/evidence-key-names.json`), 후보 공격, 걸린 UE(UE는 `셀-uid`, 예 `6733824-63`), 근거 KPM(100 ms 근거 KPM2, 셀 지표 경보), UE_EVENT — UE별 메시지 흐름·메시지 흐름 상세(근거 KPM1 `ue_evt`, UE 메시지 경보) |
 
-- 위쪽 변수: **데이터 출처**(AWS = 실측 `aws` / On-Premise = 우리 실물 장비 `on-premise` / AWS (이전 p4) = 11/20 전 AWS 실측 / 재생 = replay / 샘플 = 탐지 쪽 샘플), 셀. 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
+- 위쪽 변수: **데이터 출처**(AWS = 실측 `aws` / On-Premise = 우리 실물 장비 `on-premise` / 재생 = replay로 다시 보낸 녹화·탐지 쪽 샘플), 셀. 'AWS (이전 p4)'·'샘플'은 11/27에 없앴다(데이터는 남아 있음). 경보 상세에 보일 경보는 경보 목록에서 행을 눌러 고른다(위쪽 칸 없음, 처음 열면 가장 최근 경보).
 - 그래프 위 표시(경보 구간, 데이터 없음, 칸 일부 없음, 세션 시작, DU·CU 재시작)는 늘 켜져 있다(끄는 토글 없음). 경보 구간은 주석이 아니라 그래프 계열로 칠해 새로고침 때 깜빡이지 않는다.
 - 경보 목록의 상태 '상태 불명' = 열린 경보에 마지막 레코드 뒤 1단계 15초·2~4단계 90초 동안 아무것도 없음(탐지 엔진이 죽었거나 다시 떴을 수 있음).
 - 맨 위 '요약 — 지금' 줄(열린 경보·최고 심각도·수집 상태·세션)은 없애고, 성능 대시보드에 있던 탐지 결과 줄을 옮겨 왔다(11/16). 수집이 멈추면 Slack '수집 멈춤' 알림이 온다.
@@ -167,10 +167,12 @@ python -m collector.collector --dry-run --in http://127.0.0.1:8088
 | 알림 | 예 |
 |---|---|
 | 🚨 공격 경보 발생 | `UE 컨텍스트 고갈 · 셀 6733824 · medium · 시작 2026-11-13 15:53:12` + 경보 상세 링크 |
-| ✅ 공격 경보 끝 | `UE 컨텍스트 고갈 · 셀 6733824 · 해제`(또는 강제 종료, 끝 소식 없음) |
+| 🔶 이상 유형 발생 | `하향 IMSI 노출 · 셀 6733824 · medium · 시작 …` + 경보 상세 링크 (11/27부터) |
+| ✅ 공격 경보 끝 · 이상 유형 끝 | `UE 컨텍스트 고갈 · 셀 6733824 · 해제`(또는 강제 종료, 끝 소식 없음) |
 | ⚠️ 수집 멈춤 | 데이터가 5분 넘게 안 올 때 한 번(다시 들어와도 알리지 않음, 1시간 넘게 꺼져 있으면 알리지 않음) |
 
-- 이상 유형·판정 보류 경보와 재생·샘플·이전 p4 데이터는 알리지 않는다.
+- 판정 보류 경보와 재생·샘플·이전 p4 데이터는 알리지 않는다. 이상 유형(하향·상향 IMSI 노출, 단말 성능 정보 탈취 등)은 11/27부터 알린다.
+- 규칙 파일을 바꿔 배포하면 배포 스크립트가 Grafana에 알림 규칙을 다시 읽게 하고, 서버 규칙이 파일과 같은지 헬스 체크에서 본다(Grafana는 알림 규칙을 켤 때만 읽음).
 - 켜는 법: Slack에서 채널에 **Incoming Webhooks** 앱을 추가해 받은 주소를 `.env`의 `SLACK_WEBHOOK_URL`에 넣고 `docker compose up -d grafana`. 링크 주소는 `GRAFANA_ROOT_URL`. Grafana → Alerting → Contact points → `PortRAN Slack` → **Test**로 시험 메시지를 보낼 수 있다.
 - 규칙은 `grafana/build.py`가 `grafana/provisioning/alerting/portran.json`으로 만든다(UI에서 고쳐도 저장되지 않음).
 
@@ -193,8 +195,8 @@ mock 생성기는 M10에서 지웠다. 화면을 만들거나 시연할 때는 �
 # 터미널 1: collector
 python -m collector.collector --in http://127.0.0.1:8088
 
-# 터미널 2: 탐지 쪽 샘플 32개를 1시간 전부터 30초 간격으로 이어서, 기다리지 않고 (데이터 출처 "샘플")
-python -m replay.replay tests/data/detection/*.jsonl --env sample --speed 0 --gap-sec 30 --retime 2026-12-04T13:00:00
+# 터미널 2: 탐지 쪽 샘플 32개를 정한 시각부터 30초 간격으로 이어서, 기다리지 않고 (데이터 출처 "재생")
+python -m replay.replay tests/data/detection/*.jsonl --speed 0 --gap-sec 30 --retime 2026-12-04T13:00:00
 
 # 녹화를 지금 시각으로 1배속 재생 — 관제 대시보드에서 실시간으로 보인다 (데이터 출처 "재생")
 python -m replay.replay recordings/raw-20261204-130000-p4.jsonl

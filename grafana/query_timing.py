@@ -157,7 +157,7 @@ def main(argv: list[str]) -> int:
     env = load_env()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--url", default=f"http://localhost:{env.get('GRAFANA_PORT', '3000')}")
-    ap.add_argument("--source", default="aws", help="데이터 출처(env 태그): aws·on-premise·p4(11/20 전 AWS)·replay·sample")
+    ap.add_argument("--source", default="aws", help="데이터 출처(env 태그): aws·on-premise·replay (화면 선택지에 없는 p4·sample도 잴 수 있음)")
     ap.add_argument("--dashboard", choices=["monitoring", "performance"], default="monitoring")
     ap.add_argument("--range", default="7d", help="지금부터 거꾸로 잴 범위: 1h·24h·7d")
     ap.add_argument("--max-seconds", type=float, default=5.0, help="요청(패널 하나·주석 하나)의 시간 상한")

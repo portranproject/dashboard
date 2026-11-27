@@ -218,6 +218,23 @@ def test_kind_shown_as_anomaly(flux):
         assert [r["종류"] for r in flux(panel_query("monitoring", "판정 요약"), alert_id=alert_id)] == [kind], alert_id
 
 
+def test_slack_rule_notifies_attack_and_anomaly(flux):
+    """Slack 알림 규칙(공격·이상 유형 경보, D222): 화면 종류 공격·이상 유형 경보마다 계열 하나, 판정 보류는 빠진다.
+    규칙은 지금 기준 범위(-6h·-5m ~ now())라 화면 시간 범위로, 출처는 이 테스트 출처로 바꿔 돌린다."""
+    alerting = json.loads((REPO / "grafana" / "provisioning" / "alerting" / "portran.json").read_text(encoding="utf-8"))
+    rule = next(r for g in alerting["groups"] for r in g["rules"] if r["uid"] == "portran-attack")
+    query = rule["data"][0]["model"]["query"]
+    for old in ("range(start: -21600s, stop: now())", "range(start: -5m, stop: now())"):
+        assert old in query
+        query = query.replace(old, "range(start: v.timeRangeStart, stop: v.timeRangeStop)")
+    query = query.replace('r.env == "aws"', 'r.env == "${source}"')
+    rows = {r["alert_id"]: r["class"] for r in flux(query)}
+    assert {k: v for k, v in rows.items() if k in (L3_24, L3_14, AN_02, L3_20)} == {
+        L3_24: "이상 유형", L3_14: "이상 유형", AN_02: "이상 유형", L3_20: "공격"}
+    assert L3_24_HELD not in rows and L3_14_HELD not in rows
+    assert set(rows.values()) == {"공격", "이상 유형"}
+
+
 def test_hidden_candidates(flux):
     """AN-02의 후보 L3-25-OV(상향 IMSI 추출)는 후보 공격 표·판정 근거 값에서 빠진다(11/27 — AN-02가 상향 IMSI 노출).
     다른 경보의 후보는 그대로."""
